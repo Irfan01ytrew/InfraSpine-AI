@@ -1,0 +1,5 @@
+# Optional offline audio/video transcription. Install after requirements.txt, then provide a local model directory.
+faster-whisper==1.2.1
+# faster-whisper 1.2.1 still passes metadata_errors to av.open; PyAV 19 removed that argument.
+# 18.1.0 was yanked upstream (double free decoding audio with custom channel layouts); 18.1.1 is the fix.
+av==18.1.1

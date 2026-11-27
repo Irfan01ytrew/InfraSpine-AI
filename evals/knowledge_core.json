@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "description": "Synthetic Knowledge assistant smoke benchmark. Fixed prompts and explicit answer checks; not a ChatGPT comparison or comprehensive quality score.",
+  "cases": [
+    {"id":"arithmetic","category":"mathematics","question":"Using general knowledge, calculate 17 times 23. Reply with only the number.","must_match":["\\b391\\b"],"general":true},
+    {"id":"reasoning","category":"reasoning","question":"Using general knowledge: all glips are blors, and no blors are trems. Can a glip be a trem? Answer yes or no and explain in one sentence.","must_match":["\\bno\\b"],"general":true},
+    {"id":"python","category":"coding","question":"Using general knowledge, write a Python function add(a, b) that returns their sum. Use a fenced code block and no other explanation.","must_match":["```(?:python)?","def\\s+add\\s*\\(\\s*a\\s*,\\s*b\\s*\\)","return\\s+a\\s*\\+\\s*b"],"general":true},
+    {"id":"science","category":"general","thread":"science","question":"Using general knowledge, explain photosynthesis in one English sentence.","must_match":["(?:light|sun)","(?:sugar|glucose|food)"],"general":true},
+    {"id":"science-followup","category":"context","thread":"science","question":"What gas does that process release? Answer in one sentence.","must_match":["oxygen"],"general":true},
+    {"id":"roman-urdu","category":"multilingual","question":"General knowledge se Roman Urdu mein aik jumlay mein batao: photosynthesis mein pauday kis cheez ki roshni istemal karte hain?","must_match":["(?:suraj|sooraj|sun)"],"general":true},
+    {"id":"document-refund","category":"rag","thread":"policy","question":"According to knowledge-core-refund.pdf, how many days do customers have to request a refund? Answer in one sentence with a citation.","must_match":["\\b30\\b","\\[S\\d+\\]"],"source":"knowledge-core-refund.pdf","general":false},
+    {"id":"document-followup","category":"rag-context","thread":"policy","question":"Who should they contact for that? Answer briefly with a citation.","must_match":["billing","\\[S\\d+\\]"],"source":"knowledge-core-refund.pdf","general":false},
+    {"id":"topic-switch","category":"context-isolation","thread":"policy","question":"Switch topics. Using general knowledge, what is the chemical formula of water? Answer briefly.","must_match":["H(?:2|₂)O"],"general":true}
+  ]
+}

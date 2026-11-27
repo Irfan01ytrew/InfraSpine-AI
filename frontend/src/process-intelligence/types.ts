@@ -1,0 +1,25 @@
+export type Organization = { id: string; name: string; role: "viewer" | "analyst" | "steward" };
+export type Process = { id: string; name: string; description: string; revision: number };
+export type Source = { id: string; name: string; kind: string; document_id: string | null; retention_days: number; cursor: string | null; synced_at: string | null; can_sync: boolean };
+export type Evidence = { id: string; source_id: string; external_id: string; case_id: string; activity: string; actor: string | null; department: string | null; occurred_at: string; finished_at: string | null; terminal: boolean; evidence_ref: string; outcome: string | null };
+export type Case = { source_id: string; case_id: string; sequence: string[]; event_ids: string[]; completed: boolean; ambiguous: boolean; cycle_hours: number | null; start: string; end: string; departments: string[]; actors: string[]; deviations: { kind: string; activity: string; expected?: string }[]; sla_breached: boolean | null };
+export type Node = { activity: string; count: number; actors: string[]; departments: string[]; evidence_ids: string[]; service_hours: number; measured_durations: number };
+export type Edge = { from: string; to: string; count: number; median_interval_hours: number; median_wait_hours: number | null; measured_waits: number; handoffs: number; evidence_pairs: string[][] };
+export type Finding = { id: string; kind: string; title: string; classification: string; evidence_ids: string[]; case_id?: string; activity?: string; hours?: number; limit_hours?: number; threshold_hours?: number; actor?: string; qualification?: string; transition?: string[]; total_variation?: number; deviations?: { kind: string; activity: string; expected?: string }[] };
+export type BaselineData = { title: string; sequences: string[][]; sla_hours: number; evidence_ref: string; id?: string; evidence_quote?: string; qualification?: string };
+export type Baseline = { id: string; source_id: string; status: string; origin: string; data: BaselineData; created_by: string; reviewed_by: string | null; created_at: string };
+export type Summary = { events: number; cases: number; completed_cases: number; open_cases: number; variants: number; median_cycle_hours: number | null; p95_cycle_hours: number | null; sla_breaches: number | null; conformance_rate: number | null; conformance_cases: number; handoffs: number; order_confidence: number; ambiguous_cases: number };
+export type Model = { id: string; revision: number; created_at: string; review_status: string; data: {
+  summary: Summary; nodes: Node[]; edges: Edge[]; cases: Case[]; evidence: Record<string, Evidence>;
+  variants: { id: string; sequence: string[]; count: number; completed: number; case_keys: string[][] }[];
+  findings: Finding[]; recommendations: { id: string; title: string; classification: string; status: string; finding_id: string; evidence_ids: string[] }[];
+  departments: { name: string; events: number; measured_service_hours: number; measured_durations: number; evidence_ids: string[] }[];
+  owners: { name: string; events: number; measured_service_hours: number; measured_durations: number; evidence_ids: string[] }[];
+  daily_throughput: { date: string; completed: number }[]; baseline: BaselineData | null;
+  drift: { total_variation: number; threshold: number; detected: boolean; new_sequences: string[][]; qualification: string } | null;
+  sources: { id: string; name: string; kind: string; synced_at: string | null }[]; limitations: string[];
+  processing_ms: number; previous_model_id: string | null; confidence_threshold: number; needs_validation: boolean;
+} };
+export type ModelSummary = Omit<Model, "data"> & { summary: Summary };
+export type Simulation = { classification: string; actor: string; affected_cases: number; additional_hours_per_affected_case: number; estimated_additional_case_hours: number; additional_sla_breaches: number | null; evidence_ids: string[]; assumptions: string[] };
+export type Job = { id: string; status: string; attempts: number; model_id: string | null; error_code: string | null; created_at: string };

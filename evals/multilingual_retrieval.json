@@ -1,0 +1,134 @@
+{
+  "name": "multilingual-retrieval",
+  "description": "Focused synthetic set: English, Roman Urdu, Urdu script and mixed queries against English target documents, with same-topic distractors in the synthetic Harborline corpus.",
+  "cases": [
+    {
+      "id": "refund-en",
+      "question": "What is the billing refund window for invoice disputes?",
+      "language": "en",
+      "persona": "owner",
+      "expected_document": "refund-policy.txt",
+      "expected_passage": "thirty days"
+    },
+    {
+      "id": "leave-en",
+      "question": "How many working days of annual leave do permanent staff receive?",
+      "language": "en",
+      "persona": "owner",
+      "expected_document": "leave-policy.txt",
+      "expected_passage": "18 working days"
+    },
+    {
+      "id": "maintenance-en",
+      "question": "When is Lahore core switch maintenance scheduled?",
+      "language": "en",
+      "persona": "owner",
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "Sunday 02:00 to 04:00 PKT"
+    },
+    {
+      "id": "vpn-en",
+      "question": "How often does security operations rotate VPN tokens?",
+      "language": "en",
+      "persona": "owner",
+      "expected_document": "handbook.pdf",
+      "expected_passage": "90 days"
+    },
+    {
+      "id": "refund-roman-ur",
+      "question": "invoice disputes ke liye refund kitne din ka hai?",
+      "language": "roman_ur",
+      "persona": "owner",
+      "expected_document": "refund-policy.txt",
+      "expected_passage": "thirty days"
+    },
+    {
+      "id": "leave-roman-ur",
+      "question": "permanent staff ko saalana chhutti kitne working days milti hai?",
+      "language": "roman_ur",
+      "persona": "owner",
+      "expected_document": "leave-policy.txt",
+      "expected_passage": "18 working days"
+    },
+    {
+      "id": "maintenance-roman-ur",
+      "question": "Lahore core switch ki maintenance kab hoti hai?",
+      "language": "roman_ur",
+      "persona": "owner",
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "Sunday 02:00 to 04:00 PKT"
+    },
+    {
+      "id": "vpn-roman-ur",
+      "question": "VPN tokens kitne din baad rotate hotay hain?",
+      "language": "roman_ur",
+      "persona": "owner",
+      "expected_document": "handbook.pdf",
+      "expected_passage": "90 days"
+    },
+    {
+      "id": "refund-ur",
+      "question": "انوائس تنازعہ کے لیے رقم واپسی کتنے دن کی ہے؟",
+      "language": "ur",
+      "persona": "owner",
+      "expected_document": "refund-policy.txt",
+      "expected_passage": "thirty days"
+    },
+    {
+      "id": "leave-ur",
+      "question": "مستقل عملے کو سالانہ چھٹی کے کتنے کام کے دن ملتے ہیں؟",
+      "language": "ur",
+      "persona": "owner",
+      "expected_document": "leave-policy.txt",
+      "expected_passage": "18 working days"
+    },
+    {
+      "id": "maintenance-ur",
+      "question": "لاہور کور سوئچ کی مینٹیننس کب ہوتی ہے؟",
+      "language": "ur",
+      "persona": "owner",
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "Sunday 02:00 to 04:00 PKT"
+    },
+    {
+      "id": "vpn-ur",
+      "question": "وی پی این ٹوکن کتنے دن بعد تبدیل ہوتے ہیں؟",
+      "language": "ur",
+      "persona": "owner",
+      "expected_document": "handbook.pdf",
+      "expected_passage": "90 days"
+    },
+    {
+      "id": "refund-mixed",
+      "question": "invoice disputes کے لیے refund کتنے days کا ہے؟",
+      "language": "mixed",
+      "persona": "owner",
+      "expected_document": "refund-policy.txt",
+      "expected_passage": "thirty days"
+    },
+    {
+      "id": "leave-mixed",
+      "question": "permanent staff کو annual leave کتنے working days ملتی ہے؟",
+      "language": "mixed",
+      "persona": "owner",
+      "expected_document": "leave-policy.txt",
+      "expected_passage": "18 working days"
+    },
+    {
+      "id": "maintenance-mixed",
+      "question": "Lahore core switch maintenance کا وقت کب ہے؟",
+      "language": "mixed",
+      "persona": "owner",
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "Sunday 02:00 to 04:00 PKT"
+    },
+    {
+      "id": "vpn-mixed",
+      "question": "VPN tokens کتنے دن بعد rotate ہوتے ہیں؟",
+      "language": "mixed",
+      "persona": "owner",
+      "expected_document": "handbook.pdf",
+      "expected_passage": "90 days"
+    }
+  ]
+}

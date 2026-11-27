@@ -1,0 +1,374 @@
+[
+  {
+    "path": "app/api/routes/admin_traces.py",
+    "sha256": "a990458f2c82f98129abf3be3f95cce2f352ad6104087b3456c4a7957abfd1f7"
+  },
+  {
+    "path": "app/api/routes/conversations.py",
+    "sha256": "10e7f4dea57535cca1922d4626d62a70a4c8288ee46db0e819cf91c2b2fb5ae0"
+  },
+  {
+    "path": "app/core/config.py",
+    "sha256": "3a98be7cc4e6f1f196498784a6944513f869fea9f6e61563ba7993004af051bd"
+  },
+  {
+    "path": "app/db/models.py",
+    "sha256": "2f467a69ef12fa3b4d06b1e2c55b1e0364970072a3971e1a52a5f9804d751783"
+  },
+  {
+    "path": "app/main.py",
+    "sha256": "5ed0c9a51b8d80c5eb65916d6b4d449c8cc42a60c4b089884ec77966a78ee3a3"
+  },
+  {
+    "path": "app/providers/openai_compatible.py",
+    "sha256": "e809cc82fe56f128c34b54ec2cda480ca22d4ca1949a34d9f015c1c1f7082845"
+  },
+  {
+    "path": "app/rag/answer.py",
+    "sha256": "b4d21ee7b61fec88f22fc4d78d6d0618d392b0c81209d60ef7601c38c26d05dd"
+  },
+  {
+    "path": "app/rag/charts.py",
+    "sha256": "59328e6f766d326173fbd762afe223c985e3134dc18288e7ddc1d5bf1b5a90a1"
+  },
+  {
+    "path": "app/rag/chat.py",
+    "sha256": "55627e6b3ca624a89ed99b0535e5b7f639b7073d9c384c0aa077d0d9f0003e96"
+  },
+  {
+    "path": "app/rag/discovery.py",
+    "sha256": "d7f6f4d31a7c7a9bb63e7ffaea95dc6ee151d67220582cf497a5eb49c37750c5"
+  },
+  {
+    "path": "app/rag/retrieval.py",
+    "sha256": "ec620ccab29b2fe46ae88d4e5a5add35e017ed29b34d404a11673ad0856c02f0"
+  },
+  {
+    "path": "app/schemas/traces.py",
+    "sha256": "1fb74af0f00a97ad7d8a176ee37e994b745f96e0b98d9ebc34d47982acec0aa0"
+  },
+  {
+    "path": "app/services/automation_worker.py",
+    "sha256": "ad2f11c9fc2d19f90e2b511bce4ed3e34ab6769d78afafa45734186d4eb9b423"
+  },
+  {
+    "path": "app/services/conversations.py",
+    "sha256": "d66171a10db5e08267078e9655c80ad9777d95653478e56a4aa09b75d6ec2e69"
+  },
+  {
+    "path": "app/services/public_web.py",
+    "sha256": "a7d77a50e68e708717d585480af341b5984092d846ce8f6c17383c8469672624"
+  },
+  {
+    "path": "frontend/package-lock.json",
+    "sha256": "137f90fd43608f44960df304bf20823494796b3b11b70889b108b6ed812192ad"
+  },
+  {
+    "path": "frontend/package.json",
+    "sha256": "d4d5fd1a0e45aa3785e72546d7fbc3397d7bc4314e7dc15a6aa632bc89ded823"
+  },
+  {
+    "path": "frontend/src/api.ts",
+    "sha256": "5b766361faeaa3827b3d317804cc827c53722841f92164b46db45ebd77452747"
+  },
+  {
+    "path": "frontend/src/components/AdminConsole.tsx",
+    "sha256": "2c9d899ee5b618a8d004442e8dce57f628bb0f6788a31ada256bbf5a0b0267c0"
+  },
+  {
+    "path": "frontend/src/components/AppSidebar.tsx",
+    "sha256": "10795415b93e320e9e4d99400f350e1b5dba05162a6240ac19d575ec8ca234be"
+  },
+  {
+    "path": "frontend/src/components/KnowledgePage.tsx",
+    "sha256": "f00f0eaeea7e6331cd24da6aea5edc75e4bac7a1c8caf2e97416cc6299243ec3"
+  },
+  {
+    "path": "frontend/src/components/Markdown.tsx",
+    "sha256": "eff532da49db84aa1aed3c1f0e0b10bf3bf257eccef9f9c087b31a8c6c798a26"
+  },
+  {
+    "path": "frontend/src/components/TracesPage.tsx",
+    "sha256": "405ae416a937c7947fa5a60256ee12703836db2b5270d7e6b0a67888456e98a7"
+  },
+  {
+    "path": "frontend/src/index.css",
+    "sha256": "d6ae6325a60e5be17997a0cc8c1a66d192345ef07e0355c4fbe1816afa110666"
+  },
+  {
+    "path": "frontend/src/types.ts",
+    "sha256": "368db96f2d1a4dc910d973d6e392bfeffbaa5b4f9d6b21ab2299f31be6e22817"
+  },
+  {
+    "path": "requirements.lock",
+    "sha256": "831b9cd5cf15558f1a51b58c3948c17bab31a2741c00b0cd9fd66eacf861e8f4"
+  },
+  {
+    "path": "requirements.txt",
+    "sha256": "d4ab7efee2ba20b711058004426592f71f9d357e82d0a7d000d54b987253224d"
+  },
+  {
+    "path": "tests/test_automation.py",
+    "sha256": "ccf5cbafe112838bc6ff8313291e15ef94b0f266ff15cc6b5d47dc6d832e5353"
+  },
+  {
+    "path": "tests/test_conversation_context.py",
+    "sha256": "68abdbc155939433718a69e19f5c1fe54d0696ede374eefa6970bfeaab528b3d"
+  },
+  {
+    "path": "tests/test_conversations.py",
+    "sha256": "5389920ed2c915e730a38759ed746d5885fa4961365931fa9f8df11332af4949"
+  },
+  {
+    "path": "tests/test_image_documents.py",
+    "sha256": "536b4a1e40a7c2567431ba9c2344204fdeed07412c2e26029868dc2fcdd6edf4"
+  },
+  {
+    "path": "tests/test_rag.py",
+    "sha256": "f88fda6a34309357d99ec705cad36c5f065c2b79f6d426367efb591b492aeb0c"
+  },
+  {
+    "path": "tests/test_rag_units.py",
+    "sha256": "6b5a78bffd6765e8df14def30d35eac75515df9b006b8525754b4d4287386d58"
+  },
+  {
+    "path": "tests/test_tracing.py",
+    "sha256": "57bacbd234e8754b758f778183141693b5c96dc7c4ca0ba774df082212136fd0"
+  },
+  {
+    "path": "tests/unit/test_public_web_relevance.py",
+    "sha256": "7ec9f89030859bcf201ff9863605e543a5ddb5b8d43baa21682a0c97ae9bb033"
+  },
+  {
+    "path": "AGENTS.md",
+    "sha256": "da8089282cb387401c3a13e9e2450089ab70ec30819dc7b83f8744ad3d9c6a2a"
+  },
+  {
+    "path": "app/agent_studio/__init__.py",
+    "sha256": "be7fcb2adfcdf51a68ac3725a7fc572da990e8b529d3973cd81f30d4c1309dae"
+  },
+  {
+    "path": "app/agent_studio/graph.py",
+    "sha256": "4edec09d76c55c1c103d0a70aba2e123fd8bd1b8bd9fae02c094940e6cde1aed"
+  },
+  {
+    "path": "app/agent_studio/host_status.py",
+    "sha256": "37e39f2d29d9a4e709e72fbae64a569b12274086a31ac9755fe859f884202b01"
+  },
+  {
+    "path": "app/agent_studio/project_tools.py",
+    "sha256": "12427b773ab81bfa51f36273bd43f50ce516c176dda611764c75b5831a096451"
+  },
+  {
+    "path": "app/agent_studio/service.py",
+    "sha256": "0ded44f6a35e7f2ad9743e1ca84890c5731021b711387b7b8af4672fb3391126"
+  },
+  {
+    "path": "app/agent_studio/tools.py",
+    "sha256": "3734c01122782cbf62a41fa4f7732002b7eb27f294ba72d7011850231c83fa81"
+  },
+  {
+    "path": "app/api/routes/agent_studio.py",
+    "sha256": "77fd37e0014e824450abe12a8da02fe9fde837468a12d581e5ade2ceee193e12"
+  },
+  {
+    "path": "app/api/routes/agent_studio_baileys.py",
+    "sha256": "3927238bc68ba38a503f8a2b81380bbd7333315d909bca82a24dfe188780803b"
+  },
+  {
+    "path": "app/api/routes/agent_studio_whatsapp.py",
+    "sha256": "ffe23f2314762bf8784fa9d6dd24305c0ca5c9351e3f93f55eb3ecf70915757d"
+  },
+  {
+    "path": "app/api/routes/company_graph.py",
+    "sha256": "592993bf2564a37987de5415f50bde29541f51c795e7add38ea72e95cd914398"
+  },
+  {
+    "path": "app/company_graph/__init__.py",
+    "sha256": "71f626ccbe0e3cc0d50e99f096f422f58fb401548bf62c58478ce22a74f6b1dd"
+  },
+  {
+    "path": "app/company_graph/access.py",
+    "sha256": "4741f5104d7d228e2a14b5bb358b48989ecd068aa574e991dc1e9b39a4cae8d7"
+  },
+  {
+    "path": "app/company_graph/discovery.py",
+    "sha256": "7e97b306c4ec93273d01ae84086b0635f2fcc82a19f4df8c1058c104430cc4c3"
+  },
+  {
+    "path": "app/company_graph/intelligence.py",
+    "sha256": "dc8108321243b2eda5f2dd3c96440fe44afdf647d1cd342d95a8b4541d57f0a6"
+  },
+  {
+    "path": "app/company_graph/models.py",
+    "sha256": "ecdbb9b3f0df432e54c8f22393b2f744c131a1c6229cead522984b2ab98adcea"
+  },
+  {
+    "path": "app/company_graph/schemas.py",
+    "sha256": "eb1d1df8e38c36eda161f3e80dd12b468d37c2c587fc345dbdb48327ee382a20"
+  },
+  {
+    "path": "app/company_graph/service.py",
+    "sha256": "3e89c7580af954a0f7c4d157cbc4bc3995ad6c1b28d185870700fc2b62de2e21"
+  },
+  {
+    "path": "app/db/agent_studio_baileys_models.py",
+    "sha256": "27a7b48ce6092886b82f2993c5284aec86643502ae71d77ccdec27dccfc1ddf1"
+  },
+  {
+    "path": "app/db/agent_studio_models.py",
+    "sha256": "63a254fbe2db5728f54025c48ec05cafee08827a32297c11ea44a3370a227e60"
+  },
+  {
+    "path": "app/db/agent_studio_whatsapp_models.py",
+    "sha256": "d9fb4e69341f1626248f1d0ea716c90ee03121408ee00ef54b57335646699532"
+  },
+  {
+    "path": "app/schemas/agent_studio.py",
+    "sha256": "d7a8ea363caf552b6b0d4dc4373af25862662b96508eb05a4d9b7c63acd55492"
+  },
+  {
+    "path": "app/schemas/agent_studio_whatsapp.py",
+    "sha256": "7437c3f2ad64f24845075d9d1b4ae7d8a508930032e12e15d98d1f1dd1ec9bf3"
+  },
+  {
+    "path": "app/services/agent_studio_baileys.py",
+    "sha256": "8d898c662306a80065667de97917096cf7e3e359247703184fc619989fb7159d"
+  },
+  {
+    "path": "app/services/agent_studio_whatsapp.py",
+    "sha256": "3d892a5f6badf019c4ae3a05f11067fc86d3a1ff2e5566a56586f2e924a86573"
+  },
+  {
+    "path": "app/services/chat_stream.py",
+    "sha256": "cd29f133b31482b0fdd4dcc8bdec7657f89d6b2d2d0e90ef6ca6a8431edbe19c"
+  },
+  {
+    "path": "app/services/local_image_generation.py",
+    "sha256": "0ad55dd520ce31c9639ef895780345b36878ec8a35e7b91f2257318be971c2fd"
+  },
+  {
+    "path": "docs/irfanix-backlog.json",
+    "sha256": "c527605151ee8528297f5ecc0083d8a64052f9c544229d47286482f35ad602a3"
+  },
+  {
+    "path": "docs/irfanix-development-controller.md",
+    "sha256": "0f6d97474536378de4c432a1a8140c94f707c114e48e3822d6f37a150a73d94b"
+  },
+  {
+    "path": "docs/irfanix-release-checklist.md",
+    "sha256": "3ba00287e696a80fad7ae3438c63a195135a34fce3c422600b1631b020a88c1d"
+  },
+  {
+    "path": "docs/irfanix-test-database.md",
+    "sha256": "4dac07112fac68ae4321090f9937280b7329f172fca7c11503d95fc42033301b"
+  },
+  {
+    "path": "frontend/src/company-graph/GraphMap.tsx",
+    "sha256": "1158955991c97374e693761f0e00ec51fdebf03b6a930e72722835b843c9ce7f"
+  },
+  {
+    "path": "frontend/src/company-graph/RecordEditor.tsx",
+    "sha256": "64ebb452f3f4e6dc1a0cd0ee74ef6b8e7a90c8deb65c3c337fc6dd42763f3b24"
+  },
+  {
+    "path": "frontend/src/company-graph/api.ts",
+    "sha256": "4a66b687ae6e85e71a1368f0fd0626c51ebcf856f919102e82a77f9f02e93cce"
+  },
+  {
+    "path": "frontend/src/company-graph/types.ts",
+    "sha256": "a7aae9744c557b8d8d29d47c6b03784a0aee63a83e39f36cea79ef9da872ff51"
+  },
+  {
+    "path": "frontend/src/components/AgentStudioPage.tsx",
+    "sha256": "560202855cd7bb98223f3085bf99361aa686670625e3b8995f5fb0f6f7a1dde6"
+  },
+  {
+    "path": "frontend/src/components/AgentStudioWhatsAppPanel.tsx",
+    "sha256": "3215562966ec5d17b015954f936b4429e9f1759e6432fc01a7a02d05c3619de3"
+  },
+  {
+    "path": "frontend/src/components/AgentStudioWhatsAppQrPanel.tsx",
+    "sha256": "0d3248c7b9d3108c8fdce65476315488d94a4b72fad9f728cc02d0d2d1b5c1a8"
+  },
+  {
+    "path": "frontend/src/components/CopyButton.tsx",
+    "sha256": "5e199ec26aa93c59bad94a2328152f4f4b65371372dd1c571f39c77ce94d8a95"
+  },
+  {
+    "path": "frontend/src/components/KnowledgeDashboard.tsx",
+    "sha256": "99a2821e6cdf1adf05d241d992a805f266e21444f9a64e6d9ed751e2c79e5497"
+  },
+  {
+    "path": "frontend/src/lib/answerMarkdown.d.mts",
+    "sha256": "e22ff2837362b081d91c6ed90785810296f8301b8f28ff2d6acf67d03049d611"
+  },
+  {
+    "path": "frontend/src/lib/answerMarkdown.mjs",
+    "sha256": "95af051e25512f1a9966b51840a52c51f2555458d9aebd5c67fa048bceb0c90f"
+  },
+  {
+    "path": "frontend/test/answerMarkdown.test.mjs",
+    "sha256": "80e4d9aa22afbf53c737ab79b932693cd9a4fb38bbb22ed7c29c82beb7e62b81"
+  },
+  {
+    "path": "migrations/versions/0085_independent_agent_studio.py",
+    "sha256": "12b293789686ceb61482423ac786d7c3de0eab9a7d8867e2b423ba293bcdc4b2"
+  },
+  {
+    "path": "migrations/versions/0086_agent_studio_whatsapp.py",
+    "sha256": "abc808864c9027b8217de8cdc3f794e7289b56cf63fc2cdbf772d9d6c0afc1cc"
+  },
+  {
+    "path": "migrations/versions/0087_agent_studio_baileys.py",
+    "sha256": "17ae79873cffc753b54287dfdf7e9e05460775ef51336d050a36ef523cd4b35c"
+  },
+  {
+    "path": "migrations/versions/0088_baileys_delivery_receipt.py",
+    "sha256": "3a156c221508315c5bb2516deed62fd23a4665faf43adada38d71f67e0ed3673"
+  },
+  {
+    "path": "migrations/versions/0089_company_intelligence_graph.py",
+    "sha256": "fd96ca000803ca5e49d2a3032cee399c76925dd304a4732bad65adb35326844f"
+  },
+  {
+    "path": "scripts/irfanix_cycle.py",
+    "sha256": "17bb32340cb684b51d62d048fa680b8e8130e79595443e96cb07b8bd5914949c"
+  },
+  {
+    "path": "scripts/irfanix_postgres_tests.py",
+    "sha256": "95e98093bec62fb376805db779c7645921767736f79225fcf42ba085efdfabde"
+  },
+  {
+    "path": "scripts/knowledge_browser_acceptance.mjs",
+    "sha256": "cafd849f9d58569389efe109122fe73852bf539d009e81f91cef29b404163723"
+  },
+  {
+    "path": "tests/test_company_graph.py",
+    "sha256": "c2b88130b7ce91ec3444e4a71d7899e61b1b96d7c7725b209e0003a1958f1308"
+  },
+  {
+    "path": "tests/test_irfanix_cloud_webhook.py",
+    "sha256": "8eba251c2e5b8c08e36cc9a134122164de46679a772748ed5f678920f7f38e06"
+  },
+  {
+    "path": "tests/test_irfanix_graph.py",
+    "sha256": "aa3c4b0c35f9e50d45fc78b58d6e3e389ade8524ef2e51bd05fb102e3558e258"
+  },
+  {
+    "path": "tests/test_irfanix_whatsapp_receipts.py",
+    "sha256": "0ea0c98de0a554f82e06dc45d4f08a8a61980f749983edf139c5cbdde4562f9a"
+  },
+  {
+    "path": "tests/test_knowledge_browser.py",
+    "sha256": "37aff3ed7968b97a5ccd55b508ddc9502d8094e2409938d67f803e6b1a2b6f6f"
+  },
+  {
+    "path": "tests/unit/test_chat_stream_lifecycle.py",
+    "sha256": "1ebdda82aaa8462b1264732ec70e00a482c4dc367e36d17913ad1a1eaeca4913"
+  },
+  {
+    "path": "tests/unit/test_conversation_history.py",
+    "sha256": "e1d1c4ffdf2016c950982ff2100ba92428071ab709ec1eadd29dd96adbd3b1fe"
+  }
+]

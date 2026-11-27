@@ -1,0 +1,2 @@
+# Line-based fallback for ruled digital PDF tables when the layout model misses a table.
+pdfplumber==0.11.10

@@ -1,0 +1,101 @@
+/* Layer order: the legacy stylesheet sits below Tailwind's components and utilities, so the new
+   UI components always win while pages that still use legacy classes keep rendering unchanged. */
+@layer theme, base, legacy, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "./styles.css" layer(legacy);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Dark follows the system unless the person picked light or dark (html[data-theme]). */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]) *) { @slot; }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+}
+
+/* Design tokens come from styles.css (:root), including the company brand color set at runtime. */
+@theme inline {
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
+
+  --color-background: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-sidebar: var(--sidebar);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-foreground: var(--text);
+  --color-foreground-2: var(--text-2);
+  --color-muted: var(--muted);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: color-mix(in oklab, var(--primary) 11%, var(--surface));
+  --color-primary-foreground: var(--primary-text);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-text: var(--success-text);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-text: var(--warning-text);
+  --color-danger: var(--error);
+  --color-danger-soft: var(--error-soft);
+  --color-danger-text: var(--error-text);
+
+  --radius-sm: 6px;
+  --radius-md: var(--radius-sm);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius-lg);
+
+  --shadow-xs: var(--shadow-sm);
+  --shadow-sm: var(--shadow);
+  --shadow-lg: var(--shadow-lg);
+
+  --animate-in: ui-in 140ms ease-out;
+  --animate-out: ui-out 100ms ease-in;
+}
+
+@keyframes ui-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ui-out {
+  from { opacity: 1; }
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+@layer base {
+  /* Preflight removes list markers; rich answer text still needs them. */
+  .markdown ul, .prose-answer ul { list-style: disc; padding-left: 1.25rem; }
+  .markdown ol, .prose-answer ol { list-style: decimal; padding-left: 1.25rem; }
+}
+
+@layer components {
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+  .markdown { overflow-wrap: anywhere; }
+  .markdown :is(h1, h2, h3, h4, h5, h6) { font-weight: 650; line-height: 1.4; margin-top: 1.2em; }
+  .markdown h1 { font-size: 1.5em; }
+  .markdown h2 { font-size: 1.3em; }
+  .markdown h3 { font-size: 1.15em; }
+  .markdown > :first-child { margin-top: 0; }
+  .markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; }
+  .markdown blockquote { border-inline-start: 3px solid var(--border-strong); padding-inline-start: 1rem; color: var(--text-2); }
+  .markdown table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+  .markdown :is(th, td) { padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .markdown th { background: var(--surface-2); font-weight: 600; text-align: start; }
+  .markdown tr:last-child td { border-bottom: 0; }
+  .markdown tbody tr:hover { background: var(--surface-2); }
+  .markdown .answer-code { margin-block: 1rem; }
+  .markdown .answer-code pre { margin: 0; white-space: pre; overflow-wrap: normal; }
+  .markdown .answer-code code { padding: 0; border: 0; border-radius: 0; background: transparent; font-family: var(--mono); }
+  .markdown .answer-web-citation { display: inline-grid; place-items: center; min-width: 20px; padding: 0 4px; margin-inline: 2px; border-radius: 5px; background: var(--primary-soft); font-size: 0.8em; text-decoration: none; }
+  .markdown .hljs-keyword, .markdown .hljs-selector-tag, .markdown .hljs-literal { color: var(--primary); font-weight: 600; }
+  .markdown .hljs-string, .markdown .hljs-attr, .markdown .hljs-addition { color: var(--success-text); }
+  .markdown .hljs-number, .markdown .hljs-built_in, .markdown .hljs-title { color: var(--warning-text); }
+  .markdown .hljs-comment, .markdown .hljs-quote { color: var(--muted); font-style: italic; }
+  .markdown .hljs-deletion { color: var(--error-text); }
+}

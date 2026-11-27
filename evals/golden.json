@@ -1,0 +1,810 @@
+{
+  "name": "golden",
+  "description": "Gate set on the synthetic Harborline corpus (app/rag/evaluation/golden.py). Every format, English, Urdu and Roman Urdu, near misses, conflicts, permissions, multi-passage .docx and follow-ups.",
+  "cases": [
+    {
+      "id": "pdf-vpn-exact",
+      "question": "How many days are VPN tokens rotated, and what rotation code is used?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "handbook.pdf",
+      "expected_passage": "90 days",
+      "expected_facts": [
+        "90 days",
+        "SEC-90"
+      ]
+    },
+    {
+      "id": "pdf-vpn-para",
+      "question": "How often does security operations rotate VPN tokens?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "handbook.pdf",
+      "expected_passage": "90 days",
+      "expected_facts": [
+        "90 days"
+      ]
+    },
+    {
+      "id": "pdf-meal-exact",
+      "question": "What is the meal expense cap per person, including its code?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "handbook.pdf",
+      "expected_passage": "PKR 1800",
+      "expected_facts": [
+        "PKR 1800",
+        "MEAL-1800"
+      ]
+    },
+    {
+      "id": "pdf-meal-admin",
+      "question": "What meal code applies to the per-person expense cap?",
+      "language": "en",
+      "persona": "admin",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "handbook.pdf",
+      "expected_passage": "MEAL-1800",
+      "expected_facts": [
+        "MEAL-1800"
+      ]
+    },
+    {
+      "id": "pdf-extension",
+      "question": "What is the billing director desk extension in the facilities handbook?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "docx-notice-exact",
+      "question": "How many days is the vendor contract notice period, and what is contract code VC-2260 doing in that clause?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "vendor-contract.docx",
+      "expected_passage": "60 days",
+      "expected_facts": [
+        "60 days",
+        "VC-2260"
+      ]
+    },
+    {
+      "id": "docx-notice-para",
+      "question": "How much notice does the Harborline vendor contract require?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "vendor-contract.docx",
+      "expected_passage": "60 days",
+      "expected_facts": [
+        "60 days"
+      ]
+    },
+    {
+      "id": "docx-pay-exact",
+      "question": "What payment code is paired with the vendor contract payment terms?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "vendor-contract.docx",
+      "expected_passage": "PAY-45",
+      "expected_facts": [
+        "PAY-45"
+      ]
+    },
+    {
+      "id": "docx-table",
+      "question": "What is the refresh cycle for the Contoso Book 14 in the vendor contract?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "vendor-contract.docx",
+      "expected_passage": "four years",
+      "expected_facts": [
+        "four years",
+        "Contoso Book 14"
+      ]
+    },
+    {
+      "id": "docx-bank",
+      "question": "Which bank account receives Harborline vendor payments?",
+      "language": "en",
+      "persona": "admin",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "xlsx-ups-exact",
+      "question": "What code and location are recorded for the UPS battery in the asset register?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "asset-register.xlsx",
+      "expected_passage": "UPS-B40",
+      "expected_facts": [
+        "UPS-B40",
+        "Hall B"
+      ]
+    },
+    {
+      "id": "xlsx-ups-count",
+      "question": "How many UPS battery units are stored in Hall B?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "asset-register.xlsx",
+      "expected_passage": "Hall B",
+      "expected_facts": [
+        "40",
+        "Hall B"
+      ]
+    },
+    {
+      "id": "xlsx-budget",
+      "question": "What amount is listed for chiller replacement in the asset register budget?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "asset-register.xlsx",
+      "expected_passage": "PKR 125000",
+      "expected_facts": [
+        "PKR 125000"
+      ]
+    },
+    {
+      "id": "xlsx-cooling-code",
+      "question": "What asset code is assigned to the Hall A cooling unit?",
+      "language": "en",
+      "persona": "admin",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "asset-register.xlsx",
+      "expected_passage": "CHL-A12",
+      "expected_facts": [
+        "CHL-A12"
+      ]
+    },
+    {
+      "id": "xlsx-salary",
+      "question": "What monthly salary band for technicians is in the asset register?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "pptx-capacity",
+      "question": "At what capacity do the Hall A chillers run in the quarterly review?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "quarterly-review.pptx",
+      "expected_passage": "60 percent",
+      "expected_facts": [
+        "60 percent"
+      ]
+    },
+    {
+      "id": "pptx-hours",
+      "question": "What support hours does the quarterly review list for EMEA?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "quarterly-review.pptx",
+      "expected_passage": "07:00 to 19:00",
+      "expected_facts": [
+        "07:00 to 19:00",
+        "EMEA"
+      ]
+    },
+    {
+      "id": "pptx-para",
+      "question": "How heavily loaded are the Hall A chillers according to the quarterly review?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "quarterly-review.pptx",
+      "expected_passage": "60 percent",
+      "expected_facts": [
+        "60 percent"
+      ]
+    },
+    {
+      "id": "pptx-headcount",
+      "question": "How many staff does the quarterly review say joined this quarter?",
+      "language": "en",
+      "persona": "admin",
+      "category": "absent",
+      "expect_refusal": true
+    },
+    {
+      "id": "txt-ticket",
+      "question": "What is the approved change ticket for the Lahore core switch?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "CHG-4418",
+      "expected_facts": [
+        "CHG-4418"
+      ]
+    },
+    {
+      "id": "txt-window",
+      "question": "When is the Lahore core switch maintenance window?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "Sunday 02:00 to 04:00 PKT",
+      "expected_facts": [
+        "Sunday 02:00"
+      ]
+    },
+    {
+      "id": "txt-ticket-para",
+      "question": "Which approved change covers the Lahore core switch?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "CHG-4418",
+      "expected_facts": [
+        "CHG-4418"
+      ]
+    },
+    {
+      "id": "txt-owner-ticket",
+      "question": "What approved change ticket does the Lahore runbook name?",
+      "language": "en",
+      "persona": "admin",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "CHG-4418",
+      "expected_facts": [
+        "CHG-4418"
+      ]
+    },
+    {
+      "id": "txt-refund-exact",
+      "question": "How many days is the billing refund window, and what code do customers quote?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "refund-policy.txt",
+      "expected_passage": "thirty days",
+      "expected_facts": [
+        "thirty days",
+        "REFUND-30"
+      ]
+    },
+    {
+      "id": "txt-refund-para",
+      "question": "How long do customers have to dispute an invoice under the billing policy?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "refund-policy.txt",
+      "expected_passage": "thirty days",
+      "expected_facts": [
+        "thirty days"
+      ]
+    },
+    {
+      "id": "csv-db01",
+      "question": "What patch window and code does the schedule list for host db01?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "patch-schedule.csv",
+      "expected_passage": "DB-01",
+      "expected_facts": [
+        "DB-01",
+        "Sunday 02:00"
+      ]
+    },
+    {
+      "id": "csv-web01",
+      "question": "When does the patch schedule say host web01 is patched?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "patch-schedule.csv",
+      "expected_passage": "WEB-01",
+      "expected_facts": [
+        "WEB-01",
+        "Saturday 23:00"
+      ]
+    },
+    {
+      "id": "csv-para",
+      "question": "Which team owns host db01 in the patch schedule, and when is that host patched?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "patch-schedule.csv",
+      "expected_passage": "platform team",
+      "expected_facts": [
+        "platform team",
+        "Sunday 02:00"
+      ]
+    },
+    {
+      "id": "csv-phone",
+      "question": "What phone number is listed for the platform team in the patch schedule?",
+      "language": "en",
+      "persona": "admin",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "conflict-leave",
+      "question": "How many working days of annual leave do permanent staff receive under the current policy?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "conflicting",
+      "expect_refusal": false,
+      "expected_document": "leave-policy.txt",
+      "expected_passage": "18 working days",
+      "expected_facts": [
+        "18 working days"
+      ],
+      "forbidden_facts": [
+        "12 working days"
+      ],
+      "conflict_markers": [
+        "withdrawn",
+        "draft"
+      ]
+    },
+    {
+      "id": "conflict-para",
+      "question": "What is the current annual leave allowance for permanent staff, not the withdrawn draft?",
+      "language": "en",
+      "persona": "member",
+      "category": "conflicting",
+      "expect_refusal": false,
+      "expected_document": "leave-policy.txt",
+      "expected_passage": "18 working days",
+      "expected_facts": [
+        "18 working days"
+      ],
+      "forbidden_facts": [
+        "12 working days"
+      ],
+      "conflict_markers": [
+        "withdrawn",
+        "draft"
+      ]
+    },
+    {
+      "id": "long-capacity",
+      "question": "What is the approved standby generator fuel capacity in the site manual?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "longer",
+      "expect_refusal": false,
+      "expected_document": "site-manual.txt",
+      "expected_passage": "340 litres",
+      "expected_facts": [
+        "340 litres"
+      ],
+      "forbidden_facts": [
+        "180 litres"
+      ],
+      "conflict_markers": [
+        "rejected",
+        "draft"
+      ]
+    },
+    {
+      "id": "long-month",
+      "question": "What is the annual inspection month for the standby generator in the site manual?",
+      "language": "en",
+      "persona": "owner",
+      "category": "longer",
+      "expect_refusal": false,
+      "expected_document": "site-manual.txt",
+      "expected_passage": "March",
+      "expected_facts": [
+        "March"
+      ]
+    },
+    {
+      "id": "long-para",
+      "question": "How much fuel was approved for the standby generator, rather than the rejected draft?",
+      "language": "en",
+      "persona": "admin",
+      "category": "longer",
+      "expect_refusal": false,
+      "expected_document": "site-manual.txt",
+      "expected_passage": "340 litres",
+      "expected_facts": [
+        "340 litres"
+      ],
+      "forbidden_facts": [
+        "180 litres"
+      ],
+      "conflict_markers": [
+        "rejected"
+      ]
+    },
+    {
+      "id": "roman-casual",
+      "question": "casual leave kitne din hai?",
+      "language": "roman_ur",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "casual-leave-roman.txt",
+      "expected_passage": "8 din",
+      "expected_facts": [
+        "8 din",
+        "CL-8"
+      ]
+    },
+    {
+      "id": "roman-casual-para",
+      "question": "staff ke liye casual leave kitne din ki hai?",
+      "language": "roman_ur",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "casual-leave-roman.txt",
+      "expected_passage": "8 din",
+      "expected_facts": [
+        "8 din"
+      ]
+    },
+    {
+      "id": "roman-code",
+      "question": "casual leave code kya hai?",
+      "language": "roman_ur",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "casual-leave-roman.txt",
+      "expected_passage": "CL-8",
+      "expected_facts": [
+        "CL-8"
+      ]
+    },
+    {
+      "id": "roman-refund",
+      "question": "billing refund window kitne din hai?",
+      "language": "roman_ur",
+      "persona": "admin",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "refund-roman.txt",
+      "expected_passage": "tees din",
+      "expected_facts": [
+        "tees din",
+        "ROMAN-30"
+      ]
+    },
+    {
+      "id": "roman-address",
+      "question": "chief executive ka ghar ka pata kya hai?",
+      "language": "roman_ur",
+      "persona": "outsider",
+      "category": "absent",
+      "expect_refusal": true
+    },
+    {
+      "id": "ur-warehouse",
+      "question": "گودام کے دروازے کا کوڈ کیا ہے؟",
+      "language": "ur",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "warehouse-urdu.txt",
+      "expected_passage": "سلور میپل",
+      "expected_facts": [
+        "سلور میپل"
+      ]
+    },
+    {
+      "id": "ur-shift",
+      "question": "گودام کا کوڈ کس شفٹ کے لیے ہے؟",
+      "language": "ur",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "warehouse-urdu.txt",
+      "expected_passage": "رات کی شفٹ",
+      "expected_facts": [
+        "رات کی شفٹ"
+      ]
+    },
+    {
+      "id": "ur-address",
+      "question": "چیف ایگزیکٹو کے گھر کا پتہ کیا ہے؟",
+      "language": "ur",
+      "persona": "owner",
+      "category": "absent",
+      "expect_refusal": true
+    },
+    {
+      "id": "ur-admin",
+      "question": "گودام کے دروازے کا کوڈ کیا ہے؟",
+      "language": "ur",
+      "persona": "admin",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "warehouse-urdu.txt",
+      "expected_passage": "سلور میپل",
+      "expected_facts": [
+        "سلور میپل"
+      ]
+    },
+    {
+      "id": "rate-member",
+      "question": "What hourly amount and code does the restricted priority support rate card charge?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "rate-card.txt",
+      "expected_passage": "PKR 4500",
+      "expected_facts": [
+        "PKR 4500",
+        "RATE-4500"
+      ]
+    },
+    {
+      "id": "rate-admin",
+      "question": "What is the restricted priority support rate code?",
+      "language": "en",
+      "persona": "admin",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "rate-card.txt",
+      "expected_passage": "RATE-4500",
+      "expected_facts": [
+        "RATE-4500"
+      ]
+    },
+    {
+      "id": "rate-outsider",
+      "question": "What is the restricted priority support rate code and hourly amount?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "unauthorized",
+      "expect_refusal": true,
+      "expected_document": "rate-card.txt",
+      "expected_passage": "RATE-4500",
+      "forbidden_facts": [
+        "RATE-4500",
+        "PKR 4500"
+      ]
+    },
+    {
+      "id": "rate-owner",
+      "question": "What is the restricted priority support rate code and hourly amount?",
+      "language": "en",
+      "persona": "owner",
+      "category": "unauthorized",
+      "expect_refusal": true,
+      "expected_document": "rate-card.txt",
+      "expected_passage": "RATE-4500",
+      "forbidden_facts": [
+        "RATE-4500",
+        "PKR 4500"
+      ]
+    },
+    {
+      "id": "door-owner",
+      "question": "What is the warehouse door code for the night shift?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "warehouse-access.txt",
+      "expected_passage": "SILVERMAPLE",
+      "expected_facts": [
+        "SILVERMAPLE"
+      ]
+    },
+    {
+      "id": "door-admin",
+      "question": "What is the warehouse door code for the night shift?",
+      "language": "en",
+      "persona": "admin",
+      "category": "unauthorized",
+      "expect_refusal": true,
+      "expected_document": "warehouse-access.txt",
+      "expected_passage": "SILVERMAPLE",
+      "forbidden_facts": [
+        "SILVERMAPLE"
+      ]
+    },
+    {
+      "id": "door-member",
+      "question": "What is the warehouse door code for the night shift?",
+      "language": "en",
+      "persona": "member",
+      "category": "unauthorized",
+      "expect_refusal": true,
+      "expected_document": "warehouse-access.txt",
+      "expected_passage": "SILVERMAPLE",
+      "forbidden_facts": [
+        "SILVERMAPLE"
+      ]
+    },
+    {
+      "id": "door-outsider",
+      "question": "What is the warehouse door code for the night shift?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "unauthorized",
+      "expect_refusal": true,
+      "expected_document": "warehouse-access.txt",
+      "expected_passage": "SILVERMAPLE",
+      "forbidden_facts": [
+        "SILVERMAPLE"
+      ]
+    },
+    {
+      "id": "absent-address",
+      "question": "What is the chief executive home address?",
+      "language": "en",
+      "persona": "member",
+      "category": "absent",
+      "expect_refusal": true
+    },
+    {
+      "id": "similar-phone",
+      "question": "What phone extension reaches the Lahore network desk?",
+      "language": "en",
+      "persona": "owner",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "faq-ticket",
+      "question": "What change ticket does the network desk FAQ itself print?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "notes-days",
+      "question": "How many refund days do the billing notes, not the policy, state?",
+      "language": "en",
+      "persona": "admin",
+      "category": "similar_insufficient",
+      "expect_refusal": true
+    },
+    {
+      "id": "docx-memo-multi",
+      "question": "What does the IT memo say about domain joining and network drives, with their codes?",
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "it-memo.docx",
+      "expected_passage": "DOM-30",
+      "expected_facts": [
+        "DOM-30",
+        "NET-77"
+      ]
+    },
+    {
+      "id": "docx-memo-vague",
+      "question": "what is IT policy for laptops?",
+      "language": "en",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "it-memo.docx",
+      "expected_passage": "HARBOR domain",
+      "expected_facts": [
+        "HARBOR domain"
+      ]
+    },
+    {
+      "id": "docx-memo-drive",
+      "question": "What code does the IT memo give for the mapped network drive?",
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "it-memo.docx",
+      "expected_passage": "NET-77",
+      "expected_facts": [
+        "NET-77"
+      ]
+    },
+    {
+      "id": "followup-question-mark",
+      "question": "?",
+      "history": [
+        {
+          "question": "How much notice does the Harborline vendor contract require?",
+          "answer": null
+        }
+      ],
+      "language": "en",
+      "persona": "outsider",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "vendor-contract.docx",
+      "expected_passage": "60 days",
+      "expected_facts": [
+        "60 days"
+      ]
+    },
+    {
+      "id": "followup-why-roman",
+      "question": "kyun?",
+      "history": [
+        {
+          "question": "casual leave kitne din hai?",
+          "answer": null
+        }
+      ],
+      "language": "roman_ur",
+      "persona": "member",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "casual-leave-roman.txt",
+      "expected_passage": "8 din",
+      "expected_facts": [
+        "8 din"
+      ]
+    },
+    {
+      "id": "followup-qmark-after-qmark",
+      "question": "?",
+      "history": [
+        {
+          "question": "What is the approved change ticket for the Lahore core switch?",
+          "answer": null
+        },
+        {
+          "question": "?",
+          "answer": null
+        }
+      ],
+      "language": "en",
+      "persona": "owner",
+      "category": "answerable",
+      "expect_refusal": false,
+      "expected_document": "incident-runbook.txt",
+      "expected_passage": "CHG-4418",
+      "expected_facts": [
+        "CHG-4418"
+      ]
+    }
+  ]
+}

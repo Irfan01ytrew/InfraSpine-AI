@@ -1,0 +1,4 @@
+# Render aggregate administrative reports as PDF; DOCX/XLSX/PPTX use the core office libraries.
+reportlab==5.0.1
+arabic-reshaper==3.0.1
+python-bidi==0.6.12

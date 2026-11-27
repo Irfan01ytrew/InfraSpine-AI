@@ -1,0 +1,34 @@
+FROM python:3.12.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10 \
+    APP_ENV=testing \
+    RAG_DATA_DIR=/tmp/infraspine-verification-data
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 libgl1 libsm6 libxext6 libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements-dev.txt requirements-media.txt ./
+RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+        --extra-index-url https://pypi.org/simple torch==2.14.1 \
+    && python -m pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt -r requirements-media.txt
+RUN python -m pip install --no-cache-dir --force-reinstall --no-deps \
+        --index-url https://download.pytorch.org/whl/cpu torchvision==0.29.1+cpu
+COPY requirements-document-tables.txt ./requirements-document-tables.txt
+RUN python -m pip install --no-cache-dir -r requirements-document-tables.txt
+COPY requirements-reporting.txt ./requirements-reporting.txt
+RUN python -m pip install --no-cache-dir -r requirements-reporting.txt
+COPY app ./app
+COPY migrations ./migrations
+COPY tests ./tests
+COPY evals ./evals
+COPY scripts ./scripts
+COPY alembic.ini ./alembic.ini
+COPY Dockerfile compose.onprem.yaml .env.example ./
+
+CMD ["python", "-m", "pytest", "-q", "--basetemp", "/tmp/infraspine-pytest"]

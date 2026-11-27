@@ -1,0 +1,77 @@
+# Secrets
+.env
+.env.*
+!.env.onprem.example
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-verify/
+.venv-verify-312/
+.venv-verify-20261023/
+.venv-stale-py312/
+.venv-py315/
+.verify-runtime/
+.pip-cache/
+venv/
+
+# Tooling
+.pytest_cache/
+.pytest-enterprise-*/
+.pytest-isolated-*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# RAG runtime data (uploaded documents, vector index, cached models)
+data/
+
+# Server logs
+logs/
+
+# Local database safety dumps (never commit database contents)
+.backups/
+.local-db-backups/
+onprem-data/
+onprem-logs/
+onprem-backups/
+onprem-postgres/
+onprem-qdrant/
+imports/
+.env.onprem
+
+# Evaluation gate reports
+evals/reports/
+
+# Local verification runs: test databases, browser profiles, logs and keys
+.verification-*/
+.vite/
+scratch/
+# Release packages and their unpacked copies are build outputs, not source
+artifacts/
+/.irfanix-cycle/
+test_video.mov
+
+# Logs and local test artifacts
+*.log
+npm-debug.log*
+/tmp/
+# Docker local volumes and generated smoke env (never commit secrets)
+docker-data/
+.env.docker
+
+!.env.docker.example

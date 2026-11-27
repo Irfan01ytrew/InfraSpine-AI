@@ -1,0 +1,23 @@
+{
+  "retrieval": {
+    "recall@1": {"min": 0.8},
+    "recall@5": {"min": 0.97},
+    "ndcg@5": {"min": 0.92},
+    "mrr": {"min": 0.9},
+    "permission_leaks": {"max": 0},
+    "retrieval_p95_ms": {"max": 1500},
+    "by_language": {
+      "ur": {"recall": {"min": 1.0}},
+      "roman_ur": {"recall": {"min": 1.0}}
+    }
+  },
+  "answers": {
+    "answer_correctness": {"min": 0.9},
+    "abstention_accuracy": {"min": 0.9},
+    "groundedness": {"min": 0.9},
+    "citation_accuracy": {"min": 0.95},
+    "unsupported_claim_rate": {"max": 0.02},
+    "permission_isolation": {"min": 1.0},
+    "false_refusals": {"max": 3}
+  }
+}

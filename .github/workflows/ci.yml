@@ -1,0 +1,106 @@
+# Every push and pull request: unit/API tests, the frontend build and the retrieval evaluation gate.
+# Nightly and on demand: the answer gate, which calls a real LLM (needs the EVAL_LLM_* repository secrets).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "30 21 * * *" # 02:30 PKT
+  workflow_dispatch:
+    inputs:
+      answers:
+        description: "Also score production answers with the LLM"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  APP_ENV: testing
+  SESSION_COOKIE_SECURE: "false"
+  DATABASE_URL: postgresql+asyncpg://infraspine_app:ci-password@localhost:5432/infraspine_ai
+  HF_HOME: ${{ github.workspace }}/.hf-cache
+  RAG_MODELS_DIR: ${{ github.workspace }}/.hf-cache/embedding
+  LOG_DIR: ""
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Model cache
+        uses: actions/cache@v4
+        with:
+          path: .hf-cache
+          key: hf-${{ hashFiles('requirements.txt') }}-v1
+      - name: Databases
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE ROLE infraspine_app LOGIN PASSWORD 'ci-password';"
+          for db in infraspine_ai infraspine_ai_test infraspine_ai_evalgate; do
+            psql -h localhost -U postgres -c "CREATE DATABASE $db OWNER infraspine_app;"
+          done
+      - name: Master key
+        run: echo "MASTER_ENCRYPTION_KEY=$(python -c 'import base64,os;print(base64.b64encode(os.urandom(32)).decode())')" >> "$GITHUB_ENV"
+      # CPU-only PyTorch first: the default Linux wheels are CUDA builds that pull several GB of NVIDIA libraries and
+      # fill the runner's disk. The pinned versions match requirements.txt, so the next step keeps them.
+      - name: CPU-only PyTorch
+        run: pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements-dev.txt
+      - run: python -m alembic upgrade head
+      - name: Tests
+        run: python -m pytest -q
+      - name: Retrieval gate
+        run: python -m app.rag.evaluation.gate
+      - name: Answer gate (paced for free-tier keys with EVAL_LLM_RPM)
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.answers)
+        env:
+          EVAL_LLM_PROVIDER: ${{ secrets.EVAL_LLM_PROVIDER }}
+          EVAL_LLM_MODEL: ${{ secrets.EVAL_LLM_MODEL }}
+          EVAL_LLM_API_KEY: ${{ secrets.EVAL_LLM_API_KEY }}
+          EVAL_LLM_BASE_URL: ${{ secrets.EVAL_LLM_BASE_URL }}
+          EVAL_LLM_RPM: ${{ vars.EVAL_LLM_RPM || 0 }}
+        run: python -m app.rag.evaluation.gate --answers --provider env
+      - name: Gate reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-reports
+          path: evals/reports/
+          if-no-files-found: ignore
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

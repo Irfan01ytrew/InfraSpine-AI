@@ -1,0 +1,494 @@
+{
+  "name": "enterprise-workloads",
+  "description": "Realistic enterprise workloads over the synthetic Northwind Traders corpus (app.rag.evaluation.workloads) plus the Harborline golden corpus: discovery by filename, month, date and site; small fragmented documents; follow-ups and topic switches; Urdu and Roman Urdu; multi-document questions; grounding; ACLs; a large repetitive log.",
+  "cases": [
+    {
+      "id": "discovery-filename-exact", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What is in Internet-Bills-July2026.docx?",
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "41,250"}],
+      "expected_facts": ["41,250"],
+      "forbidden_facts": ["47,800"]
+    },
+    {
+      "id": "discovery-filename-partial", "scenario": "discovery", "language": "mixed", "persona": "admin", "expect": "answer",
+      "question": "Internet-Bills-July2026 phr yeh file kya hai",
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "Agenda for Payments Approval"}],
+      "expected_facts": ["Nexlinx|Optix|41,250|Payments Approval"],
+      "note": "The user pastes a truncated filename and asks what the file is."
+    },
+    {
+      "id": "discovery-month-roman", "scenario": "discovery", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "july ka internet bill kitna tha?",
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "41,250"}],
+      "expected_facts": ["41,250"],
+      "forbidden_facts": ["47,800"],
+      "distractor_documents": ["Internet-Bills-August2026.docx", "billing-dashboard-capture.txt"]
+    },
+    {
+      "id": "discovery-month-en", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What was the total internet bill for August 2026?",
+      "expected_documents": ["Internet-Bills-August2026.docx"],
+      "evidence": [{"document": "Internet-Bills-August2026.docx", "passage": "47,800"}],
+      "expected_facts": ["47,800"],
+      "forbidden_facts": ["41,250"],
+      "distractor_documents": ["Internet-Bills-July2026.docx"]
+    },
+    {
+      "id": "discovery-site-bill", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "How much is the internet bill for the Sahiwal branch?",
+      "expected_documents": ["Internet-Bill-Sahiwal-Branch.docx"],
+      "evidence": [{"document": "Internet-Bill-Sahiwal-Branch.docx", "passage": "60,000"}],
+      "expected_facts": ["60,000"]
+    },
+    {
+      "id": "discovery-date-september", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What did the board decide at the 15 September 2026 meeting?",
+      "expected_documents": ["Board-Minutes-2026-09-15.docx"],
+      "evidence": [{"document": "Board-Minutes-2026-09-15.docx", "passage": "PKR 12 million for the CCTV upgrade"}],
+      "expected_facts": ["12 million"],
+      "forbidden_facts": ["4.5 million"]
+    },
+    {
+      "id": "discovery-date-june", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What did the board approve in its June 2026 meeting?",
+      "expected_documents": ["Board-Minutes-2026-06-10.docx"],
+      "evidence": [{"document": "Board-Minutes-2026-06-10.docx", "passage": "PKR 4.5 million for generator replacement"}],
+      "expected_facts": ["4.5 million"],
+      "forbidden_facts": ["12 million"]
+    },
+    {
+      "id": "discovery-site-lahore", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What did the Lahore data centre cooling audit find?",
+      "expected_documents": ["Q3-2026-Cooling-Audit-Lahore-DC.pdf"],
+      "evidence": [{"document": "Q3-2026-Cooling-Audit-Lahore-DC.pdf", "passage": "chiller 2 shows high vibration"}],
+      "expected_facts": ["vibration"],
+      "forbidden_facts": ["refrigerant"]
+    },
+    {
+      "id": "discovery-site-karachi", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What was the average cold-aisle temperature in the Karachi DC cooling audit?",
+      "expected_documents": ["Q3-2026-Cooling-Audit-Karachi-DC.pdf"],
+      "evidence": [{"document": "Q3-2026-Cooling-Audit-Karachi-DC.pdf", "passage": "25.1 C"}],
+      "expected_facts": ["25.1"],
+      "forbidden_facts": ["23.5"]
+    },
+    {
+      "id": "discovery-vendor-in-content", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What uptime does CloudNet guarantee?",
+      "expected_documents": ["Vendor-Contract-CloudNet.docx"],
+      "evidence": [{"document": "Vendor-Contract-CloudNet.docx", "passage": "99.5% monthly uptime"}],
+      "expected_facts": ["99.5"],
+      "forbidden_facts": ["99.9"],
+      "note": "Control: the vendor is named in the text, not only in the filename."
+    },
+    {
+      "id": "discovery-doc-type", "scenario": "discovery", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What does the visitor parking notice say?",
+      "expected_documents": ["Visitor-Parking-Notice.docx"],
+      "evidence": [{"document": "Visitor-Parking-Notice.docx", "passage": "Basement level B2"}],
+      "expected_facts": ["B2"]
+    },
+
+    {
+      "id": "fragment-table-location", "scenario": "fragmentation", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "Where do visitors park?",
+      "expected_documents": ["Visitor-Parking-Notice.docx"],
+      "evidence": [{"document": "Visitor-Parking-Notice.docx", "passage": "Basement level B2"}],
+      "expected_facts": ["B2"]
+    },
+    {
+      "id": "fragment-table-count", "scenario": "fragmentation", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "How many parking slots are reserved for visitors?",
+      "expected_documents": ["Visitor-Parking-Notice.docx"],
+      "evidence": [{"document": "Visitor-Parking-Notice.docx", "passage": "Basement level B2"}],
+      "expected_facts": ["10"]
+    },
+    {
+      "id": "fragment-memo-lines", "scenario": "fragmentation", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "Which internet links are listed in the July 2026 payment memo?",
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "Internet media link Nexlinx"}],
+      "expected_facts": ["Nexlinx", "Optix"],
+      "distractor_documents": ["Internet-Bills-August2026.docx"]
+    },
+    {
+      "id": "fragment-memo-header", "scenario": "fragmentation", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "Who is the July 2026 internet payment memo addressed to?",
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "To: CEO, Director Operations and CFO"}],
+      "expected_facts": ["CFO"]
+    },
+
+    {
+      "id": "followup-incident-july", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "july ka kitna bill tha",
+      "history": [
+        {"question": "What is in the billing dashboard capture?",
+         "answer": "The capture shows the Billing & payments dashboard for Northwind Traders: outstanding balance $0.00, no payment methods added, no recent spending, currency USD. [S1]",
+         "cited": ["billing-dashboard-capture.txt"]}
+      ],
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "41,250"}],
+      "expected_facts": ["41,250"],
+      "history_facts": ["0.00"],
+      "independent": true,
+      "note": "Replays the 2026-10-19 incident: a new topic after a screenshot question."
+    },
+    {
+      "id": "followup-incident-net", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "net ka bill yr",
+      "history": [
+        {"question": "What is in the billing dashboard capture?",
+         "answer": "The capture shows the Billing & payments dashboard for Northwind Traders: outstanding balance $0.00, no payment methods added, no recent spending, currency USD. [S1]",
+         "cited": ["billing-dashboard-capture.txt"]},
+        {"question": "july ka kitna bill tha", "answer": null}
+      ],
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "41,250"}],
+      "expected_facts": ["41,250"],
+      "history_facts": ["0.00"],
+      "note": "'net' means internet; the month comes from the previous (unanswered) question."
+    },
+    {
+      "id": "followup-incident-docs", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "aur docs ma deko",
+      "history": [
+        {"question": "What is in the billing dashboard capture?",
+         "answer": "The capture shows the Billing & payments dashboard for Northwind Traders: outstanding balance $0.00, no payment methods added, no recent spending, currency USD. [S1]",
+         "cited": ["billing-dashboard-capture.txt"]},
+        {"question": "july ka kitna bill tha", "answer": null},
+        {"question": "net ka bill yr", "answer": null}
+      ],
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "41,250"}],
+      "expected_facts": ["41,250"],
+      "history_facts": ["0.00"],
+      "note": "An explicit request to search the documents for the previous question."
+    },
+    {
+      "id": "followup-incident-filename", "scenario": "followup", "language": "mixed", "persona": "admin", "expect": "answer",
+      "question": "Internet-Bills-July2026.docx phr yeh file kya hai",
+      "history": [
+        {"question": "What is in the billing dashboard capture?",
+         "answer": "The capture shows the Billing & payments dashboard for Northwind Traders: outstanding balance $0.00, no payment methods added, no recent spending, currency USD. [S1]",
+         "cited": ["billing-dashboard-capture.txt"]},
+        {"question": "july ka kitna bill tha", "answer": null},
+        {"question": "net ka bill yr", "answer": null}
+      ],
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "Internet media link"}],
+      "expected_facts": ["Nexlinx|Optix|41,250|Payments Approval"],
+      "history_facts": ["0.00"],
+      "independent": true
+    },
+    {
+      "id": "followup-switch-month", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "aur August ka?",
+      "history": [
+        {"question": "What was the July 2026 internet bill total?",
+         "answer": "The July 2026 internet bill total is Rs. 41,250. [S1]",
+         "cited": ["Internet-Bills-July2026.docx"]}
+      ],
+      "expected_documents": ["Internet-Bills-August2026.docx"],
+      "evidence": [{"document": "Internet-Bills-August2026.docx", "passage": "47,800"}],
+      "expected_facts": ["47,800"]
+    },
+    {
+      "id": "followup-refers-back", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "is mein Optix 200mbps ka amount kitna hai?",
+      "history": [
+        {"question": "What was the July 2026 internet bill total?",
+         "answer": "The July 2026 internet bill total is Rs. 41,250. [S1]",
+         "cited": ["Internet-Bills-July2026.docx"]}
+      ],
+      "expected_documents": ["Internet-Bills-July2026.docx"],
+      "evidence": [{"document": "Internet-Bills-July2026.docx", "passage": "Internet media link Optix 200mbps"}],
+      "expected_facts": ["14,600"]
+    },
+    {
+      "id": "followup-topic-switch", "scenario": "followup", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What is the notice period in the CloudNet contract?",
+      "history": [
+        {"question": "What was the July 2026 internet bill total?",
+         "answer": "The July 2026 internet bill total is Rs. 41,250. [S1]",
+         "cited": ["Internet-Bills-July2026.docx"]}
+      ],
+      "expected_documents": ["Vendor-Contract-CloudNet.docx"],
+      "evidence": [{"document": "Vendor-Contract-CloudNet.docx", "passage": "90 days written notice"}],
+      "expected_facts": ["90 days"],
+      "history_facts": ["41,250"],
+      "independent": true
+    },
+    {
+      "id": "followup-switch-roman", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "cafeteria ka lunch time kya hai?",
+      "history": [
+        {"question": "What is the CloudNet notice period?",
+         "answer": "CloudNet requires 90 days written notice to terminate. [S1]",
+         "cited": ["Vendor-Contract-CloudNet.docx"]}
+      ],
+      "expected_documents": ["Cafeteria-Notice-RomanUrdu.txt"],
+      "evidence": [{"document": "Cafeteria-Notice-RomanUrdu.txt", "passage": "1:30 se 2:30"}],
+      "expected_facts": ["1:30"],
+      "history_facts": ["90 days"],
+      "independent": true
+    },
+    {
+      "id": "followup-vendor-and", "scenario": "followup", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "And DataServe?",
+      "history": [
+        {"question": "What is the CloudNet notice period?",
+         "answer": "CloudNet requires 90 days written notice to terminate. [S1]",
+         "cited": ["Vendor-Contract-CloudNet.docx"]}
+      ],
+      "expected_documents": ["Vendor-Contract-DataServe.docx"],
+      "evidence": [{"document": "Vendor-Contract-DataServe.docx", "passage": "30 days written notice"}],
+      "expected_facts": ["30 days"]
+    },
+    {
+      "id": "followup-transform-urdu", "scenario": "followup", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "urdu mein batao",
+      "history": [
+        {"question": "How many annual leave days do permanent employees get?",
+         "answer": "Permanent employees get 20 working days of annual leave per calendar year. [S1]",
+         "cited": ["Leave-Policy-v3-2026.pdf"]}
+      ],
+      "expected_documents": ["Leave-Policy-v3-2026.pdf"],
+      "evidence": [{"document": "Leave-Policy-v3-2026.pdf", "passage": "20 working days"}],
+      "expected_facts": ["20|بیس|۲۰"]
+    },
+    {
+      "id": "followup-this-file", "scenario": "followup", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What action items does this file list?",
+      "history": [
+        {"question": "What is in Board-Minutes-2026-06-10.docx?",
+         "answer": "These are the June 2026 board minutes: PKR 4.5 million was approved for generator replacement at the Sahiwal branch, and the IT hiring freeze was lifted. [S1]",
+         "cited": ["Board-Minutes-2026-06-10.docx"]}
+      ],
+      "expected_documents": ["Board-Minutes-2026-06-10.docx"],
+      "evidence": [{"document": "Board-Minutes-2026-06-10.docx", "passage": "three generator quotations"}],
+      "expected_facts": ["quotations"],
+      "forbidden_facts": ["revised capital budget"]
+    },
+
+    {
+      "id": "multilingual-roman-to-en", "scenario": "multilingual", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "CloudNet contract ka notice period kitne din hai?",
+      "expected_documents": ["Vendor-Contract-CloudNet.docx"],
+      "evidence": [{"document": "Vendor-Contract-CloudNet.docx", "passage": "90 days written notice"}],
+      "expected_facts": ["90|نوے"]
+    },
+    {
+      "id": "multilingual-urdu-to-en", "scenario": "multilingual", "language": "ur", "persona": "admin", "expect": "answer",
+      "question": "کلاؤڈ نیٹ کے معاہدے میں نوٹس کی مدت کتنی ہے؟",
+      "expected_documents": ["Vendor-Contract-CloudNet.docx"],
+      "evidence": [{"document": "Vendor-Contract-CloudNet.docx", "passage": "90 days written notice"}],
+      "expected_facts": ["90|۹۰|نوے"]
+    },
+    {
+      "id": "multilingual-urdu-to-urdu", "scenario": "multilingual", "language": "ur", "persona": "admin", "expect": "answer",
+      "question": "رات کی شفٹ کا انچارج گارڈ کون ہے؟",
+      "expected_documents": ["Guard-Roster-Urdu.txt"],
+      "evidence": [{"document": "Guard-Roster-Urdu.txt", "passage": "عمران خان"}],
+      "expected_facts": ["عمران|Imran"]
+    },
+    {
+      "id": "multilingual-en-to-urdu", "scenario": "multilingual", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "Who is the guard in charge of the night shift?",
+      "expected_documents": ["Guard-Roster-Urdu.txt"],
+      "evidence": [{"document": "Guard-Roster-Urdu.txt", "passage": "عمران خان"}],
+      "expected_facts": ["Imran|عمران"]
+    },
+    {
+      "id": "multilingual-en-to-roman", "scenario": "multilingual", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What are the cafeteria lunch hours on Friday?",
+      "expected_documents": ["Cafeteria-Notice-RomanUrdu.txt"],
+      "evidence": [{"document": "Cafeteria-Notice-RomanUrdu.txt", "passage": "Jumma ko lunch 2:15 se 3:15"}],
+      "expected_facts": ["2:15"]
+    },
+    {
+      "id": "multilingual-mixed-site", "scenario": "multilingual", "language": "mixed", "persona": "admin", "expect": "answer",
+      "question": "Lahore DC cooling audit ki findings kya thi?",
+      "expected_documents": ["Q3-2026-Cooling-Audit-Lahore-DC.pdf"],
+      "evidence": [{"document": "Q3-2026-Cooling-Audit-Lahore-DC.pdf", "passage": "chiller 2 shows high vibration"}],
+      "expected_facts": ["vibration|وائبریشن"],
+      "forbidden_facts": ["refrigerant"]
+    },
+    {
+      "id": "multilingual-roman-site-bill", "scenario": "multilingual", "language": "roman_ur", "persona": "admin", "expect": "answer",
+      "question": "sahiwal branch ka net bill kitna hai",
+      "expected_documents": ["Internet-Bill-Sahiwal-Branch.docx"],
+      "evidence": [{"document": "Internet-Bill-Sahiwal-Branch.docx", "passage": "60,000"}],
+      "expected_facts": ["60,000"]
+    },
+    {
+      "id": "multilingual-roman-absent", "scenario": "multilingual", "language": "roman_ur", "persona": "admin", "expect": "refusal",
+      "question": "DataServe contract mein service credit ki raqam kitni hai?",
+      "note": "Schedule B is referenced but not included: no amount exists."
+    },
+
+    {
+      "id": "multidoc-compare-notice", "scenario": "multidoc", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "Compare the notice periods in the CloudNet and DataServe contracts.",
+      "expected_documents": ["Vendor-Contract-CloudNet.docx", "Vendor-Contract-DataServe.docx"],
+      "evidence": [
+        {"document": "Vendor-Contract-CloudNet.docx", "passage": "90 days written notice"},
+        {"document": "Vendor-Contract-DataServe.docx", "passage": "30 days written notice"}
+      ],
+      "expected_facts": ["90", "30"]
+    },
+    {
+      "id": "multidoc-two-months", "scenario": "multidoc", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What were the internet bill totals for July and August 2026?",
+      "expected_documents": ["Internet-Bills-July2026.docx", "Internet-Bills-August2026.docx"],
+      "evidence": [
+        {"document": "Internet-Bills-July2026.docx", "passage": "41,250"},
+        {"document": "Internet-Bills-August2026.docx", "passage": "47,800"}
+      ],
+      "expected_facts": ["41,250", "47,800"]
+    },
+    {
+      "id": "multidoc-two-sites", "scenario": "multidoc", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What did the Q3 2026 cooling audits of the Lahore and Karachi data centres find about CRAC units?",
+      "expected_documents": ["Q3-2026-Cooling-Audit-Lahore-DC.pdf", "Q3-2026-Cooling-Audit-Karachi-DC.pdf"],
+      "evidence": [
+        {"document": "Q3-2026-Cooling-Audit-Lahore-DC.pdf", "passage": "CRAC unit 4 filters"},
+        {"document": "Q3-2026-Cooling-Audit-Karachi-DC.pdf", "passage": "refrigerant leak on CRAC unit 2"}
+      ],
+      "expected_facts": ["filter", "refrigerant"]
+    },
+    {
+      "id": "multidoc-all-vendors", "scenario": "multidoc", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "List the uptime guarantees in all our vendor contracts.",
+      "expected_documents": ["Vendor-Contract-CloudNet.docx", "Vendor-Contract-DataServe.docx"],
+      "evidence": [
+        {"document": "Vendor-Contract-CloudNet.docx", "passage": "99.5% monthly uptime"},
+        {"document": "Vendor-Contract-DataServe.docx", "passage": "99.9% uptime"}
+      ],
+      "expected_facts": ["99.5", "99.9"]
+    },
+    {
+      "id": "multidoc-board-year", "scenario": "multidoc", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What spending did the board approve in its June and September 2026 meetings?",
+      "expected_documents": ["Board-Minutes-2026-06-10.docx", "Board-Minutes-2026-09-15.docx"],
+      "evidence": [
+        {"document": "Board-Minutes-2026-06-10.docx", "passage": "PKR 4.5 million for generator replacement"},
+        {"document": "Board-Minutes-2026-09-15.docx", "passage": "PKR 12 million for the CCTV upgrade"}
+      ],
+      "expected_facts": ["4.5 million", "12 million"]
+    },
+
+    {
+      "id": "grounding-superseded", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "How many annual leave days do permanent employees get?",
+      "expected_documents": ["Leave-Policy-v3-2026.pdf"],
+      "evidence": [{"document": "Leave-Policy-v3-2026.pdf", "passage": "20 working days"}],
+      "expected_facts": ["20"],
+      "forbidden_facts": ["16"],
+      "conflict_markers": ["supersed", "version 2", "previous", "older", "earlier"]
+    },
+    {
+      "id": "grounding-near-miss", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "refusal",
+      "question": "What is the service credit amount in the DataServe contract?",
+      "note": "The contract points to Schedule B, which is not in the library."
+    },
+    {
+      "id": "grounding-absent-topic", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "refusal",
+      "question": "What is our maternity leave policy?"
+    },
+    {
+      "id": "grounding-absent-in-named-doc", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "refusal",
+      "question": "What is the late payment penalty in the CloudNet contract?"
+    },
+    {
+      "id": "grounding-general-question", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "general",
+      "question": "What does SLA stand for?",
+      "note": "A general question: open mode may answer it from general knowledge."
+    },
+    {
+      "id": "grounding-history-leak", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "refusal",
+      "question": "What is our maternity leave policy?",
+      "history": [
+        {"question": "What is in the billing dashboard capture?",
+         "answer": "The capture shows the Billing & payments dashboard for Northwind Traders: outstanding balance $0.00, no payment methods added, no recent spending, currency USD. [S1]",
+         "cited": ["billing-dashboard-capture.txt"]}
+      ],
+      "history_facts": ["0.00"],
+      "independent": true
+    },
+    {
+      "id": "grounding-exact-amount", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "What is the monthly fee in the CloudNet contract?",
+      "expected_documents": ["Vendor-Contract-CloudNet.docx"],
+      "evidence": [{"document": "Vendor-Contract-CloudNet.docx", "passage": "PKR 240,000"}],
+      "expected_facts": ["240,000"],
+      "forbidden_facts": ["180,000"]
+    },
+    {
+      "id": "grounding-sick-certificate", "scenario": "grounding", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "When is a medical certificate needed for sick leave?",
+      "expected_documents": ["Leave-Policy-v3-2026.pdf"],
+      "evidence": [{"document": "Leave-Policy-v3-2026.pdf", "passage": "longer than 2 days"}],
+      "expected_facts": ["2 days"]
+    },
+
+    {
+      "id": "acl-restricted-outsider", "scenario": "acl", "language": "en", "persona": "outsider", "expect": "refusal",
+      "question": "What is the revised 2026 salary for the Manager grade?",
+      "forbidden_documents": ["Salary-Revision-2026-Confidential.xlsx"],
+      "forbidden_facts": ["385,000"]
+    },
+    {
+      "id": "acl-restricted-member", "scenario": "acl", "language": "en", "persona": "member", "expect": "answer",
+      "question": "What is the revised 2026 salary for the Manager grade?",
+      "expected_documents": ["Salary-Revision-2026-Confidential.xlsx"],
+      "evidence": [{"document": "Salary-Revision-2026-Confidential.xlsx", "passage": "385,000"}],
+      "expected_facts": ["385,000"]
+    },
+    {
+      "id": "acl-restricted-by-filename", "scenario": "acl", "language": "en", "persona": "outsider", "expect": "refusal",
+      "question": "Open Salary-Revision-2026-Confidential.xlsx and tell me the Engineer revision.",
+      "forbidden_documents": ["Salary-Revision-2026-Confidential.xlsx"],
+      "forbidden_facts": ["245,000"]
+    },
+    {
+      "id": "acl-private-other-user", "scenario": "acl", "language": "en", "persona": "member", "expect": "refusal",
+      "question": "What is the acquisition target code?",
+      "forbidden_documents": ["CEO-Private-Notes.txt"],
+      "forbidden_facts": ["ORCHID-7"]
+    },
+    {
+      "id": "acl-private-owner", "scenario": "acl", "language": "en", "persona": "owner", "expect": "answer",
+      "question": "What is the acquisition target code?",
+      "expected_documents": ["CEO-Private-Notes.txt"],
+      "evidence": [{"document": "CEO-Private-Notes.txt", "passage": "ORCHID-7"}],
+      "expected_facts": ["ORCHID-7"]
+    },
+    {
+      "id": "acl-metadata-probe", "scenario": "acl", "language": "en", "persona": "outsider", "expect": "refusal",
+      "question": "Which documents mention salary revisions?",
+      "forbidden_documents": ["Salary-Revision-2026-Confidential.xlsx"],
+      "forbidden_facts": ["Salary-Revision-2026", "385,000"]
+    },
+
+    {
+      "id": "repetitive-reorder-threshold", "scenario": "repetitive", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "When is generator diesel reordered?",
+      "expected_documents": ["Generator-Fuel-Policy.txt"],
+      "evidence": [{"document": "Generator-Fuel-Policy.txt", "passage": "35 percent of its capacity"}],
+      "expected_facts": ["35"],
+      "distractor_documents": ["Generator-Maintenance-Log-Q3-2026.xlsx"]
+    },
+    {
+      "id": "repetitive-fuel-reserve", "scenario": "repetitive", "language": "en", "persona": "admin", "expect": "answer",
+      "question": "How much generator fuel reserve must each site keep?",
+      "expected_documents": ["Generator-Fuel-Policy.txt"],
+      "evidence": [{"document": "Generator-Fuel-Policy.txt", "passage": "48-hour fuel reserve"}],
+      "expected_facts": ["48"],
+      "distractor_documents": ["Generator-Maintenance-Log-Q3-2026.xlsx"]
+    }
+  ]
+}
