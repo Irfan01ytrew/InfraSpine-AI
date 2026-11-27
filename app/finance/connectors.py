@@ -241,13 +241,7 @@ def get_connector(settings=None, *, mode: str | None = None) -> PaymentConnector
         primary = _single(primary_name, settings)
     except ConnectorUnavailable:
         primary = None
-    # A fallback that cannot be built (e.g. mock refused in production, or an
-    # http fallback with no URL) must not break a usable primary: drop it and
-    # keep the primary alone, instead of failing the whole selection.
-    try:
-        fallback = _single(fallback_name, settings) if fallback_name not in {primary_name} else None
-    except ConnectorUnavailable:
-        fallback = None
+    fallback = _single(fallback_name, settings) if fallback_name not in {primary_name} else None
     if primary is None:
         if fallback is None:
             raise ConnectorUnavailable('No payment connector is configured')
