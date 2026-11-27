@@ -234,6 +234,61 @@ class FinanceService:
         audit(self.db, self.p, 'finance.invoices_ingested', target=str(batch.id), details={'count': len(items)})
         return out
 
+    async def add_invoices_from_documents(self, batch_id, *, document_ids=None, folder=None):
+        """Invoices from documents already indexed in Knowledge that this person can read (documents.read + ACL).
+        `invoice.ingest` is checked before any document is read."""
+        from app.finance.documents import facts_from_documents
+        await self.batch(batch_id, 'invoice.ingest')
+        items, skipped = await facts_from_documents(self.db, self.user, document_ids=document_ids, folder=folder,
+                                                    date_order=self.settings.rag_date_order)
+        rows = await self.add_invoices(batch_id, items) if items else []
+        audit(self.db, self.p, 'finance.invoices_from_documents', target=str(batch_id),
+              details={'documents': len(items), 'skipped': len(skipped), 'folder': bool(folder)})
+        return rows, skipped
+
+    async def knowledge_documents(self, *, folder=None, query=None) -> dict:
+        """The document/folder picker: only documents and folders this person can read now."""
+        from app.finance.documents import folder_of, readable_documents
+        if not await self.readable_groups('invoice.ingest'):
+            from app.core.errors import PermissionDeniedError
+            raise PermissionDeniedError('You cannot add invoices in any department.')
+        docs = await readable_documents(self.db, self.user, folder=folder, query=query)
+        folders = sorted({f for f in (folder_of(d) for d in docs) if f})
+        return {'documents': [{'id': str(d.id), 'filename': d.filename, 'folder': folder_of(d),
+                               'indexed': d.indexed_version == d.version,
+                               'updated_at': d.updated_at.isoformat() if getattr(d, 'updated_at', None) else None}
+                              for d in docs], 'folders': folders}
+
+    async def connector_status(self) -> dict:
+        from app.finance.connectors import connector_status
+        from app.platform.side_effects import org_scope_id
+        await require(self.db, self.p, 'platform.manage', await org_scope_id(self.db))
+        return await connector_status(self.db, self.settings)
+
+    async def set_connector(self, mode: str | None) -> dict:
+        """Administrator choice of payment connector (mock / http / http+mock); None = use the environment.
+        The bank URL and token stay in the server environment and are never stored or returned here."""
+        from app.finance.connectors import MODES, connector_status, get_connector
+        from app.platform.models import OrgSettings
+        from app.platform.side_effects import org_scope_id
+        await require(self.db, self.p, 'platform.manage', await org_scope_id(self.db))
+        if mode is not None and mode not in MODES:
+            raise InvalidInputError('Choose mock, http or http+mock.')
+        if mode is not None:
+            from app.finance.connectors import ConnectorUnavailable
+            try:
+                get_connector(self.settings, mode=mode)
+            except ConnectorUnavailable as exc:
+                raise ConflictError(f'That connector cannot be used here: {exc}') from None
+        row = await self.db.get(OrgSettings, 1, with_for_update=True)
+        if row is None:
+            raise ConflictError('Organisation settings are not initialised.')
+        previous, row.finance_payment_connector = row.finance_payment_connector, mode
+        await self.db.flush()
+        audit(self.db, self.p, 'finance.connector_changed', target='org_settings',
+              details={'from': previous, 'to': mode})
+        return await connector_status(self.db, self.settings)
+
     async def start(self, batch_id) -> tuple[FinInvoiceBatch, WorkflowRun]:
         """Start (or re-start after corrections) the unified workflow for this batch."""
         from app.workflows.service import WorkflowService

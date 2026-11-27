@@ -88,6 +88,8 @@ services:
       PERSONAL_TASK_SMTP_TIMEOUT_SECONDS: ${PERSONAL_TASK_SMTP_TIMEOUT_SECONDS:-15}
       RAG_INGESTION_MODE: worker
       RAG_WORKER_ENABLED: "false"
+      # Unified workflow runtime (automations, invoices, governance actions); set false to stop it (kill switch).
+      WORKFLOW_ENGINE_WORKER_ENABLED: ${WORKFLOW_ENGINE_WORKER_ENABLED:-true}
       RAG_INDEX_SYNC_SECONDS: "2"
       LOG_DIR: /var/lib/infraspine/logs
       PROVIDER_TRUSTED_PRIVATE_ORIGINS: ${PROVIDER_TRUSTED_PRIVATE_ORIGINS:-}

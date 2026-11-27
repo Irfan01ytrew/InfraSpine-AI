@@ -147,6 +147,9 @@ async def propose_action(
     )
     await db.commit()
     await db.refresh(proposal)
+    from app.services import agent_action_runtime
+
+    await agent_action_runtime.mirror_new_proposal(db, proposal)
     return proposal
 
 
@@ -281,6 +284,9 @@ async def approve_action(
         target=str(proposal.id),
         details={"action_type": proposal.action_type, "approver_id": str(actor.id)},
     )
+    from app.workflows.unified import wake_origin_run
+
+    await wake_origin_run(db, "governance", proposal.id)
     await db.commit()
     await db.refresh(proposal)
     return proposal
@@ -323,6 +329,9 @@ async def reject_action(
         target=str(proposal.id),
         details={"action_type": proposal.action_type, "approver_id": str(actor.id)},
     )
+    from app.workflows.unified import wake_origin_run
+
+    await wake_origin_run(db, "governance", proposal.id)
     await db.commit()
     await db.refresh(proposal)
     return proposal
@@ -394,6 +403,25 @@ async def execute_action(
         await db.commit()
         raise ConflictError("This approved action has expired and cannot be executed.")
 
+    from app.services import agent_action_runtime
+
+    run = await agent_action_runtime.guard(db, proposal)  # a paused or stopped unified run blocks execution
+    if run is not None:
+        # One runtime (step E): the same execution path as the workflow's execute step (execute_once, read-back).
+        proposal = await agent_action_runtime.execute_proposal(db, actor, ctx, proposal, run)
+        await agent_action_runtime.attach_executor(db, run, actor)
+        await db.commit()
+        await db.refresh(proposal)
+        return proposal
+
+    await apply_execution(db, actor, ctx, proposal)
+    await db.commit()
+    await db.refresh(proposal)
+    return proposal
+
+
+async def apply_execution(db: AsyncSession, actor: User, ctx: AuditContext, proposal: AgentActionProposal) -> None:
+    """Run the registered adapter and record the execution (flushed, not committed)."""
     result = await _execute_adapter(db, proposal, actor)
     proposal.status = ACTION_EXECUTED
     proposal.executed_at = _utcnow()
@@ -407,6 +435,3 @@ async def execute_action(
         target=str(proposal.id),
         details={"action_type": proposal.action_type, "executor_id": str(actor.id)},
     )
-    await db.commit()
-    await db.refresh(proposal)
-    return proposal

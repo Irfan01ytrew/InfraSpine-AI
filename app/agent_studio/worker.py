@@ -76,15 +76,27 @@ async def process_next_agent_studio_run(
     cipher: CredentialCipher,
     runtime: LLMRuntime,
     rag: Any | None,
+    *,
+    run_id: uuid.UUID | None = None,
+    exclude_unified: bool = False,
 ) -> bool:
-    """Claim and execute one eligible run. Returns False when the queue is empty."""
-    run_id: uuid.UUID | None = None
-    owner_id: uuid.UUID | None = None
-    expected_attempt: int | None = None
-    expected_claimed_at: datetime | None = None
+    """Claim and execute one eligible run (or the given run). Returns False when nothing was claimed.
+
+    `exclude_unified=True` leaves runs that the unified workflow runtime carries (`wf_runs.origin='studio'`) to the
+    engine, so a paused or stopped workflow run cannot be executed behind its back by this legacy loop."""
+    claim = await claim_agent_studio_run(sessionmaker, run_id=run_id, exclude_unified=exclude_unified)
+    if claim is None:
+        return False
+    await execute_agent_studio_claim(sessionmaker, settings, cipher, runtime, rag, claim)
+    return True
+
+
+async def claim_agent_studio_run(
+    sessionmaker: async_sessionmaker, *, run_id: uuid.UUID | None = None, exclude_unified: bool = False,
+) -> tuple[uuid.UUID, uuid.UUID, int, datetime] | None:
     now = datetime.now(UTC)
     async with sessionmaker() as db:
-        run = await db.scalar(
+        query = (
             select(AgentStudioRun)
             .join(AgentStudioAgent, AgentStudioAgent.id == AgentStudioRun.agent_id)
             .join(User, User.id == AgentStudioRun.owner_id)
@@ -95,21 +107,32 @@ async def process_next_agent_studio_run(
                 AgentStudioAgent.paused.is_(False),
                 User.is_active.is_(True),
             )
-            .order_by(AgentStudioRun.next_attempt_at, AgentStudioRun.created_at)
+        )
+        if run_id is not None:
+            query = query.where(AgentStudioRun.id == run_id)
+        if exclude_unified:
+            from sqlalchemy import String, exists
+            from app.db.workflow_engine_models import WorkflowRun
+            query = query.where(~exists().where(WorkflowRun.origin == "studio",
+                                                WorkflowRun.origin_ref == AgentStudioRun.id.cast(String)))
+        run = await db.scalar(
+            query.order_by(AgentStudioRun.next_attempt_at, AgentStudioRun.created_at)
             .with_for_update(of=AgentStudioRun, skip_locked=True)
             .limit(1)
         )
         if run is None:
-            return False
+            return None
         run.status = "running"
         run.attempt_count += 1
         run.started_at = run.started_at or now
         run.claimed_at = now
         run.failure_code = None
         await db.commit()
-        run_id, owner_id = run.id, run.owner_id
-        expected_attempt, expected_claimed_at = run.attempt_count, run.claimed_at
+        return run.id, run.owner_id, run.attempt_count, run.claimed_at
 
+
+async def execute_agent_studio_claim(sessionmaker, settings, cipher, runtime, rag, claim) -> None:
+    run_id, owner_id, expected_attempt, expected_claimed_at = claim
     async with sessionmaker() as db:
         user = await db.get(User, owner_id)
         if user is None or not user.is_active:
@@ -131,7 +154,7 @@ async def process_next_agent_studio_run(
                     stale.finished_at = datetime.now(UTC)
                     stale.claimed_at = None
                     await failed_db.commit()
-            return True
+            return
         service = AgentStudioService(db, user, settings, cipher, runtime, rag)
         try:
             await service.execute_claimed(
@@ -141,8 +164,7 @@ async def process_next_agent_studio_run(
             )
         except _AgentRunClaimLost:
             # Recovery, cancellation, or a newer attempt already owns this row.
-            return True
-    return True
+            return
 
 
 async def run_agent_studio_worker(
@@ -152,8 +174,11 @@ async def run_agent_studio_worker(
     runtime: LLMRuntime,
     rag: Any | None,
     stop: asyncio.Event,
+    *,
+    exclude_unified: bool = False,
 ) -> None:
-    """Poll the durable queue until the owning application begins shutdown."""
+    """Poll the durable queue until the owning application begins shutdown. With the unified workflow runtime on
+    (`exclude_unified`), this loop only runs work the runtime does not carry (e.g. an owner without a department)."""
     try:
         count = await recover_abandoned_agent_studio_runs(sessionmaker, settings, cipher)
         if count:
@@ -166,7 +191,8 @@ async def run_agent_studio_worker(
                     if count:
                         logger.warning("Recovered interrupted Agent Studio runs count=%s", count)
                     last_recovery = datetime.now(UTC)
-                did_work = await process_next_agent_studio_run(sessionmaker, settings, cipher, runtime, rag)
+                did_work = await process_next_agent_studio_run(sessionmaker, settings, cipher, runtime, rag,
+                                                                exclude_unified=exclude_unified)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

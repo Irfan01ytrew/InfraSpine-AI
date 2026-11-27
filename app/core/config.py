@@ -247,6 +247,10 @@ class Settings(DatabaseSettings):
     # tests and replicas leave it off so they do not drain events as a side effect of starting the app.
     platform_outbox_worker_enabled: bool = True
     platform_outbox_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    # Unified workflow runtime (automations, Agent Studio, agent actions, invoice batches). Unset = on, except
+    # APP_ENV=testing. WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch (read from the environment or .env);
+    # with it off, the legacy Agent Studio and automation loops run their work as before.
+    workflow_engine_worker_enabled: bool | None = None
     agent_studio_run_timeout_seconds: int = Field(default=300, ge=10, le=3600)
     # Optional exact provider/model rates, keyed as "provider:model". No rate means cost is unavailable.
     llm_model_pricing_json: dict[str, dict[str, float]] = Field(default_factory=dict)
@@ -412,6 +416,12 @@ class Settings(DatabaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    @property
+    def workflow_engine_on(self) -> bool:
+        if self.workflow_engine_worker_enabled is not None:
+            return self.workflow_engine_worker_enabled
+        return self.app_env != "testing"
 
 
 @lru_cache

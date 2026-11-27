@@ -28,12 +28,19 @@ class OrgSettings(Base):
     """One row (id = 1) per installation. Times are stored in UTC; business days use `time_zone`."""
 
     __tablename__ = "org_settings"
-    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+    __table_args__ = (
+        CheckConstraint("id = 1", name="single_row"),
+        CheckConstraint("finance_payment_connector IS NULL OR finance_payment_connector IN ('mock','http','http+mock')",
+                        name="finance_connector_valid"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     name: Mapped[str | None] = mapped_column(String(200))
     time_zone: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text(f"'{DEFAULT_TIME_ZONE}'"))
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'PKR'"))
+    # Admin choice of payment connector (step E). NULL = use FINANCE_PAYMENT_CONNECTOR / FINANCE_PAYMENT_FALLBACK.
+    # Bank URL and token stay in the environment (secrets are never stored here).
+    finance_payment_connector: Mapped[str | None] = mapped_column(String(16))
     updated_at: Mapped[datetime] = _now()
 
 

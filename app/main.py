@@ -180,9 +180,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Keep them opt-in so registering the modules never starts external effects by itself. Exception (step E):
     # the unified workflow runtime now carries automation runs and the invoice flow, so it runs by default
     # outside tests (every action it dispatches is already approved / permission-checked per step).
-    # WORKFLOW_ENGINE_WORKER_ENABLED=false turns it off.
-    if owner and os.environ.get("WORKFLOW_ENGINE_WORKER_ENABLED",
-                                "true" if os.environ.get("APP_ENV") != "testing" else "false").lower() == "true":
+    # WORKFLOW_ENGINE_WORKER_ENABLED=false (environment or .env) turns it off. The document worker process
+    # (`python -m app.worker`) runs it too; claims are leased, so two engines never run the same step twice.
+    if owner and settings.workflow_engine_on:
         from app.workflows.engine import run_worker as run_workflow_engine
         worker_tasks.append(asyncio.create_task(
             run_workflow_engine(app.state.sessionmaker, app.state.cipher, stop_worker), name="workflow-engine-worker"
@@ -224,6 +224,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ))
     if settings.agent_studio_worker_enabled and owner:
         from app.agent_studio.worker import run_agent_studio_worker
+        from app.agent_studio.unified import StudioHost, configure_host
+
+        # This process owns the LLM runtime and the knowledge index, so the unified runtime executes Agent Studio
+        # runs here; the legacy loop then only runs tasks the runtime does not carry.
+        unified_studio = settings.workflow_engine_on
+        if unified_studio:
+            configure_host(StudioHost(app.state.sessionmaker, settings, app.state.cipher, app.state.llm_runtime,
+                                      app.state.rag))
 
         app.state.agent_studio_worker_task = asyncio.create_task(
             run_agent_studio_worker(
@@ -233,6 +241,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.llm_runtime,
                 app.state.rag,
                 stop_worker,
+                exclude_unified=unified_studio,
             ),
             name="agent-studio-task-worker",
         )
@@ -294,6 +303,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         stop_worker.set()
+        from app.agent_studio.unified import configure_host as _configure_studio_host
+        _configure_studio_host(None)
         for task in worker_tasks:
             with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
                 await asyncio.wait_for(task, timeout=settings.rag_worker_shutdown_grace_seconds + 15)

@@ -1,0 +1,33 @@
+# Render Blueprint for InfraSpine AI (public demo deploy).
+# Deploy from the step-e-gaps-wip branch (merged Step E gaps).
+# MASTER_ENCRYPTION_KEY is NOT in this file on purpose: it must be base64
+# of exactly 32 random bytes. Set it in the Render dashboard as a secret
+# env var (generate with: openssl rand -base64 32). Never commit it here.
+# The Gemini / LLM provider key is configured later inside the app admin UI.
+databases:
+  - name: infraspine-db
+    plan: free
+    databaseName: infraspine
+    user: infraspine
+
+services:
+  - type: web
+    name: infraspine-ai
+    runtime: docker
+    repo: https://github.com/Irfan01ytrew/InfraSpine-AI
+    branch: step-e-gaps-wip
+    plan: free
+    dockerfilePath: ./Dockerfile
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: WORKFLOW_ENGINE_WORKER_ENABLED
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: infraspine-db
+          property: connectionString

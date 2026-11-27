@@ -150,8 +150,8 @@ class FailoverPaymentConnector:
     """Primary first; the fallback only when the primary is unreachable *before* accepting (ConnectorUnavailable).
     References are prefixed with the connector name so reads go to the connector that holds the transfer."""
 
-    def __init__(self, primary: PaymentConnector, fallback: PaymentConnector | None) -> None:
-        self.primary, self.fallback = primary, fallback
+    def __init__(self, primary: PaymentConnector, fallback: PaymentConnector | None, *, settings=None) -> None:
+        self.primary, self.fallback, self.settings = primary, fallback, settings
         self.name = primary.name if fallback is None else f'{primary.name}+{fallback.name}'
 
     def _pick(self, ref: str):
@@ -159,6 +159,14 @@ class FailoverPaymentConnector:
         for connector in (self.primary, self.fallback):
             if connector is not None and connector.name == prefix:
                 return connector, raw
+        if prefix in {'mock', 'http'} and self.settings is not None:
+            # The transfer was made before an administrator switched connectors: read it where it lives.
+            try:
+                other = _single(prefix, self.settings)
+            except ConnectorUnavailable:
+                other = None
+            if other is not None:
+                return other, raw
         return self.primary, ref
 
     async def submit(self, req: TransferRequest) -> str:
@@ -214,21 +222,81 @@ def _single(name: str, settings) -> PaymentConnector | None:
     raise ConnectorUnavailable(f'Unknown payment connector {name}')
 
 
-def get_connector(settings=None) -> PaymentConnector:
+MODES = {'mock': ('mock', 'none'), 'http': ('http', 'none'), 'http+mock': ('http', 'mock')}
+
+
+def get_connector(settings=None, *, mode: str | None = None) -> PaymentConnector:
+    """`mode` is the administrator's choice (org settings); None = the environment configuration."""
     if _override is not None:
         return _override
     if settings is None:
         from app.core.config import get_settings
         settings = get_settings()
-    primary_name = getattr(settings, 'finance_payment_connector', 'mock')
-    fallback_name = getattr(settings, 'finance_payment_fallback', 'none')
+    if mode in MODES:
+        primary_name, fallback_name = MODES[mode]
+    else:
+        primary_name = getattr(settings, 'finance_payment_connector', 'mock')
+        fallback_name = getattr(settings, 'finance_payment_fallback', 'none')
     try:
         primary = _single(primary_name, settings)
     except ConnectorUnavailable:
         primary = None
-    fallback = _single(fallback_name, settings) if fallback_name not in {primary_name} else None
+    # A fallback that cannot be built (e.g. mock refused in production, or an
+    # http fallback with no URL) must not break a usable primary: drop it and
+    # keep the primary alone, instead of failing the whole selection.
+    try:
+        fallback = _single(fallback_name, settings) if fallback_name not in {primary_name} else None
+    except ConnectorUnavailable:
+        fallback = None
     if primary is None:
         if fallback is None:
             raise ConnectorUnavailable('No payment connector is configured')
         primary, fallback = fallback, None
-    return FailoverPaymentConnector(primary, fallback)
+    return FailoverPaymentConnector(primary, fallback, settings=settings)
+
+
+async def admin_mode(db) -> str | None:
+    from app.platform.models import OrgSettings
+    row = await db.get(OrgSettings, 1, populate_existing=True)
+    return row.finance_payment_connector if row is not None else None
+
+
+async def resolve_connector(db, settings=None) -> PaymentConnector:
+    """The connector in force right now: the administrator's choice if set, else the environment."""
+    return get_connector(settings, mode=await admin_mode(db))
+
+
+async def connector_status(db, settings, *, probe: bool = False) -> dict:
+    """What an administrator sees: which connector is active, where the choice comes from, and whether the
+    real bank is configured. Never returns the token."""
+    from urllib.parse import urlparse
+    mode = await admin_mode(db)
+    env_mode = settings.finance_payment_connector + (
+        f'+{settings.finance_payment_fallback}' if settings.finance_payment_fallback not in {'none', settings.finance_payment_connector} else '')
+    out = {
+        'source': 'admin' if mode else 'environment',
+        'admin_mode': mode,
+        'environment_mode': env_mode,
+        'modes': list(MODES),
+        'http_configured': bool(settings.finance_bank_api_url),
+        'http_host': urlparse(settings.finance_bank_api_url).hostname if settings.finance_bank_api_url else None,
+        'http_token_set': settings.finance_bank_api_token is not None,
+        'mock_allowed': settings.app_env != 'production' or settings.finance_allow_mock_in_production,
+        'production': settings.app_env == 'production',
+        'test_override': _override is not None,
+    }
+    try:
+        connector = get_connector(settings, mode=mode)
+        out.update(active=connector.name, available=True, problem=None,
+                   is_mock='mock' in connector.name.split('+')[:1])
+    except ConnectorUnavailable as exc:
+        out.update(active=None, available=False, problem=str(exc), is_mock=False)
+        return out
+    out['real_bank'] = connector.name.startswith('http')
+    if probe and out['real_bank']:
+        try:
+            await connector.find('infraspine-connectivity-probe')
+            out['reachable'] = True
+        except Exception as exc:  # report, never raise: this is a status page
+            out['reachable'], out['probe_error'] = False, type(exc).__name__
+    return out

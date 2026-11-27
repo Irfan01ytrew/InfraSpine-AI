@@ -4,7 +4,11 @@
   (`origin='automation'`, `origin_ref=definition_key`) whose single step is the `automation.run` adapter. Every
   legacy run is mirrored as a workflow run (`origin_ref=<automation run id>`), so all runs are listed, audited,
   paused and verified in one place, and the action executes through one idempotent executor.
-* Agent Studio runs -> `agent_studio.run` adapter (agent step). Governance actions -> `governance.execute`.
+* Agent Studio runs -> one `origin='studio'` run each (`app.agent_studio.unified`): the engine executes the run
+  through the `agent_studio.execute` action handler (pause / stop / resume, `execute_once` per attempt).
+* Agent action proposals (governance) -> one `origin='governance'` run each (`app.services.agent_action_runtime`):
+  approval step + permissioned execute step through `execute_once`.
+* Designer steps can still call `agent_studio.run` / `governance.execute` adapters.
 * Code-defined system templates (e.g. the invoice flow) -> `origin='system'` definitions, pinned by digest.
 """
 
@@ -112,11 +116,12 @@ async def mirror_pending_automation_runs(sessionmaker, cipher, *, limit: int = 2
     return count
 
 
-async def ensure_system_definition(db, *, scope_id, owner_id, origin_ref, name, description, spec) -> Workflow:
+async def ensure_system_definition(db, *, scope_id, owner_id, origin_ref, name, description, spec,
+                                   origin='system') -> Workflow:
     """A code-defined template pinned by digest: installed once per department, and a new immutable version is
     published when the code's template changes (running executions keep the version they started with). A manager
     who disabled the definition keeps it disabled."""
-    row = await ensure_definition(db, scope_id=scope_id, owner_id=owner_id, origin='system', origin_ref=origin_ref,
+    row = await ensure_definition(db, scope_id=scope_id, owner_id=owner_id, origin=origin, origin_ref=origin_ref,
                                   name=name, description=description, spec=spec)
     current = await db.scalar(select(WorkflowVersion).where(WorkflowVersion.workflow_id == row.id,
                                                             WorkflowVersion.number == row.active_version))
@@ -133,3 +138,25 @@ async def ensure_system_definition(db, *, scope_id, owner_id, origin_ref, name, 
                details={'origin_ref': origin_ref, 'version': number, 'digest': wanted})
     await db.flush()
     return locked
+
+
+async def origin_run(db, origin: str, origin_ref, *, lock=False) -> WorkflowRun | None:
+    """The unified run that carries a legacy record (newest first)."""
+    query = select(WorkflowRun).where(WorkflowRun.origin == origin, WorkflowRun.origin_ref == str(origin_ref))
+    if lock:
+        query = query.with_for_update()
+    return await db.scalar(query.order_by(WorkflowRun.created_at.desc()).limit(1))
+
+
+async def wake_origin_run(db, origin: str, origin_ref) -> None:
+    """A legacy API changed the record a unified run waits on: poll it now instead of at the next interval."""
+    from app.db.workflow_engine_models import WorkflowStep
+    run = await origin_run(db, origin, origin_ref)
+    if run is None or run.status not in {'queued', 'running'}:
+        return
+    now = datetime.now(UTC)
+    steps = (await db.scalars(select(WorkflowStep).where(WorkflowStep.run_id == run.id,
+                                                          WorkflowStep.status == 'waiting'))).all()
+    for step in steps:
+        step.available_at = now
+    run.wake_at = now
