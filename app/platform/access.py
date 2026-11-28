@@ -27,7 +27,6 @@ from app.platform.models import (
 )
 
 WILDCARD = "*"
-BASELINE_SOURCE = "legacy:users"
 # Until module memberships move onto the platform (step D), installation administrators keep these platform
 # administration permissions on every scope. Business permissions (invoice.verify, payment.approve,
 # funds.transfer, ...) are never implied by the legacy admin role.
@@ -178,11 +177,8 @@ def _active_membership(now: datetime):
 
 async def _permissions_on(db: AsyncSession, user_id: uuid.UUID, chain: list[uuid.UUID]) -> tuple[bool, set[str]]:
     now = _now()
-    # The baseline organisation membership every active account has (mirrored from users) grants org-wide
-    # permissions but does not reveal department/module scopes: without a membership there they stay 404.
     member = await db.scalar(select(PlatformMembership.id).where(
-        PlatformMembership.user_id == user_id, PlatformMembership.scope_id.in_(chain), _active_membership(now),
-        or_(PlatformMembership.source != BASELINE_SOURCE, PlatformMembership.scope_id == chain[0]),
+        PlatformMembership.user_id == user_id, PlatformMembership.scope_id.in_(chain), _active_membership(now)
     ).limit(1))
     perms = set(await db.scalars(
         select(PlatformRolePermission.permission)
@@ -306,35 +302,12 @@ async def revoke_user_access(db: AsyncSession, actor: Principal, user_id: uuid.U
     target = await db.scalar(select(User).where(User.id == user_id).with_for_update())
     if target is None:
         raise NotFoundError("Person not found.")
-    from sqlalchemy import delete
-
-    from app.db.models import AccessGroupMember, DepartmentManager
-    from app.platform.handlers import cancel_queued_work
-    from app.platform.sync import MODULES, _member_table
-
     now = _now()
-    counts = {}
-    # Stamp platform memberships first. Setting is_active flushes the ORM hook, which would otherwise
-    # mark the same rows as legacy:removed and let a later reactivation re-grant them.
-    counts["memberships"] = (await db.execute(
-        update(PlatformMembership).where(PlatformMembership.user_id == user_id,
-                                         PlatformMembership.revoked_at.is_(None))
-        .values(revoked_at=now, revoke_reason="platform:access_revoked")
-    )).rowcount or 0
     target.auth_version += 1
-    target.is_active = False  # sign-in is refused until an administrator deliberately reactivates the account
-    legacy = []
-    for spec in MODULES.values():  # module member tables: deactivate (rows kept for history) or remove
-        table = _member_table(spec)
-        if "active" in table.c:
-            legacy.append((f"legacy_{spec.module}", update(table).where(table.c.user_id == user_id, table.c.active.is_(True))
-                           .values(active=False)))
-        else:
-            legacy.append((f"legacy_{spec.module}", delete(table).where(table.c.user_id == user_id)))
-    legacy.append(("legacy_group_memberships", delete(AccessGroupMember).where(AccessGroupMember.user_id == user_id)))
-    legacy.append(("legacy_department_manager", delete(DepartmentManager).where(DepartmentManager.manager_user_id == user_id)))
+    counts = {}
     for name, statement in (
-        *legacy,
+        ("memberships", update(PlatformMembership).where(PlatformMembership.user_id == user_id,
+                                                          PlatformMembership.revoked_at.is_(None)).values(revoked_at=now)),
         ("sessions", update(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
          .values(revoked_at=now)),
         ("channel_identities", update(PlatformChannelIdentity).where(
@@ -344,7 +317,6 @@ async def revoke_user_access(db: AsyncSession, actor: Principal, user_id: uuid.U
          .values(status="cancelled", decided_at=now, decision_note="requester access revoked")),
     ):
         counts[name] = (await db.execute(statement)).rowcount or 0
-    counts.update(await cancel_queued_work(db, user_id))
     reason = reason.strip()[:300] or "unspecified"
     await publish(db, "identity.session_revoked", org.id, {"user_id": str(user_id), "reason": reason, **counts},
                   actor.trace_id)

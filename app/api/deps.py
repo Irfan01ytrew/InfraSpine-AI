@@ -78,10 +78,6 @@ async def get_current_user(request: Request, db: DbSession, settings: AppSetting
     user = await auth.resolve_session(db, token)
     if user is None:
         raise AuthenticationRequiredError()
-    # Access-time fallback: users inserted outside the ORM (tests, bulk SQL) still get an org membership,
-    # unless that membership was platform-revoked.
-    from app.platform.sync import reconcile_user
-    await db.run_sync(lambda s: reconcile_user(s.connection(), user.id))
     if settings.org_mfa_required:
         enrollment_required, reauthentication_required = await auth.mfa_policy_state(db, user, token, settings)
         if enrollment_required and request.url.path not in _MFA_ENROLLMENT_PATHS:

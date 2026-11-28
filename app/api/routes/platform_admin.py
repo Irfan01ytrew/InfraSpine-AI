@@ -12,7 +12,6 @@ from sqlalchemy import select
 from app.api.deps import AdminUser, DbSession, audit_context
 from app.platform import access as platform_access
 from app.platform.models import DEFAULT_TIME_ZONE, OrgSettings
-from app.platform.outbox import outbox_health, requeue_dead
 from app.platform.timezone import _utcnow, org_today, set_org_time_zone, validate_time_zone
 from app.services import audit
 
@@ -64,28 +63,3 @@ async def put_org_settings(body: OrgSettingsIn, request: Request, db: DbSession,
                  details={"from": previous, "to": zone, "at": datetime.now().isoformat(timespec="seconds")})
     await db.commit()
     return await _out(db)
-
-
-
-class RequeueIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    event_ids: list[int] | None = None
-
-
-@router.get("/outbox")
-async def get_outbox(db: DbSession, admin: AdminUser):
-    p = platform_access.principal_for(admin)
-    org = await platform_access.ensure_org_scope(db)
-    await platform_access.require(db, p, "platform.manage", org.id)
-    return await outbox_health(db)
-
-
-@router.post("/outbox/requeue")
-async def post_outbox_requeue(body: RequeueIn, request: Request, db: DbSession, admin: AdminUser):
-    p = platform_access.principal_for(admin)
-    org = await platform_access.ensure_org_scope(db)
-    await platform_access.require(db, p, "platform.manage", org.id)
-    count = await requeue_dead(db, body.event_ids)
-    audit.record(db, audit_context(request, admin), "platform.outbox_requeued", target="platform_outbox",
-                 details={"count": count})
-    return {"requeued": count}

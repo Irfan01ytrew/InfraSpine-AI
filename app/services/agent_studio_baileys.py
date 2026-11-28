@@ -265,17 +265,6 @@ class BridgeSession:
             connection, user, agent = active
             message = await db.get(BaileysMessage, message_id)
             payload = json.loads(unseal(self.cipher, f"message:{message_id}", message.payload_sealed))
-            from app.core.errors import PermissionDeniedError
-            from app.platform.channels import resolve_whatsapp_sender
-            try:
-                principal = await resolve_whatsapp_sender(
-                    db, channel="whatsapp_baileys", sender=payload["jid"],
-                    owner_id=user.id, auto_link_owner=True,
-                )
-            except PermissionDeniedError as exc:
-                raise RuntimeError("identity_revoked") from exc
-            if principal.user_id != user.id:
-                raise RuntimeError("identity_revoked")
             if message.reply_sealed:
                 reply = unseal(self.cipher, f"reply:{message_id}", message.reply_sealed)
             elif " ".join(payload["text"].casefold().split()) in {
@@ -290,8 +279,7 @@ class BridgeSession:
             else:
                 # Release the database connection while waiting for the transport.
                 await db.commit()
-                if not await self.send_reply_once(
-                    db, user, message_id, "ack",
+                if not await self.send_reply(
                     uuid.uuid5(message_id, "ack").hex.upper(),
                     payload["jid"],
                     f"InfraSpine AI · {agent.name}\n\nRequest received. The result or next step will follow here.",
@@ -333,37 +321,10 @@ class BridgeSession:
             message.status = "sending"
             await db.commit()
             delivery_id = message_id.hex.upper()
-            if not await self.send_reply_once(db, user, message_id, "final", delivery_id, payload["jid"], reply, timeout=45):
+            if not await self.send_reply(delivery_id, payload["jid"], reply, timeout=45):
                 raise RuntimeError("delivery_failed")
             message.status = "completed"
             await db.commit()
-
-    async def send_reply_once(self, db, user, message_id, phase, delivery_id, jid, reply, *, timeout):
-        from app.core.errors import NotFoundError, PermissionDeniedError
-        from app.platform.access import principal_for
-        from app.platform.approvals import ActionSpec
-        from app.platform.side_effects import dispatch_once, org_scope_id
-
-        p = principal_for(user, channel="whatsapp_baileys")
-        scope_id = await org_scope_id(db)
-        key = f"baileys:{message_id}:{phase}"
-        action = ActionSpec(
-            "whatsapp.send", scope_id,
-            {"to": jid, "message_id": str(message_id), "phase": phase},
-            subject=f"baileys:{message_id}",
-        )
-
-        async def dispatch():
-            ok = await self.send_reply(delivery_id, jid, reply, timeout=timeout)
-            if not ok:
-                raise RuntimeError("delivery_failed")
-            return str(delivery_id)
-
-        try:
-            result = await dispatch_once(db, p, key, action, duty="channel.reply", dispatch=dispatch)
-        except (NotFoundError, PermissionDeniedError) as exc:
-            raise RuntimeError("identity_revoked") from exc
-        return result.status in {"verified", "dispatched"} and bool(result.external_ref)
 
     async def send_reply(self, delivery_id, jid, reply, *, timeout):
         waiter = asyncio.get_running_loop().create_future()

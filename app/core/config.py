@@ -178,19 +178,6 @@ class Settings(DatabaseSettings):
     rag_small_document_chars: int = Field(default=4000, ge=0, le=50_000)
     # How numeric dates in filenames and document headers are read: "dmy" (06.07.2026 = 6 July) or "mdy".
     rag_date_order: Literal["dmy", "mdy"] = "dmy"
-
-    # Finance / invoice flow (step E). Payments go through a payment connector with read-back verification.
-    # "mock" is the in-process test bank (references start with MOCK-); it is refused in production unless
-    # finance_allow_mock_in_production is set deliberately (demos). "http" is the generic bank/ERP REST adapter.
-    finance_payment_connector: Literal["mock", "http"] = "mock"
-    finance_payment_fallback: Literal["none", "mock", "http"] = "none"
-    finance_bank_api_url: str = Field(default="", max_length=1000)
-    finance_bank_api_token: SecretStr | None = None
-    finance_allow_mock_in_production: bool = False
-    finance_verify_slice: int = Field(default=25, ge=1, le=500)  # invoices per checkpointed slice
-    finance_approval_ttl_hours: int = Field(default=24, ge=1, le=168)
-    finance_max_invoice_age_days: int = Field(default=365, ge=1, le=3650)
-    finance_max_batch_invoices: int = Field(default=1000, ge=1, le=10000)
     rag_max_context_chars: int = Field(default=12_000, ge=1000, le=200_000)
     # Optional operator-configured read-only business database analysis. Credentials remain in the
     # deployment environment; the API accepts structured operations over this explicit catalog only.
@@ -243,14 +230,6 @@ class Settings(DatabaseSettings):
     # Agent Studio runs are persisted before execution. Enable this only on the designated worker owner.
     agent_studio_worker_enabled: bool = False
     agent_studio_worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
-    # Transactional outbox dispatcher (retry, backoff, dead-letter). On by default for the index owner;
-    # tests and replicas leave it off so they do not drain events as a side effect of starting the app.
-    platform_outbox_worker_enabled: bool = True
-    platform_outbox_poll_seconds: float = Field(default=2.0, gt=0, le=60)
-    # Unified workflow runtime (automations, Agent Studio, agent actions, invoice batches). Unset = on, except
-    # APP_ENV=testing. WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch (read from the environment or .env);
-    # with it off, the legacy Agent Studio and automation loops run their work as before.
-    workflow_engine_worker_enabled: bool | None = None
     agent_studio_run_timeout_seconds: int = Field(default=300, ge=10, le=3600)
     # Optional exact provider/model rates, keyed as "provider:model". No rate means cost is unavailable.
     llm_model_pricing_json: dict[str, dict[str, float]] = Field(default_factory=dict)
@@ -416,12 +395,6 @@ class Settings(DatabaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
-
-    @property
-    def workflow_engine_on(self) -> bool:
-        if self.workflow_engine_worker_enabled is not None:
-            return self.workflow_engine_worker_enabled
-        return self.app_env != "testing"
 
 
 @lru_cache

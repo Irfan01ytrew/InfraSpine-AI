@@ -10,7 +10,6 @@ from app.core.errors import ConflictError, InvalidInputError, NotFoundError, Per
 from app.db.models import ROLE_ADMIN, Document, User, UserSession
 from app.governance import models as m
 from app.governance.schemas import PERMISSIONS
-from app.platform.modules import module_gate
 from app.services import audit
 from app.services.audit import AuditContext
 
@@ -53,10 +52,8 @@ async def context(db: AsyncSession, actor: User, tenant_id, permission=None, *, 
         m.Member.active.is_(True), User.is_active.is_(True),
         or_(m.Member.expires_at.is_(None), m.Member.expires_at > func.now()),
     ).execution_options(populate_existing=True))
-    legacy = tenant is not None and tenant.enabled and member is not None
-    gate = await module_gate(db, "governance", tenant_id, actor, legacy_allowed=legacy)
-    if not gate.allowed:
-        await deny(db, actor, tenant_id, "tenant_or_membership_inactive" if not legacy else "platform_access_revoked")
+    if tenant is None or not tenant.enabled or member is None:
+        await deny(db, actor, tenant_id, "tenant_or_membership_inactive")
     roles, permissions = await grants(db, tenant_id, actor.id)
     if permission and permission not in permissions:
         await deny(db, actor, tenant_id, "permission_missing")

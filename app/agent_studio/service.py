@@ -120,14 +120,7 @@ def _validate_definition(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _require_studio_access(db: AsyncSession, user: User) -> None:
-    from app.platform.modules import org_gate, raise_unless
-    gate = await org_gate(db, user, "agent.run", legacy_allowed=bool(getattr(user, "is_active", True)))
-    raise_unless(gate, not_found=_NOT_FOUND)
-
-
 async def _require_agent(db: AsyncSession, user: User, agent_id: uuid.UUID, *, enabled: bool | None = None) -> AgentStudioAgent:
-    await _require_studio_access(db, user)
     query = select(AgentStudioAgent).where(AgentStudioAgent.id == agent_id, AgentStudioAgent.owner_id == user.id)
     if enabled is not None:
         query = query.where(AgentStudioAgent.enabled.is_(enabled))
@@ -147,7 +140,6 @@ async def _paused_now(db: AsyncSession, agent_id: uuid.UUID) -> bool:
 
 
 async def list_agents(db: AsyncSession, user: User) -> list[AgentStudioAgent]:
-    await _require_studio_access(db, user)
     # Each account starts with an independent, editable Master Agent. It is scoped to its owner
     # and uses the same explicit allowlist and approval controls as custom agents.
     master_id = uuid.uuid5(uuid.NAMESPACE_URL, f"infraspine-agent-studio-master:{user.id}")
@@ -184,7 +176,6 @@ async def list_agents(db: AsyncSession, user: User) -> list[AgentStudioAgent]:
 
 
 async def create_agent(db: AsyncSession, user: User, data: dict[str, Any]) -> AgentStudioAgent:
-    await _require_studio_access(db, user)
     clean = _validate_definition(data)
     if clean["delegate_agent_ids"]:
         existing_ids = set((await db.execute(
@@ -468,13 +459,11 @@ class AgentStudioService:
             return existing
         await self.db.refresh(run)
         if not execute_inline:
-            await self._mirror(run)
             return run, state, None
         if await _paused_now(self.db, agent.id):
             # Pause applies to every entry point (WhatsApp Cloud, Baileys, inline API): the task stays queued and
             # the worker runs it only after the agent is resumed. Callers report it as queued, not completed.
             await self.db.commit()
-            await self._mirror(run)
             return run, state, None
         run.status = "running"
         run.attempt_count = 1
@@ -483,7 +472,6 @@ class AgentStudioService:
         claim_attempt = run.attempt_count
         claim_time = run.claimed_at
         await self.db.commit()
-        await self._mirror(run)  # recorded as running: the runtime waits for this inline attempt, never re-runs it
         return await self._execute(
             run,
             agent,
@@ -493,13 +481,6 @@ class AgentStudioService:
             expected_attempt=claim_attempt,
             expected_claimed_at=claim_time,
         )
-
-    async def _mirror(self, run: AgentStudioRun) -> None:
-        """One runtime (step E): carry the run in a unified workflow run (pause / stop / resume there)."""
-        if getattr(self.settings, "workflow_engine_on", False):
-            from app.agent_studio.unified import mirror_new_run
-            await mirror_new_run(self.db, self.cipher, run, self.settings)
-            await self.db.refresh(run)
 
     async def decide(
         self, run_id: uuid.UUID, decision: str, note: str, user: User
@@ -546,8 +527,6 @@ class AgentStudioService:
         agent = await _require_agent(self.db, user, run.agent_id)
         sealed = _encode_state(self.cipher, run.id, state)
         run.state_ciphertext, run.state_nonce, run.state_key_id = sealed.ciphertext, sealed.nonce, sealed.key_id
-        from app.workflows.unified import wake_origin_run
-        await wake_origin_run(self.db, "studio", run.id)  # the unified run continues now, not at its next poll
         await self.db.commit()
         return run, state, None
 

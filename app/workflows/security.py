@@ -13,7 +13,6 @@ from app.db.models import AccessGroup, AccessGroupMember, DepartmentManager, Use
 from app.db.approval_models import ApprovalDelegation
 from app.services.approval_authority import effective_limit
 from app.workflows.definition import lookup
-from app.platform.modules import group_gate
 from app.platform.timezone import org_today
 
 
@@ -38,11 +37,9 @@ async def require_scope(db, actor, scope_id, *, manage=False):
     group = await db.get(AccessGroup, scope_id)
     if group is None or group.kind != 'department' or not actor.is_active:
         raise NotFoundError('Workflow scope not found.')
-    manager = await is_manager(db, actor, scope_id)
-    legacy = manager or (not manage and await db.get(AccessGroupMember, (scope_id, actor.id)) is not None)
-    gate = await group_gate(db, scope_id, actor, legacy_allowed=legacy,
-                            permission='workflow.manage' if manage or manager else 'workflow.access')
-    if gate.allowed:
+    if await is_manager(db, actor, scope_id):
+        return group
+    if not manage and await db.get(AccessGroupMember, (scope_id, actor.id)):
         return group
     raise PermissionDeniedError('Current department membership and workflow authority are required.')
 

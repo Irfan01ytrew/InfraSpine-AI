@@ -9,10 +9,6 @@ membership, ACL and quarantine changes apply on the very next request (nothing i
 * synced (file_server) documents are always restricted and readable only through their synced ACL.
 * quarantined documents (unknown or unsupported source ACL) are readable by nobody.
 Admins get no special read access to any document they could not otherwise read.
-A second, live gate (`platform_permits`) requires an active platform membership with
-`documents.read` on the organisation (revoking a user therefore cuts retrieval on the next query).
-Until the organisation scope has been created (a fresh database before backfill), this gate is open
-so existing checks alone apply.
 """
 
 from sqlalchemy import ColumnElement, and_, exists, func, or_, select
@@ -49,26 +45,6 @@ def _acl_allows(user: User) -> ColumnElement[bool]:
     )
 
 
-def platform_permits(user: User, permission: str) -> ColumnElement[bool]:
-    """True when the user holds `permission` on the organisation, or when the platform org scope does not exist yet."""
-    from app.platform.models import PlatformMembership, PlatformRolePermission, PlatformScope
-
-    now = func.now()
-    org = select(PlatformScope.id).where(PlatformScope.kind == "org", PlatformScope.active.is_(True)).limit(1).scalar_subquery()
-    granted = exists().where(
-        PlatformMembership.user_id == user.id,
-        PlatformMembership.scope_id == org,
-        PlatformMembership.revoked_at.is_(None),
-        or_(PlatformMembership.valid_from.is_(None), PlatformMembership.valid_from <= now),
-        or_(PlatformMembership.valid_to.is_(None), PlatformMembership.valid_to > now),
-        PlatformRolePermission.role_id == PlatformMembership.role_id,
-        or_(PlatformRolePermission.permission == permission, PlatformRolePermission.permission == "*"),
-    )
-    org_missing = ~exists().where(PlatformScope.kind == "org", PlatformScope.active.is_(True))
-    active = exists().where(User.id == user.id, User.is_active.is_(True))
-    return or_(org_missing, and_(active, granted))
-
-
 def readable_by(user: User) -> ColumnElement[bool]:
     provider_acl = exists().where(
         CloudSourceAcl.document_id == Document.id,
@@ -89,7 +65,6 @@ def readable_by(user: User) -> ColumnElement[bool]:
         Document.source_uri.like("cloud://%").is_(True),
     )
     return and_(
-        platform_permits(user, "documents.read"),
         Document.acl_status == ACL_ACTIVE,
         or_(
             and_(Document.source_system == SOURCE_UPLOAD, Document.owner_id == user.id),
@@ -129,7 +104,6 @@ def knowledge_readable_by(user: User, *statuses: str, include_stale: bool = Fals
         ~KnowledgeEvidence.document_id.in_(select(Document.id).where(readable_by(user))),
     )
     conditions = [
-        platform_permits(user, "documents.read"),
         KnowledgeRevision.status.in_(statuses),
         has_evidence,
         ~missing_source,

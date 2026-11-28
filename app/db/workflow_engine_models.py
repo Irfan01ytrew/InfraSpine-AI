@@ -24,12 +24,7 @@ def timestamp():
 
 class Workflow(Base):
     __tablename__ = 'wf_definitions'
-    __table_args__ = (
-        UniqueConstraint('scope_id', 'id'), Index('ix_wf_definitions_scope', 'scope_id', 'updated_at'),
-        Index('uq_wf_definitions_origin_ref', 'scope_id', 'origin', 'origin_ref', unique=True,
-              postgresql_where=text('origin_ref IS NOT NULL')),
-        CheckConstraint("origin IN ('workflow','automation','system','studio','governance')", name='origin_valid'),
-    )
+    __table_args__ = (UniqueConstraint('scope_id', 'id'), Index('ix_wf_definitions_scope', 'scope_id', 'updated_at'))
     id: Mapped[uuid.UUID] = uid()
     scope_id: Mapped[uuid.UUID] = scope()
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'))
@@ -39,10 +34,6 @@ class Workflow(Base):
     active_version: Mapped[int | None] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Step E: one runtime. `origin` says which legacy path a definition came from (automation mirror,
-    # system template); `origin_ref` is the legacy key. System templates are code-defined and pinned.
-    origin: Mapped[str] = mapped_column(String(32), default='workflow', server_default=text("'workflow'"))
-    origin_ref: Mapped[str | None] = mapped_column(String(160))
     created_at: Mapped[datetime] = timestamp()
     updated_at: Mapped[datetime] = timestamp()
 
@@ -73,9 +64,7 @@ class WorkflowRun(Base):
         ForeignKeyConstraint(['scope_id', 'version_id'], ['wf_versions.scope_id', 'wf_versions.id'], ondelete='RESTRICT'),
         UniqueConstraint('scope_id', 'id'), UniqueConstraint('workflow_id', 'idempotency_key'),
         CheckConstraint("status IN ('queued','running','paused','completed','failed','cancelled','compensating','compensated')", name='status_valid'),
-        CheckConstraint("phase IN ('plan','execute','verify','recover','done')", name='phase_valid'),
         Index('ix_wf_runs_due', 'status', 'wake_at'), Index('ix_wf_runs_scope_created', 'scope_id', 'created_at'),
-        Index('ix_wf_runs_origin', 'origin', 'origin_ref'),
     )
     id: Mapped[uuid.UUID] = uid()
     scope_id: Mapped[uuid.UUID] = scope()
@@ -96,14 +85,6 @@ class WorkflowRun(Base):
     created_at: Mapped[datetime] = timestamp()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Step E: plan -> execute -> verify -> recover lifecycle, the recorded plan, origin and run timeout.
-    phase: Mapped[str] = mapped_column(String(16), default='plan', server_default=text("'plan'"))
-    plan: Mapped[list | None] = mapped_column(JSONB)
-    origin: Mapped[str] = mapped_column(String(32), default='workflow', server_default=text("'workflow'"))
-    origin_ref: Mapped[str | None] = mapped_column(String(160))
-    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    blocked_reason: Mapped[str | None] = mapped_column(String(120))
-    last_verified_node: Mapped[str | None] = mapped_column(String(64))
 
 
 class WorkflowStep(Base):
@@ -111,8 +92,7 @@ class WorkflowStep(Base):
     __table_args__ = (
         ForeignKeyConstraint(['scope_id', 'run_id'], ['wf_runs.scope_id', 'wf_runs.id'], ondelete='RESTRICT'),
         UniqueConstraint('run_id', 'node_id'), UniqueConstraint('scope_id', 'id'),
-        CheckConstraint("status IN ('blocked','ready','running','human','approval','timer','event','child','dispatched','action','waiting','completed','skipped','failed','cancelled','compensated')", name='status_valid'),
-        CheckConstraint("phase IN ('plan','execute','verify','recover','done')", name='phase_valid'),
+        CheckConstraint("status IN ('blocked','ready','running','human','approval','timer','event','child','dispatched','completed','skipped','failed','cancelled','compensated')", name='status_valid'),
         Index('ix_wf_steps_inbox', 'scope_id', 'status', 'assignee_id'),
     )
     id: Mapped[uuid.UUID] = uid()
@@ -134,15 +114,6 @@ class WorkflowStep(Base):
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Step E: permissioned action steps run as the acting principal; progress is checkpointed and a step is
-    # only completed after its handler read back the target state (verified_at / verification).
-    phase: Mapped[str] = mapped_column(String(16), default='plan', server_default=text("'plan'"))
-    acting_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'))
-    acting_auth_version: Mapped[int | None] = mapped_column(Integer)
-    checkpoint: Mapped[dict | None] = mapped_column(JSONB)
-    recoveries: Mapped[int] = mapped_column(Integer, default=0, server_default=text('0'))
-    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    verification: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class WorkflowDecision(Base):

@@ -1,4 +1,0 @@
-services:
-  api:
-    ports:
-      - "127.0.0.1:${INFRASPINE_API_PORT:-8000}:8000"

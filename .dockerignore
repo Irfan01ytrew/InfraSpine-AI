@@ -24,5 +24,3 @@ onprem-qdrant/
 .env
 .env.*
 !.env.example
-
-docker-data/

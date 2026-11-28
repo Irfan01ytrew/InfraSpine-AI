@@ -1,3 +1,0 @@
-# Placeholder so nginx can start without certificates.
-# docker-entrypoint or the Makefile writes a real server block into
-# /etc/nginx/conf.d/tls.conf when certs are mounted.

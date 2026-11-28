@@ -11,10 +11,10 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 NodeKind = Literal['start', 'end', 'task', 'human', 'approval', 'decision', 'parallel',
-                   'timer', 'event', 'agent', 'integration', 'subworkflow', 'loop', 'action']
+                   'timer', 'event', 'agent', 'integration', 'subworkflow', 'loop']
 Risk = Literal['low', 'medium', 'high', 'critical']
 KINDS = ('start', 'end', 'task', 'human', 'approval', 'decision', 'parallel', 'timer',
-         'event', 'agent', 'integration', 'subworkflow', 'loop', 'action')
+         'event', 'agent', 'integration', 'subworkflow', 'loop')
 TERMINAL = {'completed', 'skipped', 'cancelled', 'compensated'}
 
 
@@ -55,11 +55,6 @@ class NodeConfig(Strict):
     financial_category: Literal['purchase', 'expense'] | None = None
     amount_variable: str | None = Field(default=None, pattern=r'^input\.[A-Za-z][A-Za-z0-9_]{0,63}$')
     currency: str = Field(default='USD', pattern=r'^[A-Z]{3}$')
-    # Step E `action` nodes: a registered handler runs as a principal who holds `permission` on the platform
-    # scope of the workflow's department. `auto` runs it as the requester without waiting for a person.
-    handler: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
-    permission: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_.]{0,79}$')
-    auto: bool = False
 
 
 class Node(Strict):
@@ -98,8 +93,6 @@ class Definition(Strict):
     max_concurrent_runs: int = Field(default=10, ge=1, le=100)
     max_parallel_steps: int = Field(default=10, ge=1, le=32)
     source: Literal['human', 'ai', 'template'] = 'human'
-    # Whole-run timeout (step E). None keeps the previous behaviour: only step leases and deadlines apply.
-    run_timeout_seconds: int | None = Field(default=None, ge=60, le=31536000)
 
     @model_validator(mode='after')
     def bounded(self):
@@ -185,13 +178,6 @@ def validate_graph(spec: Definition) -> list[dict]:
             error('owner_missing', 'Human tasks require an assignee or input assignee variable.', n.id)
         if n.type in {'agent', 'integration'} and not n.config.adapter:
             error('adapter_missing', 'Select a registered module adapter.', n.id)
-        if n.type == 'action':
-            if not n.config.handler:
-                error('handler_missing', 'Select a registered action handler.', n.id)
-            if not n.config.auto and not n.config.permission:
-                error('action_permission', 'A person-performed action needs the platform permission they must hold.', n.id)
-        elif n.config.handler or n.config.auto:
-            error('handler_type', 'Only action nodes run registered handlers.', n.id)
         if n.type in {'subworkflow', 'loop'} and not n.config.child_version_id:
             error('child_missing', 'Pin a published subworkflow version.', n.id)
         if n.type == 'event' and not n.config.event_name:

@@ -46,7 +46,6 @@ async def managers(db, scope_id):
 def finish(db, cipher, run, step, output, *, simulated=False):
     step.status, step.finished_at = 'completed', datetime.now(UTC)
     step.claim_token, step.lease_until, step.failure_code = None, None, None
-    step.phase = 'done'
     step.output = seal(cipher, run.scope_id, 'step', step.id, output)
     run.wake_at = datetime.now(UTC)
     event(db, run, 'step.simulated' if simulated else 'step.completed', node_id=step.node_id)
@@ -55,7 +54,6 @@ def finish(db, cipher, run, step, output, *, simulated=False):
 def fail(db, run, step, code):
     step.status, step.failure_code, step.claim_token, step.lease_until = 'failed', code, None, None
     run.status, run.failure_code, run.finished_at = 'failed', code, datetime.now(UTC)
-    run.phase = 'recover'  # a failed run waits for `resume` (from the last verified step) or compensation
     event(db, run, 'step.failed', node_id=step.node_id, detail={'code': code})
 
 
@@ -98,11 +96,6 @@ async def schedule_due(sessionmaker, cipher, *, now=None, limit=25):
 async def _advance(db, cipher, run, spec, *, now):
     context, steps = await run_context(db, cipher, run)
     nodes, by_node = {n.id: n for n in spec.nodes}, {s.node_id: s for s in steps}
-    if run.deadline_at and run.deadline_at <= now and not run.simulation:
-        # Whole-run timeout: stop at a step boundary; completed (verified) steps stay as they are.
-        active = next((s for s in steps if s.status not in TERMINAL and s.status != 'blocked'), None) or steps[0]
-        fail(db, run, active, 'run_timeout')
-        return steps
     # Only immutable published definitions are executed; old versions remain pinned in-flight.
     for step in steps:
         node = nodes[step.node_id]
@@ -112,9 +105,7 @@ async def _advance(db, cipher, run, spec, *, now):
                 return steps
             step.status, step.claim_token, step.lease_until = 'ready', None, None
             event(db, run, 'step.recovered', node_id=step.node_id, detail={'attempt': step.attempts})
-        if step.status == 'waiting' and step.available_at <= now:
-            step.status = 'ready'  # poll the action handler again (e.g. approvals decided)
-        if step.status in {'human', 'approval', 'event', 'child', 'dispatched', 'action', 'waiting'} and step.deadline_at:
+        if step.status in {'human', 'approval', 'event', 'child', 'dispatched'} and step.deadline_at:
             if step.deadline_at <= now and step.escalated_at is None:
                 step.escalated_at = now
                 recipients = set(await managers(db, run.scope_id))
@@ -153,9 +144,6 @@ async def _advance(db, cipher, run, spec, *, now):
                 WorkflowDispatch.compensation.is_(False), WorkflowDispatch.scope_id == run.scope_id))
             if dispatch and dispatch.status == 'completed':
                 finish(db, cipher, run, step, unseal(cipher, run.scope_id, 'receipt', dispatch.id, dispatch.receipt))
-                # Adapter receipts are verified completions (read back through execute_once).
-                step.verified_at, step.verification = now, {'adapter': dispatch.adapter, 'dispatch_id': str(dispatch.id)}
-                run.last_verified_node = step.node_id
             elif dispatch and dispatch.status in {'failed', 'unknown'}:
                 fail(db, run, step, dispatch.failure_code or 'dispatch_failed')
                 return steps
@@ -179,10 +167,8 @@ async def _advance(db, cipher, run, spec, *, now):
             if step.status == 'skipped': event(db, run, 'step.skipped', node_id=step.node_id)
         if not changed: break
     if all(s.status in TERMINAL for s in steps):
-        run.status, run.finished_at, run.phase = 'completed', now, 'done'
+        run.status, run.finished_at = 'completed', now
         event(db, run, 'run.completed')
-    elif run.phase == 'plan':
-        run.phase = 'execute'
     return steps
 
 
@@ -246,8 +232,7 @@ async def claim_next(sessionmaker, cipher, *, now=None):
                 await db.commit()
                 return None
             run.status, run.started_at = 'running', run.started_at or current
-            run.phase = 'execute'
-            event(db, run, 'run.started', detail={'phase': 'execute'})
+            event(db, run, 'run.started')
         run.wake_at = current + timedelta(seconds=2)
         if run.status == 'compensating':
             await _compensate(db, cipher, run, spec)
@@ -285,10 +270,6 @@ async def execute_claim(sessionmaker, cipher, claim):
         actor = await db.get(User, run.requester_id)
         version = await db.get(WorkflowVersion, run.version_id)
         node = next(n for n in Definition.model_validate(version.spec).nodes if n.id == step.node_id)
-        if node.type == 'action' and not run.simulation:
-            await db.rollback()
-            from app.workflows.action_runtime import execute_action_claim
-            return await execute_action_claim(sessionmaker, cipher, claim, node, run_context=run_context)
         context, _ = await run_context(db, cipher, run)
         try:
             async with db.begin_nested():
@@ -405,59 +386,23 @@ async def process_dispatch(sessionmaker, cipher):
         context, _ = await run_context(db, cipher, run)
         adapter = ADAPTERS.get(dispatch.adapter)
         try:
-            if actor is None or adapter is None: raise ConflictError('Action adapter or owner is unavailable.')
-            await require_scope(db, actor, run.scope_id)
-            if node.type == 'approval' or node.risk != 'low':
-                expected, valid = await approved_authorities(db, run, step, node, context)
-                if dispatch.action_digest != expected or len(set(valid)) < required_approvals(node):
-                    raise ConflictError('Approval authority changed before dispatch.')
-            payload = unseal(cipher, run.scope_id, 'dispatch', dispatch.id, dispatch.payload)
-            from app.platform.access import principal_for
-            from app.platform.approvals import ActionSpec
-            from app.platform.side_effects import dispatch_once
-            from app.platform.sync import group_scope_sync
-            from app.workflows.adapters import AdapterResult
-            platform_scope = await db.run_sync(lambda s: group_scope_sync(s.connection(), run.scope_id))
-            if platform_scope is None:
-                raise ConflictError('Action adapter or owner is unavailable.')
-            held = {}
-
-            async def _dispatch():
-                held['result'] = await adapter.execute(db, cipher, actor, run.scope_id, dispatch, payload)
-                return str(dispatch.id)
-
-            async def _verify(ref):
-                from app.platform.execution import VerifiedResult
-                item = held.get('result')
-                if item is None:
-                    return VerifiedResult(ok=True, details={'external_ref': ref, 'replayed': True})
-                return VerifiedResult(ok=item.status in {'pending', 'completed'},
-                                      details={'status': item.status, 'failure_code': item.failure_code})
-
-            execution = await dispatch_once(
-                db, principal_for(actor, channel='worker'), f'workflow:{dispatch.id}',
-                ActionSpec(dispatch.adapter or 'workflow.action', platform_scope,
-                           {'dispatch_id': str(dispatch.id)}, subject=f'workflow:{run.id}:{dispatch.id}'),
-                duty='workflow.access', dispatch=_dispatch, verify=_verify,
-            )
-            result = held.get('result')
-            if result is None:
-                # Replayed after a previous successful dispatch: do not dispatch the adapter again.
-                details = execution.verified_result or {}
-                result = AdapterResult(status=details.get('status') or ('completed' if execution.status == 'verified' else 'unknown'),
-                                       failure_code=details.get('failure_code'), receipt={'external_ref': execution.external_ref})
-                if result.status == 'pending' and adapter.idempotent:
-                    # The first dispatch was accepted but not finished. Idempotent adapters are *polled* (their
-                    # inbox is keyed by dispatch.id), otherwise a pending step would never complete.
-                    result = await adapter.execute(db, cipher, actor, run.scope_id, dispatch, payload)
-            if result.status not in {'pending', 'completed', 'failed', 'unknown'}:
-                raise InvalidInputError('Adapter returned an invalid outcome.')
-            dispatch.status, dispatch.failure_code = result.status, result.failure_code
-            dispatch.receipt = seal(cipher, run.scope_id, 'receipt', dispatch.id, result.receipt)
-            dispatch.available_at = datetime.now(UTC) + timedelta(seconds=5)
-            if result.status != 'pending':
-                event(db, run, f'action.{result.status}', node_id=step.node_id, detail={'dispatch_id': str(dispatch.id)})
-            run.wake_at = datetime.now(UTC)
+            async with db.begin_nested():
+                if actor is None or adapter is None: raise ConflictError('Action adapter or owner is unavailable.')
+                await require_scope(db, actor, run.scope_id)
+                if node.type == 'approval' or node.risk != 'low':
+                    expected, valid = await approved_authorities(db, run, step, node, context)
+                    if dispatch.action_digest != expected or len(set(valid)) < required_approvals(node):
+                        raise ConflictError('Approval authority changed before dispatch.')
+                payload = unseal(cipher, run.scope_id, 'dispatch', dispatch.id, dispatch.payload)
+                result = await adapter.execute(db, cipher, actor, run.scope_id, dispatch, payload)
+                if result.status not in {'pending', 'completed', 'failed', 'unknown'}:
+                    raise InvalidInputError('Adapter returned an invalid outcome.')
+                dispatch.status, dispatch.failure_code = result.status, result.failure_code
+                dispatch.receipt = seal(cipher, run.scope_id, 'receipt', dispatch.id, result.receipt)
+                dispatch.available_at = datetime.now(UTC) + timedelta(seconds=5)
+                if result.status != 'pending':
+                    event(db, run, f'action.{result.status}', node_id=step.node_id, detail={'dispatch_id': str(dispatch.id)})
+                run.wake_at = datetime.now(UTC)
         except AppError as exc:
             dispatch.status, dispatch.failure_code = 'failed', exc.code
             event(db, run, 'action.failed', node_id=step.node_id, detail={'code': exc.code})
@@ -478,21 +423,6 @@ async def process_dispatch(sessionmaker, cipher):
 
 async def tick(sessionmaker, cipher, *, now=None):
     await schedule_due(sessionmaker, cipher, now=now)
-    try:
-        from app.workflows.unified import mirror_pending_automation_runs
-        await mirror_pending_automation_runs(sessionmaker, cipher)
-    except Exception as exc:  # a legacy-mirroring problem must never stop the runtime
-        log.warning('Automation mirroring skipped (%s)', type(exc).__name__)
-    try:
-        from app.agent_studio.unified import mirror_pending_studio_runs
-        await mirror_pending_studio_runs(sessionmaker, cipher)
-    except Exception as exc:
-        log.warning('Agent Studio mirroring skipped (%s)', type(exc).__name__)
-    try:
-        from app.services.agent_action_runtime import mirror_pending_proposals
-        await mirror_pending_proposals(sessionmaker, cipher)
-    except Exception as exc:
-        log.warning('Agent action mirroring skipped (%s)', type(exc).__name__)
     claim = await claim_next(sessionmaker, cipher, now=now)
     if claim:
         try:

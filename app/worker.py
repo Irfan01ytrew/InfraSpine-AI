@@ -108,10 +108,7 @@ async def _run(args: argparse.Namespace) -> int:
                 "staged locally" if embedder.available_locally else "download permitted (connectivity not checked)"
             )
             print(
-                # getattr: lightweight/fake settings objects (worker healthcheck
-                # tests) may not carry the property; real Settings always does.
-                f"Worker configuration OK: workflow engine {'on' if getattr(settings, 'workflow_engine_on', False) else 'off'}, "
-                f"data dir {data_dir}, concurrency {concurrency}, "
+                f"Worker configuration OK: data dir {data_dir}, concurrency {concurrency}, "
                 f"isolation {'on' if settings.rag_parse_isolation else 'off'}, timeout "
                 f"{settings.rag_processing_timeout_seconds}s, parser memory {settings.rag_parser_memory_mb} MB, "
                 f"API ingestion mode '{settings.rag_ingestion_mode}', embedding model "
@@ -154,15 +151,6 @@ async def _run(args: argparse.Namespace) -> int:
             await cleanup_orphans(sessionmaker, settings=settings)
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
-            if getattr(settings, "workflow_engine_on", False):
-                from app.core.crypto import CredentialCipher
-                from app.workflows.engine import tick
-
-                cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
-                ticks = 0
-                while ticks < 1000 and await tick(sessionmaker, cipher):
-                    ticks += 1
-                log.info("Workflow engine: %s ticks", ticks)
             log.info(
                 "Processed %s documents, %s training reminders, %s personal task reminders, %s workflow events, %s service request SLA escalations and %s folder sync runs",
                 processed,
@@ -193,22 +181,7 @@ async def _run(args: argparse.Namespace) -> int:
         from app.services.webhooks import run_webhook_worker
         from app.services.folder_sync import run_folder_sync_worker
 
-        background = []
-        if getattr(settings, "workflow_engine_on", False):
-            # Unified workflow runtime (step E): automation rules, the invoice flow and governance actions.
-            # On by default; WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch. Leased claims make it safe to
-            # run here and in the API at the same time. Agent Studio steps wait for the API process (LLM runtime).
-            from app.core.crypto import CredentialCipher
-            from app.workflows.engine import run_worker as run_workflow_engine
-
-            cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
-            background.append(run_workflow_engine(sessionmaker, cipher, stop))
-            log.info("Workflow engine worker started (WORKFLOW_ENGINE_WORKER_ENABLED=false turns it off)")
-        else:
-            log.warning("Workflow engine worker is OFF (WORKFLOW_ENGINE_WORKER_ENABLED=false)")
-
         await asyncio.gather(
-            *background,
             worker.run(stop, concurrency=concurrency, mode="worker"),
             partner_worker.run(stop),
             run_training_reminders(sessionmaker, stop),

@@ -10,7 +10,6 @@ from app.company_graph.models import GraphMember
 from app.core.crypto import EncryptedValue
 from app.core.errors import NotFoundError, PermissionDeniedError
 from app.db.models import User
-from app.platform.modules import module_gate
 
 
 def canonical(value):
@@ -43,13 +42,8 @@ async def authorize(db, tenant_id: UUID, user_id: UUID, *, write=False, lock=Fal
     if lock:
         query = query.with_for_update(of=(GraphMember, User))
     member = await db.scalar(query)
-    user = await db.get(User, user_id)
-    gate = await module_gate(db, "company_graph", tenant_id, user, legacy_allowed=member is not None,
-                             permission="connector.write" if write else "connector.read") if user else None
-    if member is None or gate is None or not (gate.allowed or (write and gate.legacy and gate.reason == "permission_missing")):
+    if member is None:
         raise NotFoundError("Integration workspace not found.")
-    if write and not gate.allowed:
-        raise PermissionDeniedError("An owner or editor workspace role is required.")
     if write and member.role not in ("owner", "editor"):
         raise PermissionDeniedError("An owner or editor workspace role is required.")
     return member

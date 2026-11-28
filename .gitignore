@@ -70,8 +70,3 @@ test_video.mov
 *.log
 npm-debug.log*
 /tmp/
-# Docker local volumes and generated smoke env (never commit secrets)
-docker-data/
-.env.docker
-
-!.env.docker.example

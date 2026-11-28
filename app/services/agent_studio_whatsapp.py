@@ -168,8 +168,6 @@ async def save_connection(
     row.api_version = api_version
     row.enabled = True
     row.updated_at = datetime.now(UTC)
-    from app.platform.channels import sync_allowed_senders
-    await sync_allowed_senders(db, owner_id=user.id, channel="whatsapp_cloud", allowed=allowed_senders)
     await db.commit()
     await db.refresh(row)
     return row

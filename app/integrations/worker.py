@@ -144,35 +144,7 @@ async def execute(sessionmaker, cipher, identity):
                 job = await locked_job(db, identity)
                 if job is None: return
                 row = await authorized_connector(db, job); check_approval(job)
-                from app.db.models import User
-                from app.platform.access import principal_for
-                from app.platform.approvals import ActionSpec
-                from app.platform.side_effects import dispatch_once, module_scope_id
-                actor = await db.get(User, job.owner_id)
-                if actor is None or not actor.is_active:
-                    raise TransportError("authorization_rejected")
-                scope_id = await module_scope_id(db, "company_graph", job.tenant_id)
-                if scope_id is None:
-                    raise TransportError("authorization_rejected")
-                held = {"result": None}
-
-                async def dispatch():
-                    held["result"] = await adapters.execute_write(row, secret, job, payload)
-                    return str(job.id)
-
-                async def verify(ref):
-                    from app.platform.execution import VerifiedResult
-                    return VerifiedResult(ok=held["result"] is not None or bool(ref), details=held["result"] or {"ref": ref})
-
-                execution = await dispatch_once(
-                    db, principal_for(actor, channel="worker"), f"connector:{job.id}",
-                    ActionSpec("connector.write", scope_id, {"operation": job.operation, "digest": job.digest},
-                               subject=f"connector:{job.connector_id}:{job.id}"),
-                    duty="connector.write", dispatch=dispatch, verify=verify,
-                )
-                if execution.status == "failed":
-                    raise TransportError("worker_error")
-                result = held["result"] if held["result"] is not None else (execution.verified_result or {})
+                result = await adapters.execute_write(row, secret, job, payload)
             job.result = result; job.status = "completed"; job.completed_at = datetime.now(UTC)
             job.duration_ms = int((time.monotonic() - start) * 1000); job.last_error = None
             job.claim_token = None; job.lease_until = None

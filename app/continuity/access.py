@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.continuity.models import Member, Node, Tenant
 from app.core.errors import NotFoundError, PermissionDeniedError
 from app.db.models import User
-from app.platform.modules import module_gate
 
 
 @dataclass(frozen=True)
@@ -33,9 +32,7 @@ async def scope_for(db: AsyncSession, tenant_id: UUID, user: User, *, write=Fals
     tenant = await db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update() if write else select(Tenant).where(Tenant.id == tenant_id))
     member = await db.scalar(select(Member).where(Member.tenant_id == tenant_id, Member.user_id == user.id, Member.active.is_(True)).execution_options(populate_existing=True))
     active = await db.scalar(select(User.is_active).where(User.id == user.id))
-    legacy = tenant is not None and member is not None and bool(active)
-    gate = await module_gate(db, "continuity", tenant_id, user, legacy_allowed=legacy)
-    if not gate.allowed:
+    if tenant is None or member is None or not active:
         raise NotFoundError("Continuity workspace not found.")
     return Scope(tenant_id, user.id, member.role, frozenset(member.departments), member.all_departments)
 

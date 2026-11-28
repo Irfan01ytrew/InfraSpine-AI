@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,13 +29,22 @@ def audit(db: AsyncSession, principal, event: str, *, target: str | None = None,
 
 
 async def drain_outbox(db: AsyncSession, handler: Callable[[PlatformOutbox], Awaitable[None]], *, limit: int = 100) -> int:
-    """Deliver due events to one handler (tests, one-off tools). Same claiming, savepoint, backoff and dead-letter
-    rules as the background dispatcher in app.platform.outbox."""
-    from app.platform.outbox import deliver_batch
-
-    async def only(_db, row):
-        await handler(row)
-
-    types = await db.scalars(select(PlatformOutbox.event_type).where(PlatformOutbox.dispatched_at.is_(None)).distinct())
-    counts = await deliver_batch(db, {event_type: [only] for event_type in types}, limit=limit)
-    return counts["delivered"]
+    """Deliver pending events in order. Rows are locked with SKIP LOCKED so several workers can drain safely;
+    a failing handler leaves its event pending with the error recorded."""
+    rows = list(await db.scalars(
+        select(PlatformOutbox).where(PlatformOutbox.dispatched_at.is_(None))
+        .order_by(PlatformOutbox.id).limit(limit).with_for_update(skip_locked=True)
+    ))
+    delivered = 0
+    for row in rows:
+        row.attempts += 1
+        try:
+            await handler(row)
+        except Exception as exc:  # handler failures must not lose the event
+            row.last_error = type(exc).__name__[:200]
+            continue
+        row.dispatched_at = datetime.now(UTC)
+        row.last_error = None
+        delivered += 1
+    await db.commit()
+    return delivered

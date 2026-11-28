@@ -24,7 +24,6 @@ export const workflowApi = {
   runs: (s:string,status='',offset=0) => call<{runs:Run[];total:number}>(scope(s)+`/runs?offset=${offset}${status?'&status='+encodeURIComponent(status):''}`),
   run: (s:string,id:string) => call<RunDetail>(scope(s)+`/runs/${id}`),
   control: (s:string,id:string,command:string) => call<Run>(scope(s)+`/runs/${id}/control/${command}`,'POST'),
-  perform: (s:string,r:string,id:string) => call(scope(s)+`/runs/${r}/steps/${id}/perform`,'POST'),
   complete: (s:string,r:string,id:string,output:Record<string,unknown>) => call(scope(s)+`/runs/${r}/steps/${id}/complete`,'POST',{output}),
   decide: (s:string,r:string,id:string,approved:boolean,note:string,evidence:Record<string,unknown>,on_behalf_of?:string) => call(scope(s)+`/runs/${r}/steps/${id}/decision`,'POST',{approved,note,evidence,on_behalf_of}),
   reassign: (s:string,r:string,id:string,assignee_id:string,note:string) => call(scope(s)+`/runs/${r}/steps/${id}/reassign`,'POST',{assignee_id,note}),
