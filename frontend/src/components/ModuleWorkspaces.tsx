@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { RunsPanel } from "../workflows/RunsPanel";
 import { Activity, ArrowRight, Boxes, Check, CircleAlert, Clock3, Database, Gauge, Layers3, Network, RefreshCw, ShieldCheck, Sparkles, Workflow } from "lucide-react";
-import { describeError, request } from "../api";
+import { ApiError, describeError, request } from "../api";
 import { graphApi } from "../company-graph/api";
 import { GraphMap } from "../company-graph/GraphMap";
 import type { Graph, GraphRecord, Quality, Tenant } from "../company-graph/types";
 import { workflowApi } from "../workflows/api";
 import type { Dashboard as WorkflowDashboard, Scope, Spec, Template, Workflow as WorkflowRow } from "../workflows/types";
 import { bc } from "../continuity/api";
-import type { Dashboard as ContinuityDashboard, Workspace } from "../continuity/types";
+import type { AjDashboardSummary, Dashboard as ContinuityDashboard, Workspace } from "../continuity/types";
+import { AJ_REFRESH_MS, healthTone, overallStatusLabel, overallStatusTone, progressLabel, severityTone, timeAgo } from "../continuity/ajDashboard.mjs";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Input, PageHeader, Skeleton, Stat, Textarea } from "./ui";
 
 export type WorkspaceView = "company-graph" | "workflow-engine" | "governance" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality";
@@ -152,6 +153,35 @@ export function WorkflowEngineWorkspace() {
   </div>;
 }
 
+/* ------------------------------------------------- Step AJ dashboard --- */
+function AjDashboardSection({ summary }: { summary: AjDashboardSummary }) {
+  const health = summary.health && typeof summary.health === "object" ? summary.health : null;
+  const healthStatus = typeof health?.status === "string" ? health.status : null;
+  return <div className="grid gap-4">
+    <Alert tone={overallStatusTone(summary.overall_status)} title={`Continuity status: ${overallStatusLabel(summary.overall_status)}`}>
+      {summary.highlights.length ? <ul className="list-disc pl-4">{summary.highlights.map(item => <li key={item}>{item}</li>)}</ul> : <p>No open risks, incidents, approvals or recoveries.</p>}
+      <p className="mt-1 text-xs opacity-80">Updated {timeAgo(summary.generated_at)} · refreshes every 30 seconds</p>
+    </Alert>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <Stat label="Open risks" value={summary.risks.total} hint={`${summary.risks.uncovered_critical} critical without a plan`} icon={<CircleAlert />} />
+      <Stat label="Active incidents" value={summary.incidents.total_active} hint={`${summary.incidents.overdue} overdue their SLA`} icon={<Clock3 />} />
+      <Stat label="Approvals pending" value={summary.approvals.pending} hint={`${summary.approvals.expiring_soon} expiring within 24 hours`} icon={<Check />} />
+      <Stat label="Recovery progress" value={summary.recovery.average_progress_percent == null ? "—" : `${summary.recovery.average_progress_percent}%`} hint={`${summary.recovery.active} active · ${summary.recovery.at_risk} past RTO`} icon={<Activity />} />
+    </div>
+    <div className="grid gap-4 xl:grid-cols-2">
+      <Card><CardHeader title="Risks needing attention" description="Worst first, up to 5. Detail is in the resources and plans below." icon={<CircleAlert />} /><CardBody className="grid gap-2">{summary.risks.top.length ? summary.risks.top.map(risk => <div key={risk.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{risk.title}</p><p className="text-xs text-muted">{risk.category} · {risk.source}</p></div><span className="flex shrink-0 items-center gap-1"><Badge tone={severityTone(risk.severity)}>{risk.severity}</Badge>{!risk.has_plan && <Badge tone="danger">No plan</Badge>}</span></div>) : <p className="text-sm text-muted">No open risks.</p>}</CardBody></Card>
+      <Card><CardHeader title="Active incidents" description="Overdue incidents first, up to 5." icon={<Clock3 />} actions={<Button size="sm" variant="secondary" onClick={() => { window.location.hash = "/recovery"; }}>Open recovery</Button>} /><CardBody className="grid gap-2">{summary.incidents.top.length ? summary.incidents.top.map(incident => <div key={incident.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{incident.title}</p><p className="text-xs text-muted">{incident.status}</p></div><span className="flex shrink-0 items-center gap-1"><Badge tone={severityTone(incident.severity)}>{incident.severity}</Badge>{incident.overdue && <Badge tone="warning">Overdue</Badge>}</span></div>) : <p className="text-sm text-muted">No active incidents.</p>}</CardBody></Card>
+    </div>
+    <div className="grid gap-4 xl:grid-cols-2">
+      <Card><CardHeader title="Recovery in progress" description="Verified steps and RTO risk per recovery." icon={<Activity />} /><CardBody className="grid gap-2">{summary.recovery.items.length ? summary.recovery.items.map(item => <div key={item.id} className="grid gap-1 rounded-lg border border-border p-3"><div className="flex items-center justify-between gap-3"><p className="min-w-0 truncate text-sm font-semibold">{item.title}</p><span className="flex shrink-0 items-center gap-1"><Badge>{item.status}</Badge>{item.at_risk && <Badge tone="danger">Past RTO</Badge>}</span></div><div className="h-2 overflow-hidden rounded-full bg-surface-2"><div className="h-2 rounded-full bg-primary" style={{ width: `${item.progress_percent ?? 0}%` }} /></div><p className="text-xs text-muted">{progressLabel(item.progress_percent)} · {item.verified_steps} of {item.total_steps} steps verified</p></div>) : <p className="text-sm text-muted">No recoveries in progress.</p>}</CardBody></Card>
+      <Card><CardHeader title="Approvals" description="Pending decisions in this scope." icon={<Check />} actions={<Button size="sm" variant="secondary" onClick={() => { window.location.hash = "/approvals"; }}>Open approvals</Button>} /><CardBody className="grid gap-2"><div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><span className="text-sm">Pending</span><span className="text-sm font-semibold">{summary.approvals.pending}</span></div><div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><span className="text-sm">Expiring within 24 hours</span><span className="text-sm font-semibold">{summary.approvals.expiring_soon}</span></div><div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><span className="text-sm">Requested by you</span><span className="text-sm font-semibold">{summary.approvals.own_requests}</span></div>{summary.approvals.pending === 0 && <p className="text-sm text-muted">No approvals pending.</p>}</CardBody></Card>
+    </div>
+    {healthStatus
+      ? <Alert tone={healthTone(healthStatus)} title={`System health: ${healthStatus}`}>The Step G health roll-up for this scope.</Alert>
+      : <p className="text-xs text-muted">Health roll-up not available yet — it arrives with the Step G merge.</p>}
+  </div>;
+}
+
 export function ContinuityWorkspace() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
@@ -159,14 +189,51 @@ export function ContinuityWorkspace() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [revision, setRevision] = useState(0);
+  const [aj, setAj] = useState<AjDashboardSummary | null>(null);
+  const [ajNote, setAjNote] = useState("");
+  const ajUnavailableRef = useRef(false);
   useEffect(() => { let live = true; bc.workspaces().then(result => { if (live) { setWorkspaces(result.items); setWorkspaceId(current => current || result.items[0]?.id || ""); } }).catch(err => { if (live) setError(describeError(err)); }).finally(() => { if (live) setLoading(false); }); return () => { live = false; }; }, []);
   useEffect(() => { if (!workspaceId) return; let live = true; setLoading(true); bc.dashboard(workspaceId).then(result => { if (live) setDashboard(result); }).catch(err => { if (live) setError(describeError(err)); }).finally(() => { if (live) setLoading(false); }); return () => { live = false; }; }, [workspaceId, revision]);
+  // Step AJ: rolled-up dashboard summary for the selected scope (scope id == tenant id).
+  // Polls every 30 s (AJ_REFRESH_MS). A 403/404 means the viewer's role or scope may
+  // not open the dashboard — stop polling and say so; the Step G dashboard below
+  // still works. Other failures show once and keep polling silently.
+  useEffect(() => {
+    if (!workspaceId) return;
+    let live = true;
+    ajUnavailableRef.current = false;
+    setAj(null);
+    setAjNote("");
+    const controller = new AbortController();
+    const load = async (silent: boolean) => {
+      if (ajUnavailableRef.current) return;
+      try {
+        const result = await bc.ajDashboard(workspaceId, controller.signal);
+        if (live) setAj(result);
+      } catch (err) {
+        if (!live) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+          ajUnavailableRef.current = true;
+          setAjNote(err.status === 403 ? "The continuity dashboard is available to owner, approver and planner roles." : "No continuity dashboard is available for this workspace.");
+        } else if (!silent) {
+          setAjNote(describeError(err));
+        }
+      }
+    };
+    void load(false);
+    const timer = setInterval(() => { void load(true); }, AJ_REFRESH_MS);
+    return () => { live = false; controller.abort(); clearInterval(timer); };
+  }, [workspaceId, revision]);
   const metrics = dashboard?.metrics;
   return <div className="grid gap-5 pb-8">
     <ModulePageHeader module="M08" eyebrow="MODULE 08 · RESILIENCE" title="Business continuity" description="Review business impact, critical resources, continuity plans, approvals and verified drills." actions={<Button variant="secondary" onClick={() => setRevision(value => value + 1)} disabled={loading}><RefreshCw className={loading ? "animate-spin" : ""} /> Refresh</Button>} />
     {error && <ErrorAlert error={error} />}
     {workspaces.length > 0 && <label className="grid max-w-lg gap-1 text-xs font-semibold text-foreground-2">Continuity workspace<select className="h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-foreground" value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}>{workspaces.map(item => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select></label>}
     {!workspaces.length && !loading && !error && <EmptyModule title="No continuity workspace is available" description="Continuity data is tenant-scoped. A workspace must be created and access granted before resources or plans can be shown." />}
+    {workspaceId && aj && <AjDashboardSection summary={aj} />}
+    {workspaceId && !aj && !ajNote && <Skeleton className="h-40 w-full" />}
+    {ajNote && <Alert tone="info" title="Continuity dashboard unavailable">{ajNote}</Alert>}
     {metrics && <><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Critical resources" value={metrics.critical_resources} hint="Recorded in this workspace" icon={<Database />} /><Stat label="BIA assessed" value={metrics.bia_assessed} hint="Resources with impact assessment" icon={<Gauge />} /><Stat label="Plan coverage" value={metrics.plan_coverage_percent == null ? "—" : `${metrics.plan_coverage_percent}%`} hint={`${metrics.plan_covered} resources covered`} icon={<ShieldCheck />} /><Stat label="Verified drills" value={metrics.verified_drills} hint={`${metrics.active_recoveries} active recoveries`} icon={<Check />} /></div>
       {metrics.pending_approvals > 0 && <Alert tone="warning" title={`${metrics.pending_approvals} decision(s) need review`}>The current continuity scope has pending approval work.</Alert>}
       <div className="grid gap-4 xl:grid-cols-2"><Card><CardHeader title="Resources and dependencies" description={`${dashboard.nodes.length} resources · ${dashboard.links.length} dependency links`} icon={<Network />} /><CardBody className="grid gap-2">{dashboard.nodes.slice(0, 8).map(node => <div key={node.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><span className="min-w-0 truncate text-sm">{node.name}</span><Badge tone={node.data.critical ? "warning" : "neutral"}>{node.data.critical ? "Critical" : node.kind}</Badge></div>)}{!dashboard.nodes.length && <p className="text-sm text-muted">No resources are recorded in this scope.</p>}</CardBody></Card><Card><CardHeader title="Continuity plans" description="Draft, approval and active status comes from saved plans." icon={<ShieldCheck />} /><CardBody className="grid gap-2">{dashboard.plans.length ? dashboard.plans.slice(0, 8).map(plan => <div key={plan.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{plan.title}</p><p className="text-xs text-muted">Version {plan.version} · review due {new Date(plan.review_due_at).toLocaleDateString()}</p></div><Badge>{plan.status}</Badge></div>) : <p className="text-sm text-muted">No continuity plans are available in this scope.</p>}</CardBody></Card></div>

@@ -1,4 +1,4 @@
-import type { Dashboard, Draft, Report, Workflow, Workspace } from './types';
+import type { AjDashboardSummary, Dashboard, Draft, Report, Workflow, Workspace } from './types';
 import { request } from '../api';
 
 export async function continuityRequest<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -8,6 +8,8 @@ export const workspacePath = (id: string) => '/tenants/' + encodeURIComponent(id
 export const bc = {
   workspaces: () => continuityRequest<{ items: Workspace[] }>('/tenants'),
   dashboard: (id: string, signal?: AbortSignal) => continuityRequest<Dashboard>(workspacePath(id) + '/dashboard', undefined, signal),
+  /** Step AJ: read-only rolled-up dashboard summary for a scope (scope id == tenant id). */
+  ajDashboard: (id: string, signal?: AbortSignal) => continuityRequest<AjDashboardSummary>('/scopes/' + encodeURIComponent(id) + '/dashboard', undefined, signal),
   workflows: (id: string) => continuityRequest<{ items: Workflow[] }>(workspacePath(id) + '/workflows'),
   handover: (id: string, scenarioId: string) => continuityRequest<Draft>(workspacePath(id) + '/scenarios/' + scenarioId + '/handover'),
   report: (id: string, runId: string, signal?: AbortSignal) => continuityRequest<Report>(workspacePath(id) + '/runs/' + runId, undefined, signal),

@@ -17,3 +17,22 @@ export type Report = { run: Activation; plan: Plan; tasks: Task[]; verified_step
 export type Workflow = { id: string; name: string; version: number; department_group_id: string; assignee_user_id: string };
 export type Dashboard = { nodes: Resource[]; links: Dependency[]; assessments: Assessment[]; scenarios: Scenario[]; plans: Plan[]; runs: Activation[]; gaps: Gap[]; metrics: { critical_resources: number; bia_assessed: number; plan_covered: number; plan_coverage_percent: number | null; pending_approvals: number; verified_drills: number; active_recoveries: number }; metric_note: string; generated_at: string; scope: { role: string; all_departments: boolean } };
 export type Draft = { title: string; kind: string; steps: Step[]; unresolved_resource_ids: string[]; limitations: string };
+
+/* ---------------------------------------------------------------- Step AJ */
+export type AjSeverity = "critical" | "high" | "medium" | "low";
+export type AjOverallStatus = "ok" | "attention" | "critical";
+export type AjRisk = { id: string; title: string; severity: AjSeverity; category: string; source: "gap" | "incident" | "alert" | "prediction"; affected: string[]; has_plan: boolean };
+export type AjIncident = { id: string; title: string; severity: AjSeverity; status: string; overdue: boolean };
+export type AjRecoveryItem = { id: string; title: string; status: string; verified_steps: number; total_steps: number; progress_percent: number | null; at_risk: boolean };
+/** Step G health roll-up, passed through unchanged (or null until the Step G merge supplies it). */
+export type AjHealth = { status: string; [key: string]: unknown } | null;
+export type AjDashboardSummary = {
+  overall_status: AjOverallStatus;
+  generated_at: string;
+  risks: { total: number; by_severity: Partial<Record<AjSeverity, number>>; uncovered_critical: number; top: AjRisk[] };
+  incidents: { total_active: number; by_severity: Partial<Record<AjSeverity, number>>; overdue: number; top: AjIncident[] };
+  approvals: { pending: number; expiring_soon: number; own_requests: number };
+  recovery: { active: number; closed: number; average_progress_percent: number | null; at_risk: number; items: AjRecoveryItem[] };
+  health: AjHealth;
+  highlights: string[];
+};

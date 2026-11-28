@@ -9,11 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession, audit_context
+from app.continuity import dashboard as dashboard_service
 from app.continuity import intelligence, journal, schemas, service
 from app.continuity.access import nodes_for, scope_for
 from app.continuity.models import GrantRequest, Member, Tenant
-from app.core.errors import ConflictError, PermissionDeniedError
+from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.db.models import AutomationWorkflow
+from app.recovery.access import scope_for as recovery_scope_for
 from app.services import audit
 
 router = APIRouter(prefix="/api/continuity", tags=["business-continuity"])
@@ -63,6 +65,28 @@ async def decide_grant(grant_id: uuid.UUID, data: schemas.Decision, request: Req
 async def dashboard(scope: ScopeDep, db: DbSession, response: Response):
     response.headers["Cache-Control"] = "private, no-store"
     return await service.dashboard(db, scope)
+
+
+@router.get("/scopes/{scope_id}/dashboard")
+async def continuity_dashboard(scope_id: uuid.UUID, db: DbSession, user: CurrentUser, response: Response):
+    """Step AJ business continuity dashboard (read-only).
+
+    Non-members and unknown scopes get 404 (the scope is not
+    revealed); members whose role may not open the dashboard get 403.
+    Recovery incidents come from the viewer's recovery workspace for
+    the same tenant id when one exists; otherwise that section is
+    empty — recovery workspaces are a separate tenant namespace.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    scope = await scope_for(db, scope_id, user, write=False)
+    if scope.role not in dashboard_service.DASHBOARD_ROLES:
+        raise PermissionDeniedError("The continuity dashboard is available to owner, approver and planner roles.")
+    recovery_scope = None
+    try:
+        recovery_scope = await recovery_scope_for(db, scope_id, user.id)
+    except NotFoundError:
+        recovery_scope = None
+    return await dashboard_service.continuity_dashboard_summary(db, scope, recovery_scope=recovery_scope)
 
 
 @router.get("/tenants/{tenant_id}/members")
