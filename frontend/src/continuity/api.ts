@@ -1,4 +1,4 @@
-import type { Dashboard, Draft, Report, Workflow, Workspace } from './types';
+import type { Dashboard, Draft, DrillComparison, DrillSeedResult, GraphMergeStatus, HandoverCheck, HandoverGrant, Report, Workflow, Workspace } from './types';
 import { request } from '../api';
 
 export async function continuityRequest<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -10,6 +10,12 @@ export const bc = {
   dashboard: (id: string, signal?: AbortSignal) => continuityRequest<Dashboard>(workspacePath(id) + '/dashboard', undefined, signal),
   workflows: (id: string) => continuityRequest<{ items: Workflow[] }>(workspacePath(id) + '/workflows'),
   handover: (id: string, scenarioId: string) => continuityRequest<Draft>(workspacePath(id) + '/scenarios/' + scenarioId + '/handover'),
+  handoverCheck: (id: string, scenarioId: string) => continuityRequest<HandoverCheck>(workspacePath(id) + '/scenarios/' + scenarioId + '/handover-check'),
+  handoverGrants: (id: string) => continuityRequest<{ items: HandoverGrant[] }>(workspacePath(id) + '/handover-grants'),
+  seedDrills: (id: string) => continuityRequest<DrillSeedResult>(workspacePath(id) + '/drills/seed', {}),
+  drillComparison: (id: string, runId: string) => continuityRequest<DrillComparison>(workspacePath(id) + '/runs/' + runId + '/drill-comparison'),
+  seedGraphMerge: (id: string, companyGraphTenantId: string) => continuityRequest<Record<string, unknown>>(workspacePath(id) + '/graph-merge/seed', { company_graph_tenant_id: companyGraphTenantId }),
+  graphMergeStatus: (id: string, companyGraphTenantId: string) => continuityRequest<GraphMergeStatus>(workspacePath(id) + '/graph-merge/status?company_graph_tenant_id=' + encodeURIComponent(companyGraphTenantId)),
   report: (id: string, runId: string, signal?: AbortSignal) => continuityRequest<Report>(workspacePath(id) + '/runs/' + runId, undefined, signal),
 };
 

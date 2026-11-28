@@ -489,6 +489,11 @@ async def tick(sessionmaker, cipher, *, now=None):
     except Exception as exc:
         log.warning('Agent Studio mirroring skipped (%s)', type(exc).__name__)
     try:
+        from app.continuity.unified import mirror_pending_continuity_runs
+        await mirror_pending_continuity_runs(sessionmaker, cipher)
+    except Exception as exc:
+        log.warning('Continuity mirroring skipped (%s)', type(exc).__name__)
+    try:
         from app.services.agent_action_runtime import mirror_pending_proposals
         await mirror_pending_proposals(sessionmaker, cipher)
     except Exception as exc:
