@@ -10,7 +10,10 @@ PERMISSION_REPORTS_VIEW = "reports.view"
 PERMISSION_PEOPLE_INVITE = "people.invite"  # invite Employees into the departments in scope
 PERMISSION_TRAINING_MANAGE = "training.manage"  # assign training to, and follow progress in, departments in scope
 PERMISSION_AGENTS_MANAGE = "agents.manage"  # create, version and disable department agents in scope
-DEPARTMENT_CAPABILITIES = (PERMISSION_PEOPLE_INVITE, PERMISSION_TRAINING_MANAGE, PERMISSION_AGENTS_MANAGE)
+PERMISSION_COST_READ = "cost.read"  # read cost/ROI figures for scopes in scope (Step N)
+PERMISSION_CONTROL_READ = "control.read"  # read the control-plane inventory for scopes in scope (Step N)
+DEPARTMENT_CAPABILITIES = (PERMISSION_PEOPLE_INVITE, PERMISSION_TRAINING_MANAGE, PERMISSION_AGENTS_MANAGE,
+                           PERMISSION_COST_READ, PERMISSION_CONTROL_READ)
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,8 @@ PERMISSION_CATALOG = (
     PermissionDefinition(PERMISSION_PEOPLE_INVITE, "people", "invite", ("access_group",)),
     PermissionDefinition(PERMISSION_TRAINING_MANAGE, "training", "manage", ("access_group",)),
     PermissionDefinition(PERMISSION_AGENTS_MANAGE, "agents", "manage", ("access_group",)),
+    PermissionDefinition(PERMISSION_COST_READ, "cost", "read", ()),  # org-wide / department cost figures, read-only
+    PermissionDefinition(PERMISSION_CONTROL_READ, "control", "read", ()),  # control-plane inventory, read-only
 )
 PERMISSION_BY_KEY = {item.permission: item for item in PERMISSION_CATALOG}
 PERMISSIONS = tuple(item.permission for item in PERMISSION_CATALOG)
