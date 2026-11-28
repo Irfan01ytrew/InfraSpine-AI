@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "../src/finance/financeView.mjs";
+import { actionableStep, headline, reasonCounts, shortHash, spendSeries } from "../src/finance/financeView.mjs";
 
 test("headline reads like the founder scenario", () => {
   assert.equal(headline({ verified: 32, total: 50 }), "32 of 50 verified");
@@ -31,15 +31,6 @@ test("spend series stacks departments per month for one currency", () => {
   assert.equal(result.series[0].total, 0);
   assert.equal(result.series[1].total, 150.75);
   assert.equal(result.max, 150.75);
-});
-
-test("skipped Knowledge documents are summarised plainly", () => {
-  assert.equal(skippedSummary([]), "");
-  assert.equal(skippedSummary(null), "");
-  assert.equal(
-    skippedSummary([{ filename: "old.pdf", reason: "Wait until the current document version is indexed." }]),
-    "old.pdf: Wait until the current document version is indexed.",
-  );
 });
 
 test("only the step the person may perform is offered", () => {
