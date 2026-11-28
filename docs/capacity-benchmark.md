@@ -1,4 +1,21 @@
-# Capacity benchmarks
+## Step H chunking-only projection — 2026-11-28 (cloud VM, bounded)
+
+Measured by Agent 115 with `app/qa/ingestion_projection.py` (deterministic
+synthetic TXT corpus, real `split_text` chunker, single worker, wall-clock
+on this cloud VM — 1.5 shared CPUs):
+
+- Corpus: 200 pages × ~4 KB = 823,890 bytes; chunking took **0.004 s
+  (~200 MB/s)**.
+- Linear projection to 600 GiB at that rate: **~0.86 hours**.
+- Sublinear projection (scaling exponent 0.9, throughput degrading as the
+  index grows): **~3.32 hours**.
+
+**This is a lower bound, not a qualification.** Chunking is the cheapest
+ingestion stage: parsing, embedding and index writes are NOT in the number,
+and the real pipeline can only be slower. The measurement itself is a
+4 ms timing over an 824 KB corpus, so it is noisy; re-measure on target
+hardware with a larger corpus before trusting the rate. 600 GB readiness
+remains unverified, as stated above.
 
 ## Current-source bounded FAISS run — 2026-10-29 (native Windows)
 

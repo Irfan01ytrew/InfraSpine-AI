@@ -74,6 +74,7 @@ from app.api.routes import (
     proposal_coverage,
     role_templates,
     service_requests,
+    founder_voice,
 )
 from app.core.config import get_settings
 from app.core.crypto import CredentialCipher
@@ -450,6 +451,7 @@ def create_app() -> FastAPI:
     app.include_router(sso.router)
     app.include_router(scim.router)
     app.include_router(collaboration.router)
+    app.include_router(founder_voice.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:

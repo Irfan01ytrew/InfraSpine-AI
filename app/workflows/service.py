@@ -427,6 +427,9 @@ class WorkflowService:
             if run.origin == 'studio':
                 from app.agent_studio.unified import on_workflow_cancelled
                 await on_workflow_cancelled(self.db, self.cipher, run)
+            if run.origin == 'founder_voice':
+                from app.founder_voice.unified import on_workflow_cancelled
+                await on_workflow_cancelled(self.db, self.cipher, run)
         elif command == 'retry' and run.status == 'failed':
             if any(d.status == 'unknown' for d in dispatches):
                 raise ConflictError('Ambiguous external actions require a verified receipt; blind retry is forbidden.')
