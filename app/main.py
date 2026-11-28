@@ -51,6 +51,7 @@ from app.api.routes import (
     expertise,
     exports,
     forecasts,
+    predictive_continuity,
     folder_sync,
     cloud_connectors,
     sso,
@@ -443,6 +444,7 @@ def create_app() -> FastAPI:
     app.include_router(webhook_routes.router)
     app.include_router(expertise.router)
     app.include_router(forecasts.router)
+    app.include_router(predictive_continuity.router)
     app.include_router(exports.router)
     app.include_router(exports.image_router)
     app.include_router(folder_sync.router)

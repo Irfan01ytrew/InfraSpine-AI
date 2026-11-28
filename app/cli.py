@@ -4,6 +4,7 @@
     python -m app.cli create-user --email admin@example.com --role admin
     python -m app.cli set-password --email admin@example.com
     python -m app.cli rag-rebuild-index      (stop the server first; or use POST /api/rag/index/rebuild)
+    python -m app.cli forecast-scan --tenant-id <uuid> --snapshot twin.json [--loop]
     echo "<password>" | python -m app.cli create-user --email ... --role admin --password-stdin
 """
 
@@ -23,7 +24,7 @@ from sqlalchemy.engine import make_url
 from app.core.config import DatabaseSettings, get_settings
 from app.core.crypto import CredentialCipher
 from app.core.security import MIN_PASSWORD_LENGTH, hash_password
-from app.db.models import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_USER, User
+from app.db.models import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_USER, AccessGroup, User
 from app.db.session import create_engine, create_sessionmaker
 from app.services import auth
 from app.services.audit import AuditContext
@@ -193,6 +194,321 @@ def deployment_snapshot_restore_files(path: Path, application_data_target: Path,
     print(json.dumps(restore_snapshot_files(path, application_data_target, qdrant_data_target), sort_keys=True))
 
 
+async def forecast_scan(args) -> int:
+    """Standing forecast scan (Step L): scan a twin snapshot, record it, watch it.
+
+    One pass (``--once`` behaviour is the default): load the snapshot
+    JSON, run the fingerprint-gated scan, persist new forecasts with
+    ``record_scan`` (idempotent per fingerprint), evaluate the watch
+    rules and print the advisory alert lines. ``--dry-run`` scans and
+    evaluates without touching the database or the state file.
+    ``--live-work`` refreshes the snapshot's live-work entities from
+    the real tables first (Step L slice 5), so a scan re-fires when
+    live work changes even if the snapshot file did not.
+    ``--loop`` repeats passes every ``--interval-seconds`` until
+    stopped (SIGINT/SIGTERM); the snapshot file is re-read each
+    pass so a refreshed twin export is picked up. Exit 0 on a
+    completed pass (including an unchanged twin), 2 on a usage or
+    validation error.
+    """
+    import signal
+    from uuid import UUID as _UUID
+
+    from app.predictive_continuity.live_work import LiveWorkUnavailable, load_live_work
+    from app.predictive_continuity.scheduler import (
+        build_scan_report,
+        format_scan_summary,
+        load_snapshot,
+        load_state,
+        run_forecast_scan,
+        save_state,
+    )
+
+    try:
+        tenant_id = _UUID(args.tenant_id)
+    except ValueError:
+        print(f"Invalid --tenant-id (must be a UUID): {args.tenant_id}", file=sys.stderr)
+        return 2
+    critical_ids = [part for part in (args.critical_ids or "").split(",") if part] or None
+    horizons = None
+    if args.horizons:
+        try:
+            horizons = [int(part) for part in args.horizons.split(",") if part]
+        except ValueError:
+            print("--horizons must be comma-separated integers.", file=sys.stderr)
+            return 2
+    created_by = None
+    if args.created_by:
+        try:
+            created_by = _UUID(args.created_by)
+        except ValueError:
+            print(f"Invalid --created-by (must be a UUID): {args.created_by}", file=sys.stderr)
+            return 2
+    if args.dry_run and args.loop:
+        print("--dry-run and --loop cannot be combined.", file=sys.stderr)
+        return 2
+    if args.dry_run and args.live_work:
+        print("--live-work needs the database; it cannot be combined with --dry-run.", file=sys.stderr)
+        return 2
+    if args.interval_seconds < 60:
+        print("--interval-seconds must be at least 60.", file=sys.stderr)
+        return 2
+    try:
+        snapshot = load_snapshot(args.snapshot)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.dry_run:
+        try:
+            report = build_scan_report(
+                snapshot, critical_ids=critical_ids, horizons=horizons)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(json.dumps({
+            "dry_run": True,
+            "fingerprint": report["fingerprint"],
+            "refreshed": report["refreshed"],
+            "scanned_at": report["scanned_at"],
+            "counts": report["counts"],
+            "alerts": report["alerts"],
+            "suppressed": len(report["suppressed"]),
+            "deferred": len(report["deferred"]),
+        }, sort_keys=True))
+        return 0
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.get_secret_value())
+    sessionmaker = create_sessionmaker(engine)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def request_stop(*_):
+        loop.call_soon_threadsafe(stop.set)
+
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):  # SIGBREAK: Ctrl+Break on Windows
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), request_stop)
+    try:
+        while True:
+            if args.snapshot != "-":
+                try:
+                    snapshot = load_snapshot(args.snapshot)
+                except ValueError as exc:
+                    # A transient snapshot problem must not kill a
+                    # looped scheduler; skip this pass and retry.
+                    print(str(exc), file=sys.stderr)
+                    snapshot = None
+            if snapshot is not None:
+                state = load_state(args.state_file)
+                previous = None if args.force else state.get("fingerprint")
+                try:
+                    async with sessionmaker() as db:
+                        live_items = None
+                        if args.live_work:
+                            live_items = await load_live_work(db)
+                        summary = await run_forecast_scan(
+                            db, tenant_id, snapshot,
+                            critical_ids=critical_ids, horizons=horizons,
+                            previous_fingerprint=previous,
+                            sent_at=state.get("sent_at") or {},
+                            created_by=created_by, prune=args.prune,
+                            live_work_items=live_items,
+                        )
+                except LiveWorkUnavailable as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+                if args.state_file:
+                    save_state(args.state_file, {
+                        "fingerprint": summary["fingerprint"],
+                        "sent_at": summary["sent_at"],
+                    })
+                print(format_scan_summary(summary))
+            if not args.loop or stop.is_set():
+                return 0
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=args.interval_seconds)
+            except asyncio.TimeoutError:
+                pass
+            if stop.is_set():
+                return 0
+    finally:
+        await engine.dispose()
+
+
+async def forecast_calendar(args) -> int:
+    """Calendar-aware forecasts from real AG leave (Step L slice 4).
+
+    One pass: load a twin snapshot JSON, read the department's
+    approved AG leave from the database, run the leave-window
+    forecasts + backup-overlap warnings, print the JSON summary.
+    Advisory only - it writes nothing. Exit 0 on a completed run,
+    2 on a usage or validation error (bad UUID, unreadable
+    snapshot, unknown department, AG table missing, malformed
+    snapshot).
+    """
+    from uuid import UUID as _UUID
+
+    from app.predictive_continuity.ag_leave import (
+        AgLeaveUnavailable,
+        calendar_forecasts_from_ag,
+    )
+    from app.predictive_continuity.scheduler import load_snapshot
+
+    try:
+        group_id = _UUID(args.group_id)
+    except ValueError:
+        print(f"Invalid --group-id (must be a UUID): {args.group_id}", file=sys.stderr)
+        return 2
+    try:
+        snapshot = load_snapshot(args.snapshot)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.window_days < 1:
+        print("--window-days must be a positive integer.", file=sys.stderr)
+        return 2
+    settings = get_settings()
+    engine = create_engine(settings.database_url.get_secret_value())
+    sessionmaker = create_sessionmaker(engine)
+    try:
+        async with sessionmaker() as db:
+            group = await db.scalar(
+                select(AccessGroup).where(
+                    AccessGroup.id == group_id,
+                    AccessGroup.kind == "department",
+                )
+            )
+            if group is None:
+                print(f"Unknown department --group-id: {args.group_id}", file=sys.stderr)
+                return 2
+            try:
+                result = await calendar_forecasts_from_ag(
+                    snapshot, db, group_id, window_days=args.window_days,
+                )
+            except (ValueError, AgLeaveUnavailable) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+    finally:
+        await engine.dispose()
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+async def forecast_reconcile(args) -> int:
+    """Reconcile one stored forecast with one real Step G drill (Step L slice 7).
+
+    One pass: load the Step G ``drill_comparison`` JSON (the plain
+    dict ``drill_comparison`` returns for the run — pass the file
+    G's endpoint produced, or ``-`` for stdin), load the stored
+    forecast record, run the pure reconciliation, store the report
+    in the review queue (idempotent per drill run + forecast
+    record), and fold the miss penalty into the forecast record's
+    drift score when the forecast was wrong. ``--dry-run`` runs
+    the pure reconciliation and prints the report without touching
+    the database. Never rewrites a drill record, never auto-applies
+    a difference. Exit 0 on a completed run, 2 on a usage or
+    validation error (bad UUID, unreadable comparison JSON,
+    unknown forecast record, malformed forecast or comparison).
+    """
+    import json as _json
+    from uuid import UUID as _UUID
+
+    from app.predictive_continuity.models import ForecastRecord
+    from app.predictive_continuity.reconciliation import reconcile
+    from app.predictive_continuity.reconciliation_records import (
+        evaluate_reconciliation,
+    )
+
+    try:
+        tenant_id = _UUID(args.tenant_id)
+    except ValueError:
+        print(f"Invalid --tenant-id (must be a UUID): {args.tenant_id}", file=sys.stderr)
+        return 2
+    try:
+        forecast_record_id = _UUID(args.forecast_record_id)
+    except ValueError:
+        print(f"Invalid --forecast-record-id (must be a UUID): {args.forecast_record_id}",
+              file=sys.stderr)
+        return 2
+    try:
+        if args.drill_comparison == "-":
+            g_comparison = _json.load(sys.stdin)
+        else:
+            with open(args.drill_comparison, encoding="utf-8") as handle:
+                g_comparison = _json.load(handle)
+    except (OSError, ValueError) as exc:
+        print(f"Cannot load --drill-comparison: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(g_comparison, dict):
+        print("--drill-comparison must be a JSON object.", file=sys.stderr)
+        return 2
+    if args.dry_run:
+        settings = get_settings()
+        engine = create_engine(settings.database_url.get_secret_value())
+        sessionmaker = create_sessionmaker(engine)
+        try:
+            async with sessionmaker() as db:
+                record = await db.scalar(
+                    select(ForecastRecord).where(
+                        ForecastRecord.tenant_id == tenant_id,
+                        ForecastRecord.id == forecast_record_id,
+                    )
+                )
+                if record is None:
+                    print(f"Unknown forecast record --forecast-record-id: {args.forecast_record_id}",
+                          file=sys.stderr)
+                    return 2
+                try:
+                    report = reconcile(
+                        record.forecast, g_comparison, tenant_id=tenant_id,
+                        forecast_record_id=str(record.id))
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+        finally:
+            await engine.dispose()
+        print(_json.dumps({"dry_run": True, **report}, sort_keys=True))
+        return 0
+    settings = get_settings()
+    engine = create_engine(settings.database_url.get_secret_value())
+    sessionmaker = create_sessionmaker(engine)
+    try:
+        async with sessionmaker() as db:
+            record = await db.scalar(
+                select(ForecastRecord).where(
+                    ForecastRecord.tenant_id == tenant_id,
+                    ForecastRecord.id == forecast_record_id,
+                )
+            )
+            if record is None:
+                print(f"Unknown forecast record --forecast-record-id: {args.forecast_record_id}",
+                      file=sys.stderr)
+                return 2
+            try:
+                result = await evaluate_reconciliation(
+                    db, tenant_id, forecast_record=record,
+                    g_comparison=g_comparison, drill_kind=args.drill_kind)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+            await db.commit()
+    finally:
+        await engine.dispose()
+    print(_json.dumps({
+        "dry_run": False,
+        "matches": result["matches"],
+        "counts": result["counts"],
+        "adjusted_drift_score": result["adjusted_drift_score"],
+        "created": result["recorded"]["created"],
+        "summary": result["summary"],
+    }, sort_keys=True))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -235,6 +551,38 @@ def main() -> None:
     snapshot_restore.add_argument("--path", type=Path, required=True)
     snapshot_restore.add_argument("--application-data-target", type=Path, required=True)
     snapshot_restore.add_argument("--qdrant-data-target", type=Path)
+    forecast = sub.add_parser(
+        "forecast-scan",
+        help="Standing forecast scan (Step L): scan a twin snapshot, record new forecasts, evaluate the watch",
+    )
+    forecast.add_argument("--tenant-id", required=True, help="Graph tenant UUID the forecasts belong to")
+    forecast.add_argument("--snapshot", required=True, help="Twin snapshot JSON file ('-' reads stdin)")
+    forecast.add_argument("--critical-ids", help="Comma-separated entity ids; default: critical set from the snapshot")
+    forecast.add_argument("--horizons", help="Comma-separated day counts; default: 1,7,14,30")
+    forecast.add_argument("--created-by", help="UUID of the user the scan is attributed to")
+    forecast.add_argument("--state-file", help="JSON state file for fingerprint gating + alert cooldowns")
+    forecast.add_argument("--dry-run", action="store_true", help="Scan and evaluate the watch without writing anything")
+    forecast.add_argument("--prune", action="store_true", help="Prune superseded records past retention after recording")
+    forecast.add_argument("--force", action="store_true", help="Ignore the stored fingerprint; always re-scan")
+    forecast.add_argument("--live-work", action="store_true", help="Refresh the snapshot's live-work entities from the real tables before scanning (Step L slice 5)")
+    forecast.add_argument("--loop", action="store_true", help="Repeat passes until stopped (SIGINT/SIGTERM)")
+    forecast.add_argument("--interval-seconds", type=int, default=3600, help="Seconds between loop passes (min 60)")
+    calendar = sub.add_parser(
+        "forecast-calendar",
+        help="Calendar-aware forecasts from AG leave (Step L): leave-window forecasts + backup-overlap warnings",
+    )
+    calendar.add_argument("--group-id", required=True, help="Department (AccessGroup) UUID the AG leave belongs to")
+    calendar.add_argument("--snapshot", required=True, help="Twin snapshot JSON file ('-' reads stdin)")
+    calendar.add_argument("--window-days", type=int, default=30, help="Days of backup-overlap warnings (default 30)")
+    reconcile = sub.add_parser(
+        "forecast-reconcile",
+        help="Drill reconciliation (Step L): compare a stored forecast with a real Step G drill run, queue the differences",
+    )
+    reconcile.add_argument("--tenant-id", required=True, help="Graph tenant UUID the forecast belongs to")
+    reconcile.add_argument("--forecast-record-id", required=True, help="Stored forecast record UUID to reconcile")
+    reconcile.add_argument("--drill-comparison", required=True, help="Step G drill_comparison JSON file ('-' reads stdin)")
+    reconcile.add_argument("--drill-kind", help="Disruption kind (resignation, absence, server_outage, database_failure, supplier_disruption)")
+    reconcile.add_argument("--dry-run", action="store_true", help="Run the pure reconciliation without writing anything")
     args = parser.parse_args()
 
     if args.command == "generate-master-key":
@@ -266,6 +614,12 @@ def main() -> None:
         deployment_snapshot_verify(args.path)
     elif args.command == "deployment-snapshot-restore-files":
         deployment_snapshot_restore_files(args.path, args.application_data_target, args.qdrant_data_target)
+    elif args.command == "forecast-scan":
+        sys.exit(asyncio.run(forecast_scan(args)))
+    elif args.command == "forecast-calendar":
+        sys.exit(asyncio.run(forecast_calendar(args)))
+    elif args.command == "forecast-reconcile":
+        sys.exit(asyncio.run(forecast_reconcile(args)))
 
 
 if __name__ == "__main__":

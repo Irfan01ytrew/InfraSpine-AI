@@ -48,6 +48,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "research", label: "Company data research", icon: FileSearch },
         { view: "proposals", label: "Tender & RFP coverage", icon: FileText },
         { view: "forecasts", label: "What-if forecasts", icon: TrendingUp },
+        { view: "predictive-continuity", label: "Predictive continuity", icon: TrendingUp },
         { view: "market-research", label: "Market research", icon: Globe2, keywords: "competitor" },
       ],
     },
