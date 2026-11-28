@@ -53,10 +53,12 @@ BY_MEMBER_TABLE = {spec.member_table: spec for spec in MODULES.values()}
 
 # Organisation-wide and group roles mirrored from users / access groups.
 ORG_ROLES = {
-    "org.member": frozenset({"org.access", "agent.run", "documents.read", "channel.reply"}),
+    "org.member": frozenset({"org.access", "agent.run", "documents.read", "channel.reply",
+                             "companion.read", "companion.write", "companion.digest.send"}),
     # Mirrors the legacy installation administrator: every department's workflow authority (legacy is_manager)
     # and the QA console. It holds no business duties (invoice.verify, payment.approve, funds.transfer).
-    "org.admin": frozenset({"org.admin", "group.access", "workflow.access", "workflow.manage", "qa.manage"}),
+    "org.admin": frozenset({"org.admin", "group.access", "workflow.access", "workflow.manage", "qa.manage",
+                            "companion.digest.approve"}),
 }
 GROUP_ROLES = {
     "group.member": frozenset({"group.access", "workflow.access"}),

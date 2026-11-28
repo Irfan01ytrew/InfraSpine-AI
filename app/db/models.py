@@ -1,7 +1,7 @@
 """ORM models. Critical invariants are enforced by the database, not only by code."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -9,9 +9,11 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Float,
     Identity,
     Index,
     Integer,
@@ -20,6 +22,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -1449,6 +1452,179 @@ class MemoryItem(Base):
     )
     created_at: Mapped[datetime] = _now()
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+# ------------------------------------------------- personal companion (Step AN)
+
+
+class CompanionProject(Base):
+    """A personal project that groups a user's goals. Owner-only; nothing here is shared."""
+
+    __tablename__ = "companion_projects"
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived')", name="ck_companion_projects_status_valid"),
+        CheckConstraint("length(btrim(name)) BETWEEN 1 AND 120", name="ck_companion_projects_name_length"),
+        Index("ix_companion_projects_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionGoal(Base):
+    """One personal goal. Owner-only; another user's goals return 404, never 403-with-existence."""
+
+    __tablename__ = "companion_goals"
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived','completed')", name="ck_companion_goals_status_valid"),
+        CheckConstraint("priority IN ('low','medium','high')", name="ck_companion_goals_priority_valid"),
+        CheckConstraint("length(btrim(title)) BETWEEN 1 AND 180", name="ck_companion_goals_title_length"),
+        Index("ix_companion_goals_user_status", "user_id", "status"),
+        Index("ix_companion_goals_user_project", "user_id", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("companion_projects.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
+    priority: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'medium'"))
+    deadline: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionTask(Base):
+    """A personal task inside one goal. The planner's TaskInput; ``action_kind`` decides approval need."""
+
+    __tablename__ = "companion_tasks"
+    __table_args__ = (
+        CheckConstraint("status IN ('todo','in_progress','done','cancelled')", name="ck_companion_tasks_status_valid"),
+        CheckConstraint("priority IN ('low','medium','high')", name="ck_companion_tasks_priority_valid"),
+        CheckConstraint(
+            "action_kind IN ('internal','send','book','pay','share','publish','deploy')",
+            name="ck_companion_tasks_action_kind_valid",
+        ),
+        CheckConstraint("length(btrim(title)) BETWEEN 1 AND 180", name="ck_companion_tasks_title_length"),
+        CheckConstraint("estimated_hours >= 0", name="ck_companion_tasks_hours_valid"),
+        Index("ix_companion_tasks_user_status", "user_id", "status"),
+        Index("ix_companion_tasks_goal_due", "goal_id", "due"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companion_goals.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'todo'"))
+    priority: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'medium'"))
+    due: Mapped[date | None] = mapped_column(Date)
+    estimated_hours: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("'0'"))
+    action_kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'internal'"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionPreference(Base):
+    """One row per user: language, working hours, quiet hours, capacity, retention. PK is the user."""
+
+    __tablename__ = "companion_preferences"
+    __table_args__ = (
+        CheckConstraint("language IN ('en','ur','roman_urdu')", name="ck_companion_prefs_language_valid"),
+        CheckConstraint(
+            "weekly_capacity_hours > 0 AND weekly_capacity_hours <= 168",
+            name="ck_companion_prefs_capacity_valid",
+        ),
+        CheckConstraint("retention_days >= 1", name="ck_companion_prefs_retention_valid"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    language: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'en'"))
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("'Asia/Karachi'"))
+    weekly_capacity_hours: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("'40'"))
+    quiet_start: Mapped[time] = mapped_column(Time, nullable=False, server_default=text("'22:00'"))
+    quiet_end: Mapped[time] = mapped_column(Time, nullable=False, server_default=text("'07:00'"))
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("'90'"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionProgress(Base):
+    """Append-only progress evidence for a goal (and optionally one task). No update/delete API."""
+
+    __tablename__ = "companion_progress"
+    __table_args__ = (
+        CheckConstraint("percent BETWEEN 0 AND 100", name="ck_companion_progress_percent_valid"),
+        CheckConstraint("length(btrim(note)) <= 1000", name="ck_companion_progress_note_length"),
+        Index("ix_companion_progress_user_goal_created", "user_id", "goal_id", "created_at"),
+        Index("ix_companion_progress_task_created", "task_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companion_goals.id", ondelete="CASCADE"), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("companion_tasks.id", ondelete="SET NULL"))
+    percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str] = mapped_column(String(1000), nullable=False, server_default=text("''"))
+    on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+
+class CompanionConsent(Base):
+    """Per-integration personal consent: separate, revocable, expiring. No consent -> no call, no data sent."""
+
+    __tablename__ = "companion_consents"
+    __table_args__ = (
+        CheckConstraint("integration IN ('email_digest')", name="ck_companion_consents_integration_valid"),
+        CheckConstraint("length(btrim(scope)) BETWEEN 1 AND 64", name="ck_companion_consents_scope_length"),
+        Index(
+            "uq_companion_consents_active", "user_id", "integration", unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+        Index("ix_companion_consents_user_integration", "user_id", "integration"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    integration: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    granted_at: Mapped[datetime] = _now()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionDigestOutbox(Base):
+    """One daily-digest email for one user: queued only with consent, sent only after an exact-action approval."""
+
+    __tablename__ = "companion_digest_outbox"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','sent','cancelled','failed')", name="ck_companion_digest_status_valid"
+        ),
+        Index(
+            "uq_companion_digest_user_date", "user_id", "digest_date", unique=True,
+            postgresql_where=text("status IN ('pending','sent')"),
+        ),
+        Index("ix_companion_digest_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    consent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("companion_consents.id", ondelete="SET NULL"))
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform_approval_requests.id", ondelete="SET NULL")
+    )
+    digest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    message_id: Mapped[str | None] = mapped_column(String(256))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("'0'"))
+    created_at: Mapped[datetime] = _now()
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ------------------------------------------------------------------ access control (ADR-004 WP1)

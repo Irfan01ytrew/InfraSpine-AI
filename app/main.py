@@ -56,6 +56,7 @@ from app.api.routes import (
     sso,
     scim,
     collaboration,
+    companion,
     governance,
     handoffs,
     health,
@@ -432,6 +433,7 @@ def create_app() -> FastAPI:
     app.include_router(rag.router)
     app.include_router(conversations.router)
     app.include_router(memory.router)
+    app.include_router(companion.router)
     app.include_router(meetings.router)
     app.include_router(claims.router)
     app.include_router(knowledge.router)
