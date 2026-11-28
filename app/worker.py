@@ -53,6 +53,23 @@ async def _schema_ready(sessionmaker) -> str | None:
     return None
 
 
+def _report_deliver(sessionmaker, settings):
+    """Build the scheduled-report ``deliver`` callback for this process.
+
+    WhatsApp sends need the master key to decrypt the connection token; when
+    the key is unavailable the callback still works for email/in_app and
+    WhatsApp deliveries fail closed with a typed error (retried, never sent).
+    """
+    from app.core.crypto import CredentialCipher
+    from app.services.scheduled_report_delivery import make_report_deliver
+
+    try:
+        cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    except (ValueError, TypeError, AttributeError):
+        cipher = None
+    return make_report_deliver(sessionmaker, settings, cipher)
+
+
 async def _run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -133,6 +150,10 @@ async def _run(args: argparse.Namespace) -> int:
             from app.services.automation_worker import process_workflows_once
             from app.services.service_request_worker import process_service_request_slas
             from app.services.approval_reminders import process_approval_reminders
+            from app.services.scheduled_report_worker import (
+                deliver_pending_report_deliveries,
+                process_scheduled_reports,
+            )
             from app.services.request_attachments import cleanup_orphans
             from app.services.webhooks import deliver_due
             from app.services.folder_sync import process_due_folder_syncs
@@ -151,6 +172,11 @@ async def _run(args: argparse.Namespace) -> int:
             while completed_batch := await process_service_request_slas(sessionmaker):
                 sla_escalations += completed_batch
             approval_reminders = await process_approval_reminders(sessionmaker)
+            report_deliver = _report_deliver(sessionmaker, settings)
+            scheduled_reports = await process_scheduled_reports(
+                sessionmaker, deliver=report_deliver)
+            report_deliveries = await deliver_pending_report_deliveries(
+                sessionmaker, deliver=report_deliver)
             await cleanup_orphans(sessionmaker, settings=settings)
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
@@ -173,6 +199,8 @@ async def _run(args: argparse.Namespace) -> int:
                 folder_sync_runs,
             )
             log.info("Processed %s partner sources and %s approval step reminders", partner_processed, approval_reminders)
+            log.info("Processed %s scheduled report occurrences and %s pending report deliveries",
+                     scheduled_reports, report_deliveries)
             return 0
 
         stop = asyncio.Event()
@@ -189,6 +217,7 @@ async def _run(args: argparse.Namespace) -> int:
         from app.services.automation_worker import run_automation_worker
         from app.services.service_request_worker import run_service_request_sla_worker
         from app.services.approval_reminders import run_approval_reminders
+        from app.services.scheduled_report_worker import run_scheduled_report_worker
         from app.services.request_attachments import run_attachment_cleanup
         from app.services.webhooks import run_webhook_worker
         from app.services.folder_sync import run_folder_sync_worker
@@ -216,6 +245,7 @@ async def _run(args: argparse.Namespace) -> int:
             run_automation_worker(sessionmaker, stop),
             run_service_request_sla_worker(sessionmaker, stop),
             run_approval_reminders(sessionmaker, stop),
+            run_scheduled_report_worker(sessionmaker, stop, deliver=_report_deliver(sessionmaker, settings)),
             run_attachment_cleanup(sessionmaker, stop),
             run_webhook_worker(sessionmaker, stop),
             run_folder_sync_worker(sessionmaker, settings, stop),

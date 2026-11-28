@@ -375,6 +375,21 @@ async def _send_text(
         },
     )
 
+async def send_outbound_text(
+    connection: AgentStudioWhatsAppConnection,
+    cipher: CredentialCipher,
+    recipient: str,
+    body: str,
+) -> None:
+    """Send one outbound text over the Meta Cloud API to an explicit recipient.
+
+    Unlike the agent-reply path this is not bound to an inbound message: the
+    caller must already know the recipient is reachable (allowed sender within
+    the 24-hour messaging window). Step AA scheduled reports use this; the
+    exactly-once guarantee lives with the caller (``dispatch_once``).
+    """
+    await _send_text(connection, cipher, recipient, body)
+
 
 async def _claim_one(sessionmaker: async_sessionmaker[AsyncSession]) -> uuid.UUID | None:
     async with sessionmaker() as db:

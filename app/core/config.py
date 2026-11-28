@@ -278,6 +278,9 @@ class Settings(DatabaseSettings):
     personal_task_smtp_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     # Email approvers (pending, reminder, escalation) over the same SMTP transport. Off by default.
     approval_email_enabled: bool = False
+    # Email scheduled reports (Step AA) over the same SMTP transport. Off by
+    # default; WhatsApp and in-app delivery do not use this flag.
+    scheduled_report_email_enabled: bool = False
     # Parse each file in a separate, killable process with these limits (recommended; required for the limits).
     rag_parse_isolation: bool = True
     rag_processing_timeout_seconds: int = Field(default=600, ge=5, le=86_400)
@@ -384,7 +387,7 @@ class Settings(DatabaseSettings):
             raise ValueError("LICENSE_PUBLIC_KEY is required when LICENSE_ENFORCEMENT_ENABLED is true")
         if bool(self.personal_task_smtp_username) != bool(self.personal_task_smtp_password):
             raise ValueError("Configure both PERSONAL_TASK_SMTP_USERNAME and PERSONAL_TASK_SMTP_PASSWORD, or neither")
-        if self.personal_task_email_enabled or self.approval_email_enabled:
+        if self.personal_task_email_enabled or self.approval_email_enabled or self.scheduled_report_email_enabled:
             if not self.personal_task_smtp_host.strip() or not self.personal_task_email_from.strip():
                 raise ValueError("PERSONAL_TASK_SMTP_HOST and PERSONAL_TASK_EMAIL_FROM are required when email is enabled")
             if any(ord(character) < 32 for character in self.personal_task_smtp_host + self.personal_task_email_from):
