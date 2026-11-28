@@ -3,7 +3,7 @@ import { Dialog as D } from "radix-ui";
 import {
   BarChart3, BookOpen, Home, Bot, Boxes, Briefcase, Building2, ChevronDown, ChevronsLeft, ChevronsRight, ClipboardCheck, Cloud,
   Cpu, FileSearch, FileText, GraduationCap, Handshake, KeyRound, Languages, LayoutList, LifeBuoy, LogOut, Mic, Network,
-  Receipt, ScrollText, UserPlus, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, UserCog, Users, Workflow, X, Brain, Globe2, Sun, Moon, Monitor, Wallet, ClipboardList, Webhook,
+  Receipt, ScrollText, UserPlus, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, UserCog, Users, Workflow, X, Brain, Globe2, Sun, Moon, Monitor, Wallet, ClipboardList, Webhook, Activity,
 } from "lucide-react";
 import { initials } from "../format";
 import { savedTheme, setTheme, type ThemeChoice } from "../theme";
@@ -91,6 +91,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "reports", label: "Usage reports", icon: BarChart3 },
         { view: "traces", label: "Knowledge Quality", icon: LayoutList },
         { view: "logs", label: "Audit logs", icon: ScrollText },
+        { view: "self-healing", label: "Self-healing", icon: Activity, keywords: "incidents escalations auto-test watchdog" },
       ],
     });
   }

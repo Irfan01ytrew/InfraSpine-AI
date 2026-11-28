@@ -73,6 +73,7 @@ from app.api.routes import (
     partner_portal,
     proposal_coverage,
     role_templates,
+    self_healing,
     service_requests,
 )
 from app.core.config import get_settings
@@ -394,6 +395,7 @@ def create_app() -> FastAPI:
     app.include_router(integrations.router)
     app.include_router(infrastructure.router)
     app.include_router(quality.router)
+    app.include_router(self_healing.router)
     from app.api.routes import platform_admin
     app.include_router(platform_admin.router)
     app.include_router(health.router)
