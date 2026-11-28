@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from app.api.deps import AppSettings
+from app.security.teams_auth import TeamsAuthError, authenticate_teams_request
 from app.services import collaboration
 
 logger = logging.getLogger(__name__)
@@ -16,17 +17,23 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 @router.get("/status")
 async def integration_status(settings: AppSettings) -> dict[str, Any]:
-    """Return status of communication platform integrations."""
+    """Return status of communication platform integrations.
+
+    Step I slice 6: this endpoint is public by design (see the route
+    allowlist in ``tests/test_step_i_authz_coverage.py``), so it reports
+    only whether each integration is enabled — never whether a secret or
+    an app id is configured. The ``has_signing_secret`` / ``has_app_id``
+    presence booleans that used to be here leaked deployment facts and
+    were removed.
+    """
     return {
         "slack": {
             "enabled": settings.slack_enabled,
-            "has_signing_secret": bool(settings.slack_signing_secret.get_secret_value()),
             "permission_scoped_answers_available": False,
         },
         "teams": {
             "enabled": settings.teams_enabled,
-            "has_app_id": bool(settings.teams_app_id),
-            "bot_framework_authentication_available": False,
+            "bot_framework_authentication_available": True,
         },
     }
 
@@ -129,13 +136,28 @@ async def slack_command(
 @router.post("/teams/messages")
 async def teams_messages(
     settings: AppSettings,
+    authorization: str | None = Header(default=None),
 ) -> Any:
-    """Handle Microsoft Teams Bot Framework activity JSON."""
+    """Handle Microsoft Teams Bot Framework activity JSON.
+
+    Step I slice 6: the caller must present a Bot Framework bearer token
+    for this bot's app id (RS256, issuer ``https://api.botframework.com``,
+    audience ``teams_app_id`` — see ``app/security/teams_auth.py``). A
+    missing or invalid token is 401; Teams disabled, or no app id
+    configured, is 503. A verified activity is only acknowledged
+    (``answer_available: False``) — the activity body is untrusted data
+    and is never acted on: no RAG call, no approval, no state change.
+    Permission-scoped answers for Teams are still unavailable.
+    """
     if not settings.teams_enabled:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Teams integration is not configured")
-    # Do not trust an arbitrary HTTP caller as a Teams bot. Bot Framework JWT validation and
-    # permission-scoped identity mapping are not implemented yet, so refuse to process activity.
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Teams webhook authentication and permission-scoped retrieval are unavailable; activity was not processed",
-    )
+    if not settings.teams_app_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Teams app id is not configured; bearer tokens cannot be validated",
+        )
+    try:
+        authenticate_teams_request(authorization, app_id=settings.teams_app_id)
+    except TeamsAuthError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    return {"status": "received", "answer_available": False}

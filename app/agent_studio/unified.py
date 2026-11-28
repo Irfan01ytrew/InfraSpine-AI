@@ -173,9 +173,9 @@ async def on_workflow_cancelled(db, cipher, run: WorkflowRun) -> None:
         return
     if cipher is None:
         from app.core.config import get_settings
-        from app.core.crypto import CredentialCipher
+        from app.core.crypto import rotating_cipher_from_settings
         settings = get_settings()
-        cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+        cipher = rotating_cipher_from_settings(settings)
     state = decode_run_state(cipher, row)
     state['answer'] = 'This task was stopped in the workflow runtime before it ran further.'
     state['awaiting_approval'] = False

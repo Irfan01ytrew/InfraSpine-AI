@@ -2,17 +2,18 @@
 
 import asyncio
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from app.api.deps import AppSettings, require_admin
+from app.api.deps import AppSettings, DbSession, PlatformAdminUser, audit_context, require_platform_admin
 from app.rag.parsers.health import parser_catalog, run_parser_health_check
 from app.rag.parsers.registry import docling_runtime_enabled
 from app.schemas.parsers import DocumentParserInfoResponse, DocumentParserTestResponse, ParserFormat
+from app.services import audit
 
 router = APIRouter(
     prefix="/api/admin/document-parsers",
     tags=["admin"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_platform_admin)],
 )
 
 
@@ -25,6 +26,20 @@ async def document_parser_info(settings: AppSettings) -> DocumentParserInfoRespo
 
 
 @router.post("/{file_format}/test", response_model=DocumentParserTestResponse)
-async def test_document_parser(file_format: ParserFormat, settings: AppSettings) -> DocumentParserTestResponse:
+async def test_document_parser(
+    file_format: ParserFormat, settings: AppSettings, request: Request,
+    db: DbSession, admin: PlatformAdminUser
+) -> DocumentParserTestResponse:
     result = await asyncio.to_thread(run_parser_health_check, file_format, settings)
-    return DocumentParserTestResponse(**result)
+    response = DocumentParserTestResponse(**result)
+    audit.record(
+        db,
+        audit_context(request, admin),
+        "admin.document_parser_tested",
+        target=file_format,
+        details={"ok": response.ok, "parser_used": response.parser_used,
+                 "latency_ms": response.latency_ms},
+        outcome="success" if response.ok else "failure",
+    )
+    await db.commit()
+    return response

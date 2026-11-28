@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
 from app.core.config import DatabaseSettings, get_settings
-from app.core.crypto import CredentialCipher
+from app.core.crypto import rotating_cipher_from_settings
 from app.core.security import MIN_PASSWORD_LENGTH, hash_password
 from app.db.models import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_USER, User
 from app.db.session import create_engine, create_sessionmaker
@@ -103,7 +103,7 @@ async def agent_queue_worker(once: bool = False) -> None:
     settings = get_settings()
     engine = create_engine(settings.database_url.get_secret_value())
     sessionmaker = create_sessionmaker(engine)
-    cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    cipher = rotating_cipher_from_settings(settings)
     rag = build_rag(settings, sessionmaker)
     runtime = LLMRuntime(settings, cipher)
     stop = asyncio.Event()

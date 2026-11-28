@@ -76,11 +76,12 @@ from app.api.routes import (
     service_requests,
 )
 from app.core.config import get_settings
-from app.core.crypto import CredentialCipher
+from app.core.crypto import rotating_cipher_from_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_sessionmaker
 from app.rag import components as rag_components
+from app.security.rate_limit import RateLimiter, rate_limit_response
 from app.services.llm_runtime import LLMRuntime
 from app.services.provider_admin import rebind_legacy_credentials
 from app.services.agents import recover_abandoned_runs
@@ -154,7 +155,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning("Recovered %s stale agent runs after process startup", recovered_agent_runs)
     except Exception as exc:
         logger.error("Agent run startup recovery failed: %s", type(exc).__name__)
-    app.state.cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    # Rotating cipher: decrypts with the current key or any retired key, so a
+    # master-key rotation never makes stored credentials unreadable. With no
+    # MASTER_ENCRYPTION_KEY_PREVIOUS configured it behaves exactly like the
+    # single-key cipher (Step I slice 5; runbook docs/step-i-key-rotation-runbook.md).
+    app.state.cipher = rotating_cipher_from_settings(settings)
     try:  # one-time upgrade: bind custom-provider keys saved before origin binding (idempotent)
         await rebind_legacy_credentials(app.state.sessionmaker, app.state.cipher)
     except Exception as exc:
@@ -327,6 +332,10 @@ def create_app() -> FastAPI:
         openapi_url=None if settings.is_production else "/openapi.json",
     )
 
+    # Step I slice 2: per-process in-memory rate limiter (per-IP buckets in
+    # the middleware below, per-user bucket in get_current_user).
+    app.state.rate_limiter = RateLimiter()
+
     @app.middleware("http")
     async def request_context(request: Request, call_next) -> Response:
         incoming = request.headers.get("X-Request-ID", "")
@@ -334,8 +343,11 @@ def create_app() -> FastAPI:
         request.state.request_id = request_id
         started = time.perf_counter()
         rejection = _reject_oversized_upload(request, settings)
+        limited = rate_limit_response(request, settings)
         if rejection is not None:
             response = rejection
+        elif limited is not None:
+            response = limited
         elif settings.license_enforcement_enabled and path_is_licensed(request.url.path):
             license = license_status(settings)
             if license.status != "valid":
@@ -367,6 +379,17 @@ def create_app() -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
+        # Step I slice 6: Permissions-Policy denies powerful browser
+        # features this app never uses (camera/mic/geolocation/payment/USB).
+        # HSTS is emitted only when hsts_enabled is set — it must only be
+        # enabled behind HTTPS, and enabling it live is an owner decision.
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        )
+        if settings.hsts_enabled:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         path = request.url.path
         if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"

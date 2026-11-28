@@ -2,14 +2,14 @@
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import AppSettings, require_admin
+from app.api.deps import AppSettings, require_platform_admin
 from app.rag.media_health import media_status
 from app.schemas.media import MediaTranscriptionStatus
 
 router = APIRouter(
     prefix="/api/admin/media-transcription",
     tags=["admin-media"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_platform_admin)],
 )
 
 

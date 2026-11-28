@@ -43,6 +43,13 @@ class Settings(DatabaseSettings):
     master_encryption_key: SecretStr
     master_encryption_key_id: str = Field(default="v1", min_length=1, max_length=32)
 
+    # Previous master key, kept only while a rotation is in flight: the app
+    # decrypts values sealed under it but never encrypts with it. Set both
+    # fields together (see docs/step-i-key-rotation-runbook.md); remove both
+    # once the rotation sweep reports zero stale credentials.
+    master_encryption_key_previous: SecretStr | None = None
+    master_encryption_key_previous_id: str = Field(default="", max_length=32)
+
     # LLM runtime
     # When enabled, content-bearing requests may use only explicitly trusted private custom endpoints.
     # Built-in cloud providers (including Gemini) remain configured but are not selectable for content.
@@ -63,8 +70,27 @@ class Settings(DatabaseSettings):
     # Authentication
     session_ttl_minutes: int = Field(default=480, ge=5, le=10080)
     session_cookie_secure: bool = True
+    # Step I slice 6: Strict-Transport-Security is emitted only when this is
+    # true. It must only be enabled behind HTTPS (HSTS on plain HTTP is
+    # meaningless and a wrongly-set HSTS header can pin browsers to HTTPS
+    # for a year), so it defaults to false and enabling it on a live
+    # deployment is an owner decision (see plan doc §7).
+    hsts_enabled: bool = False
     login_max_failed_attempts: int = Field(default=5, ge=1, le=100)
     login_lockout_minutes: int = Field(default=15, ge=1, le=1440)
+
+    # API rate limiting (Step I slice 2). Per-process, in-memory fixed windows
+    # (see app/security/rate_limit.py). A limit of 0 disables that bucket.
+    # The middleware enforces per-IP buckets on /api/ paths; get_current_user
+    # enforces the per-user bucket for authenticated callers. Administrators
+    # are never per-user limited (they cannot be locked out of their own
+    # deployment); health/readiness endpoints are never limited. Limiting is
+    # off entirely when APP_ENV=testing so test suites are never throttled.
+    rate_limit_enabled: bool = True
+    rate_limit_per_ip_per_minute: int = Field(default=600, ge=0, le=100000)
+    rate_limit_per_user_per_minute: int = Field(default=600, ge=0, le=100000)
+    rate_limit_auth_per_ip_per_minute: int = Field(default=30, ge=0, le=100000)
+    rate_limit_webhook_per_ip_per_minute: int = Field(default=120, ge=0, le=100000)
     # Operator-owned policy; app administrators cannot disable organization MFA.
     org_mfa_required: bool = False
 
@@ -395,11 +421,33 @@ class Settings(DatabaseSettings):
 
         parse_trusted_origins(self.provider_trusted_private_origins)  # fail at startup, not on first use
         parse_trusted_origins(self.webhook_trusted_private_origins)
+        if self.master_encryption_key_previous is not None:
+            try:
+                previous_raw = base64.b64decode(
+                    self.master_encryption_key_previous.get_secret_value(), validate=True
+                )
+            except (binascii.Error, ValueError):
+                raise ValueError("MASTER_ENCRYPTION_KEY_PREVIOUS must be valid base64") from None
+            if len(previous_raw) != 32:
+                raise ValueError("MASTER_ENCRYPTION_KEY_PREVIOUS must decode to exactly 32 bytes")
+            if not self.master_encryption_key_previous_id:
+                raise ValueError("MASTER_ENCRYPTION_KEY_PREVIOUS_ID is required when MASTER_ENCRYPTION_KEY_PREVIOUS is set")
+            if self.master_encryption_key_previous_id == self.master_encryption_key_id:
+                raise ValueError("MASTER_ENCRYPTION_KEY_PREVIOUS_ID must differ from MASTER_ENCRYPTION_KEY_ID")
+        elif self.master_encryption_key_previous_id:
+            raise ValueError("MASTER_ENCRYPTION_KEY_PREVIOUS is required when MASTER_ENCRYPTION_KEY_PREVIOUS_ID is set")
         return self
 
     @property
     def master_key_bytes(self) -> bytes:
         return base64.b64decode(self.master_encryption_key.get_secret_value())
+
+    @property
+    def master_previous_key_bytes(self) -> bytes | None:
+        """Bytes of the retired master key, or None when no rotation is in flight."""
+        if self.master_encryption_key_previous is None:
+            return None
+        return base64.b64decode(self.master_encryption_key_previous.get_secret_value())
 
     @property
     def rag_max_upload_bytes(self) -> int:

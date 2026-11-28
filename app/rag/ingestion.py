@@ -676,12 +676,12 @@ class IngestionWorker:
     async def _llm_client(self, db: AsyncSession):
         """The active provider's client, from a runtime this worker creates on first use."""
         if self._llm_runtime is None:
-            from app.core.crypto import CredentialCipher
+            from app.core.crypto import rotating_cipher_from_settings
             from app.services.llm_runtime import LLMRuntime
 
             self._llm_runtime = LLMRuntime(
                 self._settings,
-                CredentialCipher(self._settings.master_key_bytes, self._settings.master_encryption_key_id),
+                rotating_cipher_from_settings(self._settings),
             )
         return await self._llm_runtime.get_client(db)
 

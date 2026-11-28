@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.api.deps import AdminUser, DbSession, audit_context
+from app.api.deps import DbSession, PlatformAdminUser, audit_context
 from app.platform import access as platform_access
 from app.platform.models import DEFAULT_TIME_ZONE, OrgSettings
 from app.platform.outbox import outbox_health, requeue_dead
@@ -42,18 +42,18 @@ async def _out(db) -> OrgSettingsOut:
 
 
 @router.get("/org-settings", response_model=OrgSettingsOut)
-async def get_org_settings(db: DbSession, admin: AdminUser):
+async def get_org_settings(db: DbSession, admin: PlatformAdminUser):
     return await _out(db)
 
 
 @router.get("/time-zones")
-async def time_zones(admin: AdminUser) -> dict:
+async def time_zones(admin: PlatformAdminUser) -> dict:
     zones = sorted(z for z in available_timezones() if "/" in z and not z.startswith(("Etc/", "SystemV/", "posix/", "right/")))
     return {"time_zones": ["UTC", *zones]}
 
 
 @router.put("/org-settings", response_model=OrgSettingsOut)
-async def put_org_settings(body: OrgSettingsIn, request: Request, db: DbSession, admin: AdminUser):
+async def put_org_settings(body: OrgSettingsIn, request: Request, db: DbSession, admin: PlatformAdminUser):
     p = platform_access.principal_for(admin)
     org = await platform_access.ensure_org_scope(db)
     await platform_access.require(db, p, "org.settings.manage", org.id)
@@ -73,7 +73,7 @@ class RequeueIn(BaseModel):
 
 
 @router.get("/outbox")
-async def get_outbox(db: DbSession, admin: AdminUser):
+async def get_outbox(db: DbSession, admin: PlatformAdminUser):
     p = platform_access.principal_for(admin)
     org = await platform_access.ensure_org_scope(db)
     await platform_access.require(db, p, "platform.manage", org.id)
@@ -81,7 +81,7 @@ async def get_outbox(db: DbSession, admin: AdminUser):
 
 
 @router.post("/outbox/requeue")
-async def post_outbox_requeue(body: RequeueIn, request: Request, db: DbSession, admin: AdminUser):
+async def post_outbox_requeue(body: RequeueIn, request: Request, db: DbSession, admin: PlatformAdminUser):
     p = platform_access.principal_for(admin)
     org = await platform_access.ensure_org_scope(db)
     await platform_access.require(db, p, "platform.manage", org.id)

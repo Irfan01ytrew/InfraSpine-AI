@@ -155,10 +155,10 @@ async def _run(args: argparse.Namespace) -> int:
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
             if getattr(settings, "workflow_engine_on", False):
-                from app.core.crypto import CredentialCipher
+                from app.core.crypto import rotating_cipher_from_settings
                 from app.workflows.engine import tick
 
-                cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+                cipher = rotating_cipher_from_settings(settings)
                 ticks = 0
                 while ticks < 1000 and await tick(sessionmaker, cipher):
                     ticks += 1
@@ -198,10 +198,10 @@ async def _run(args: argparse.Namespace) -> int:
             # Unified workflow runtime (step E): automation rules, the invoice flow and governance actions.
             # On by default; WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch. Leased claims make it safe to
             # run here and in the API at the same time. Agent Studio steps wait for the API process (LLM runtime).
-            from app.core.crypto import CredentialCipher
+            from app.core.crypto import rotating_cipher_from_settings
             from app.workflows.engine import run_worker as run_workflow_engine
 
-            cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+            cipher = rotating_cipher_from_settings(settings)
             background.append(run_workflow_engine(sessionmaker, cipher, stop))
             log.info("Workflow engine worker started (WORKFLOW_ENGINE_WORKER_ENABLED=false turns it off)")
         else:
