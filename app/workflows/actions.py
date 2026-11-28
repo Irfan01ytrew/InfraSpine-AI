@@ -84,6 +84,7 @@ def load_builtin_handlers() -> dict[str, ActionHandler]:
     from app.finance import handlers  # noqa: F401
     from app.agent_studio import unified as studio_unified  # noqa: F401
     from app.services import agent_action_runtime  # noqa: F401
+    from app.hr import workflow as hr_workflow  # noqa: F401
     return HANDLERS
 
 

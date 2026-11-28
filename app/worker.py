@@ -130,6 +130,7 @@ async def _run(args: argparse.Namespace) -> int:
         if args.once:
             from app.services.training_reminders import process_training_reminders
             from app.services.personal_task_reminders import process_personal_task_reminders
+            from app.services.hr_salary_reminders import process_salary_reminders
             from app.services.automation_worker import process_workflows_once
             from app.services.service_request_worker import process_service_request_slas
             from app.services.approval_reminders import process_approval_reminders
@@ -146,6 +147,7 @@ async def _run(args: argparse.Namespace) -> int:
                 partner_processed += 1
             reminders = await process_training_reminders(sessionmaker)
             personal_task_reminders = await process_personal_task_reminders(sessionmaker, settings=settings)
+            salary_reminders = await process_salary_reminders(sessionmaker)
             workflows = await process_workflows_once(sessionmaker)
             sla_escalations = 0
             while completed_batch := await process_service_request_slas(sessionmaker):
@@ -173,6 +175,7 @@ async def _run(args: argparse.Namespace) -> int:
                 folder_sync_runs,
             )
             log.info("Processed %s partner sources and %s approval step reminders", partner_processed, approval_reminders)
+            log.info("Processed %s salary reminders", salary_reminders)
             return 0
 
         stop = asyncio.Event()
@@ -186,6 +189,7 @@ async def _run(args: argparse.Namespace) -> int:
                 signal.signal(getattr(signal, name), request_stop)
         from app.services.training_reminders import run_training_reminders
         from app.services.personal_task_reminders import run_personal_task_reminders
+        from app.services.hr_salary_reminders import run_salary_reminders
         from app.services.automation_worker import run_automation_worker
         from app.services.service_request_worker import run_service_request_sla_worker
         from app.services.approval_reminders import run_approval_reminders
@@ -213,6 +217,7 @@ async def _run(args: argparse.Namespace) -> int:
             partner_worker.run(stop),
             run_training_reminders(sessionmaker, stop),
             run_personal_task_reminders(sessionmaker, stop, settings=settings),
+            run_salary_reminders(sessionmaker, stop),
             run_automation_worker(sessionmaker, stop),
             run_service_request_sla_worker(sessionmaker, stop),
             run_approval_reminders(sessionmaker, stop),

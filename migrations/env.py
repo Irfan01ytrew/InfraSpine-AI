@@ -22,6 +22,7 @@ from app.db import workflow_engine_models as workflow_models  # noqa: F401
 from app.db import finance_models  # noqa: F401
 from app.qa import models as quality_models  # noqa: F401
 from app.platform import models as platform_models  # noqa: F401
+from app.hr import models as hr_models  # noqa: F401  (registers HR tables on the metadata)
 from app.db.session import test_engine_options
 
 config = context.config

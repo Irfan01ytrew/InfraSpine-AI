@@ -26,6 +26,7 @@ const ApprovalsPage = lazyNamedPage(() => import("./ApprovalsPage"), "ApprovalsP
 const AddProviderForm = lazyNamedPage(() => import("./AddProviderForm"), "AddProviderForm");
 const ClaimsPage = lazyNamedPage(() => import("./ClaimsPage"), "ClaimsPage");
 const FinancePage = lazyNamedPage(() => import("../finance/FinancePage"), "FinancePage");
+const HrPage = lazyNamedPage(() => import("../hr/HrPage"), "HrPage");
 const ProcessIntelligencePage = lazyNamedPage(() => import("../process-intelligence/ProcessIntelligencePage"), "ProcessIntelligencePage");
 const HomePage = lazyNamedPage(() => import("./HomePage"), "HomePage");
 const SettingsPage = lazyNamedPage(() => import("./SettingsPage"), "SettingsPage");
@@ -76,7 +77,7 @@ const WorkspacesPage = lazy(async () => {
   return { default: module.WorkspacesPage };
 });
 
-type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
+type View = "process-intelligence" | "finance" | "hr" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
 
 // The view lives in the URL hash so a refresh keeps the page and it can be linked (#/logs).
 function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = false, canInvite = false): View {
@@ -84,6 +85,7 @@ function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = fal
   if (["company-graph", "workflow-engine", "governance", "recovery", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view)) return isAdmin ? view : "knowledge";
   if (view === "process-intelligence") return view;
   if (view === "finance") return view; // the finance API decides per department
+  if (view === "hr") return view; // the HR API decides per department
   if (view === "module-control-center") return isAdmin ? view : "knowledge";
   if (view === "reports" && canViewReports) return view;
   if (view === "invite" && canInvite) return view;
@@ -214,6 +216,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><RecoveryPage user={user} /></Suspense>
         ) : view === "finance" ? (
           <FinancePage />
+        ) : view === "hr" ? (
+          <HrPage />
         ) : view === "process-intelligence" ? (
           <ProcessIntelligencePage user={user} />
         ) : view === "home" ? (
