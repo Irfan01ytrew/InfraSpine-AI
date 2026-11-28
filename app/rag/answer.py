@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.rag.auto_enrich import answer_language
 from app.rag.retrieval import RetrievedChunk
 from app.rag.sufficiency import (
     is_company_specific,
@@ -36,6 +37,102 @@ UNGROUNDED_ANSWER = (
     "Try rephrasing the question or check that the relevant document is uploaded and ready."
 )
 UNVERIFIED_FACT = "I can't verify that from the documents you have access to, so I won't guess."
+
+# Step AB slice 4 — Roman Urdu / Urdu-script versions of the canned replies.
+# Language mirroring is presentation only: the refusal decision (the evidence
+# gate) never changes, only the wording. The machine marker INSUFFICIENT_EVIDENCE
+# stays exact in the LLM prompt protocol; only the user-facing sentence is localized.
+NO_SOURCES_ANSWER_RU = (
+    "Aap ke documents mein is baare mein maloomat nahi mili. "
+    "Kisi khaas topic, system, naam ya figure ke baare mein poochhein jo un mein maujood ho."
+)
+NO_SOURCES_ANSWER_UR = (
+    "آپ کی دستاویزات میں اس بارے میں معلومات نہیں ملی۔ "
+    "کسی خاص موضوع، سسٹم، نام یا عدد کے بارے میں پوچھیں جو ان میں موجود ہو۔"
+)
+UNGROUNDED_ANSWER_RU = (
+    "Main aisa jawab nahi de saka jo aap ke documents se sabit ho, is liye koi jawab nahi dikhaya ja raha. "
+    "Sawal dobara likh kar poochhein ya check karein ke mutaliqa document upload hua aur ready hai."
+)
+UNGROUNDED_ANSWER_UR = (
+    "میں ایسا جواب نہیں دے سکا جو آپ کی دستاویزات سے ثابت ہو، اس لیے کوئی جواب نہیں دکھایا جا رہا۔ "
+    "سوال دوبارہ لکھ کر پوچھیں یا چیک کریں کہ متعلقہ دستاویز اپ لوڈ ہوئی اور تیار ہے۔"
+)
+UNVERIFIED_FACT_RU = "Main is ki tasdeeq aap ke documents se nahi kar saka, is liye andaza nahi lagaon ga."
+UNVERIFIED_FACT_UR = "میں اس کی تصدیق آپ کی دستاویزات سے نہیں کر سکا، اس لیے اندازہ نہیں لگاؤں گا۔"
+GREETING_REPLY_RU = (
+    "InfraSpine AI mein khush amdeed. Apne documents ke baare mein sawal poochhein ya summary maangein. "
+    "Jawab mein source citations shamil hoti hain."
+)
+GREETING_REPLY_UR = (
+    "انفرا اسپائن اے آئی میں خوش آمدید۔ اپنی دستاویزات کے بارے میں سوال پوچھیں یا خلاصہ مانگیں۔ "
+    "جواب میں ماخذ کے حوالے شامل ہوتے ہیں۔"
+)
+THANKS_REPLY_RU = "Koi baat nahi! Apne documents ke baare mein koi aur sawal kabhi bhi poochhein."
+THANKS_REPLY_UR = "کوئی بات نہیں! اپنی دستاویزات کے بارے میں کوئی اور سوال کبھی بھی پوچھیں۔"
+IDENTITY_REPLY_RU = (
+    "Main **InfraSpine AI** hoon, aap ka organizational knowledge assistant. Main un documents se sawalon ke "
+    "jawab deta hoon jin tak aap ki rasai hai, page citations ke saath. Main report ka summary bhi de sakta hoon, "
+    "us ke pages tasveer ke tor par dikha sakta hoon, chart bana sakta hoon, aur aap ki preferences yaad rakh "
+    "sakta hoon (kahein \"remember that …\").\n\n"
+    "\"Summarize this report\" azmaein ya apne documents mein kisi khaas topic, naam ya figure ke baare mein poochhein."
+)
+IDENTITY_REPLY_UR = (
+    "میں **انفرا اسپائن اے آئی** ہوں، آپ کا تنظیمی علمی معاون۔ میں ان دستاویزات سے سوالوں کے جواب دیتا ہوں جن تک "
+    "آپ کی رسائی ہے، صفحہ کے حوالوں کے ساتھ۔ میں رپورٹ کا خلاصہ بھی دے سکتا ہوں، اس کے صفحات تصویر کے طور پر دکھا "
+    "سکتا ہوں، چارٹ بنا سکتا ہوں، اور آپ کی ترجیحات یاد رکھ سکتا ہوں (کہیں \"remember that …\")۔\n\n"
+    "\"Summarize this report\" آزمائیں یا اپنی دستاویزات میں کسی خاص موضوع، نام یا عدد کے بارے میں پوچھیں۔"
+)
+
+
+def _localized_for_language(english: str, roman_urdu: str, urdu: str, language: str) -> str:
+    """Pick the canned-reply wording for a detected language (``english``/``roman_urdu``/``urdu``)."""
+    if language == "roman_urdu":
+        return roman_urdu
+    if language == "urdu":
+        return urdu
+    return english
+
+
+def _localized(english: str, roman_urdu: str, urdu: str, question: str) -> str:
+    """Pick the canned-reply wording matching the language the question was asked in."""
+    return _localized_for_language(english, roman_urdu, urdu, answer_language(question))
+
+
+def localized_no_sources(question: str) -> str:
+    """The no-evidence refusal, in the language of the question."""
+    return _localized(NO_SOURCES_ANSWER, NO_SOURCES_ANSWER_RU, NO_SOURCES_ANSWER_UR, question)
+
+
+def localized_ungrounded(question: str) -> str:
+    """The uncited-answer refusal, in the language of the question."""
+    return _localized(UNGROUNDED_ANSWER, UNGROUNDED_ANSWER_RU, UNGROUNDED_ANSWER_UR, question)
+
+
+def localized_unverified(question: str) -> str:
+    """The could-not-verify refusal, in the language of the question."""
+    return _localized(UNVERIFIED_FACT, UNVERIFIED_FACT_RU, UNVERIFIED_FACT_UR, question)
+
+
+def answer_language_instruction(question: str) -> str:
+    """Extra system-prompt line telling the model to mirror the question's language.
+
+    The grounded prompt already says "Answer in the language of the question";
+    this makes the instruction explicit and testable. It changes wording only —
+    never the facts, the citations, or the evidence gate.
+    """
+    language = answer_language(question)
+    if language == "roman_urdu":
+        return (
+            "Answer in Roman Urdu (Latin-script Urdu), the language the user asked in. "
+            "Keep every fact and citation exactly as the sources state; only the wording changes."
+        )
+    if language == "urdu":
+        return (
+            "Answer in Urdu script (اردو), the language the user asked in. "
+            "Keep every fact and citation exactly as the sources state; only the wording changes."
+        )
+    return ""
 
 SYSTEM_PROMPT = f"""You are InfraSpine AI, answering questions strictly from the provided sources.
 
@@ -704,11 +801,11 @@ def small_talk_reply(question: str) -> str | None:
     """Greetings/thanks are answered directly: no retrieval, no LLM call."""
     text = question.strip()
     if _GREETING.match(text):
-        return GREETING_REPLY
+        return _localized(GREETING_REPLY, GREETING_REPLY_RU, GREETING_REPLY_UR, text)
     if _THANKS.match(text):
-        return THANKS_REPLY
+        return _localized(THANKS_REPLY, THANKS_REPLY_RU, THANKS_REPLY_UR, text)
     if _IDENTITY.match(text):
-        return IDENTITY_REPLY
+        return _localized(IDENTITY_REPLY, IDENTITY_REPLY_RU, IDENTITY_REPLY_UR, text)
     return None
 
 
@@ -801,30 +898,38 @@ def build_user_message(
     return "\n\n".join(parts)
 
 
-def parse_answer(reply: str, chunks: list[RetrievedChunk]) -> tuple[str, bool, list[tuple[int, RetrievedChunk]]]:
+def parse_answer(
+    reply: str,
+    chunks: list[RetrievedChunk],
+    language: str = "english",
+) -> tuple[str, bool, list[tuple[int, RetrievedChunk]]]:
     """Validate citations and renumber them 1, 2, 3... in order of first appearance.
 
     Numbers are per *page* (PDF) or per *location* (a sheet range, slide, section, line or row range):
     passages from the same place in the same document share one citation, so each is listed once.
     """
-    text, insufficient, citer = _parse_reply(reply, chunks)
+    text, insufficient, citer = _parse_reply(reply, chunks, language)
     return text, insufficient, citer.cited if citer else []
 
 
-def _parse_reply(reply: str, chunks: list[RetrievedChunk]) -> tuple[str, bool, "PageCiter | None"]:
+def _parse_reply(
+    reply: str, chunks: list[RetrievedChunk], language: str = "english"
+) -> tuple[str, bool, "PageCiter | None"]:
     text = reply.strip()
     # The marker may be wrapped in Markdown ("**INSUFFICIENT_EVIDENCE**:") or follow a partial answer.
     marker = re.compile(r"[*_`]*" + INSUFFICIENT_MARKER + r"[*_`]*\s*[:\-—]?\s*", re.IGNORECASE)
     if marker.match(re.sub(r"^[\s>#]+", "", text)):
         explanation = marker.sub("", text, count=1).strip()
-        return _CITATION.sub("", explanation).strip() or NO_SOURCES_ANSWER, True, None
+        no_sources = _localized_for_language(NO_SOURCES_ANSWER, NO_SOURCES_ANSWER_RU, NO_SOURCES_ANSWER_UR, language)
+        return _CITATION.sub("", explanation).strip() or no_sources, True, None
     text = marker.sub("", text)  # a partial answer that also notes a gap: keep the answer, drop the marker
 
     citer = PageCiter(chunks)
     text = _CITATION.sub(citer.replace, text)
     text = re.sub(r"(\[S\d+\])(?:\s*\1)+", r"\1", text)  # "[S1][S1]" after merging -> "[S1]"
     if not citer.cited:
-        return UNGROUNDED_ANSWER, True, None
+        ungrounded = _localized_for_language(UNGROUNDED_ANSWER, UNGROUNDED_ANSWER_RU, UNGROUNDED_ANSWER_UR, language)
+        return ungrounded, True, None
     return text, False, citer
 
 
@@ -883,8 +988,10 @@ async def answer_question(
     can still be answered from general knowledge, and those replies are flagged `general=True`."""
     if llm is None:
         decide("no_provider")
-        return GroundedAnswer(NO_SOURCES_ANSWER, True, [], None, None)
+        return GroundedAnswer(localized_no_sources(question), True, [], None, None)
     checked = check_question or question
+    language = answer_language(question)
+    instruction = answer_language_instruction(question)
     has_document_context = document_hint or bool(history and (history[-1].grounded or history[-1].documents))
     document_question = (
         document_hint
@@ -895,7 +1002,7 @@ async def answer_question(
     )
     if not chunks:
         if not general_answers or document_question:
-            text = NO_SOURCES_ANSWER if not general_answers else UNVERIFIED_FACT
+            text = localized_no_sources(question) if not general_answers else localized_unverified(question)
             decide("refused_no_passages")
             return GroundedAnswer(text, True, [], None, None)
         decide("general_no_passages")
@@ -904,25 +1011,27 @@ async def answer_question(
         question, chunks, history, whole_document=whole_document, memory=memory, computed=computed
     )
     prompt = OPEN_SYSTEM_PROMPT if general_answers else SYSTEM_PROMPT
+    if instruction:
+        prompt = f"{prompt}\n\n{instruction}"
     if system_prompt_addendum:
         # Route-owned guidance stays separate from the searchable question and evidence-check query.
         prompt = f"{prompt}\n\n{system_prompt_addendum.strip()}"
     with stage("answer"):
         response = await _chat(llm, message, prompt, on_token)
-    answer, insufficient, citer = _parse_reply(response.reply, chunks)
+    answer, insufficient, citer = _parse_reply(response.reply, chunks, language)
     logger.info(
         "LLM answer parsed insufficient=%s cited=%s",
         insufficient,
         bool(citer and citer.cited),
     )
     cited = citer.cited if citer else []
-    if not cited and not computed and answer == UNGROUNDED_ANSWER and document_question and response.reply.strip():
+    if not cited and not computed and answer == localized_ungrounded(question) and document_question and response.reply.strip():
         # Small (often local) models answer from the passages but forget the [S#] tags (an explicit
         # INSUFFICIENT_EVIDENCE is not repaired). Ask once to cite; the repaired answer still has to pass every
         # evidence check below, so this never weakens grounding.
         with stage("answer"):
             repair = await llm.chat(message + CITATION_REPAIR.format(answer=response.reply.strip()[:2000]), system_prompt=prompt)
-        r_answer, r_insufficient, r_citer = _parse_reply(repair.reply, chunks)
+        r_answer, r_insufficient, r_citer = _parse_reply(repair.reply, chunks, language)
         if r_citer and r_citer.cited:
             logger.info("Uncited answer repaired with citations")
             response, answer, insufficient, citer, cited = repair, r_answer, r_insufficient, r_citer, r_citer.cited
@@ -936,7 +1045,7 @@ async def answer_question(
     if not computed and states_only_absence(answer) and not is_evaluative_question(question):
         # The passages were cited only to say they do not state the fact: insufficient evidence, as if the model had
         # replied INSUFFICIENT_EVIDENCE, never a verified answer citing passages that do not answer.
-        return GroundedAnswer(_CITATION.sub("", answer).strip() or NO_SOURCES_ANSWER, True, [], response.model, response.provider)
+        return GroundedAnswer(_CITATION.sub("", answer).strip() or localized_no_sources(question), True, [], response.model, response.provider)
     if structured_source_output:
         # Structured callers (currently the employee quiz builder) validate their own
         # strict schema and source-ID references after this citation parser maps [S#]
@@ -986,7 +1095,7 @@ async def answer_question(
         decide(f"general_after_{verdict}")
         return await general_answer(llm, question, history, memory, None, system_prompt_addendum)
     decide("refused_verifier" if verified is False else f"refused_{verdict}")
-    return GroundedAnswer(UNVERIFIED_FACT, True, [], response.model, response.provider)
+    return GroundedAnswer(localized_unverified(question), True, [], response.model, response.provider)
 
 
 def _computed_result(chunk: RetrievedChunk, model: str | None, provider: str | None) -> GroundedAnswer:
@@ -1016,17 +1125,17 @@ async def _uncited(
 ) -> GroundedAnswer:
     """An uncited reply is never shown as a document fact. Organization questions are not guessed."""
     if not general_answers:
-        decide("refused_model_insufficient" if insufficient and answer != UNGROUNDED_ANSWER else "refused_uncited")
+        decide("refused_model_insufficient" if insufficient and answer != localized_ungrounded(question) else "refused_uncited")
         return GroundedAnswer(answer, True, [], model, provider)
     if document_question:
         decide("refused_uncited_document_question")
-        return GroundedAnswer(UNVERIFIED_FACT, True, [], model, provider)
-    if insufficient and answer != UNGROUNDED_ANSWER:
+        return GroundedAnswer(localized_unverified(question), True, [], model, provider)
+    if insufficient and answer != localized_ungrounded(question):
         decide("general_after_insufficient")
         return await general_answer(llm, question, history, memory, None, system_prompt_addendum)
     text = _strip_tags(reply)
     decide("general_uncited" if text else "refused_empty")
-    return GroundedAnswer(text or NO_SOURCES_ANSWER, not text, [], model, provider, general=bool(text))
+    return GroundedAnswer(text or localized_no_sources(question), not text, [], model, provider, general=bool(text))
 
 
 async def general_answer(
@@ -1049,10 +1158,15 @@ async def general_answer(
         parts.append("CONVERSATION (context only):\n" + "\n\n".join(lines))
     parts.append(f"SYSTEM CLOCK: {datetime.now().astimezone().isoformat(timespec='seconds')}")
     parts.append(f"QUESTION:\n{question}")
-    prompt = f"{GENERAL_SYSTEM_PROMPT}\n\n{system_prompt_addendum.strip()}" if system_prompt_addendum else GENERAL_SYSTEM_PROMPT
+    prompt = GENERAL_SYSTEM_PROMPT
+    instruction = answer_language_instruction(question)
+    if instruction:
+        prompt = f"{prompt}\n\n{instruction}"
+    if system_prompt_addendum:
+        prompt = f"{prompt}\n\n{system_prompt_addendum.strip()}"
     response = await _chat(llm, "\n\n".join(parts), prompt, on_token)
     text = _strip_tags(response.reply)
-    return GroundedAnswer(text or NO_SOURCES_ANSWER, not text, [], response.model, response.provider, general=bool(text))
+    return GroundedAnswer(text or localized_no_sources(question), not text, [], response.model, response.provider, general=bool(text))
 
 
 async def _chat(

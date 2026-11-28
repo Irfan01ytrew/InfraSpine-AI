@@ -556,6 +556,11 @@ export interface RagDocument {
   can_modify: boolean;
   created_at: string;
   updated_at: string;
+  // Step AB derived metadata (app/rag/auto_enrich.py): tags, an extractive
+  // summary and the earliest expiry date pulled from the document text.
+  tags?: string[];
+  summary?: string | null;
+  expiry_date?: string | null;
 }
 
 /** Whether queued documents will be processed: in "worker" mode a separate worker process must run. */

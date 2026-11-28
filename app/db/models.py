@@ -1,7 +1,7 @@
 """ORM models. Critical invariants are enforced by the database, not only by code."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -559,6 +560,7 @@ class Document(Base):
         Index("ix_documents_job_queue", "status", "next_attempt_at"),
         Index("ix_documents_sha256", "sha256"),
         Index("ix_documents_source_uri", "source_uri"),
+        Index("ix_documents_expiry_date", "expiry_date"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -603,11 +605,50 @@ class Document(Base):
     descriptor_version: Mapped[int | None] = mapped_column(SmallInteger)
     embedding_model: Mapped[str | None] = mapped_column(String(200))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Step AB derived metadata (app/rag/auto_enrich.py): tags, an extractive
+    # summary and expiry dates pulled from the document text. Metadata only -
+    # they never change the document and can never grant permissions or change
+    # what an approval covers. `expiry_date` is the earliest extracted date.
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    summary: Mapped[str | None] = mapped_column(Text)
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    expiry_dates: Mapped[list[dict] | None] = mapped_column(JSONB)
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class KnowledgeExpiryAlert(Base):
+    """Step AB slice 3 — one row per (document, expiry date, checked day) for
+    documents that are expired or due soon. Read-only notices: Step AA includes
+    pending rows in its digest; nothing here sends anything or takes any action."""
+
+    __tablename__ = "knowledge_expiry_alerts"
+    __table_args__ = (
+        CheckConstraint("urgency IN ('expired', 'due_soon')", name="ck_knowledge_expiry_alerts_urgency_valid"),
+        CheckConstraint(
+            "status IN ('pending', 'delivered', 'dismissed')", name="ck_knowledge_expiry_alerts_status_valid"
+        ),
+        UniqueConstraint(
+            "document_id", "expiry_date", "checked_on", name="uq_knowledge_expiry_alerts_doc_date_day"
+        ),
+        Index("ix_knowledge_expiry_alerts_checked_status", "checked_on", "status"),
+        Index("ix_knowledge_expiry_alerts_document", "document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )  # indexed by ix_knowledge_expiry_alerts_document in __table_args__
+    expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    urgency: Mapped[str] = mapped_column(String(16), nullable=False)  # expired | due_soon
+    days_left: Mapped[int] = mapped_column(Integer, nullable=False)
+    checked_on: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    created_at: Mapped[datetime] = _now()
 
 
 class IngestionWorkerHeartbeat(Base):

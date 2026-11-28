@@ -758,6 +758,16 @@ class IngestionWorker:
             doc.descriptor_version = DESCRIPTOR_VERSION
             doc.embedding_model = self._embedder.model_name
             doc.indexed_at = now
+            # Step AB: derived metadata only - tags/summary/expiry from the
+            # chunk text. Best-effort: enrichment must never fail ingestion.
+            try:
+                from app.rag.enrichment import MAX_ENRICH_TEXT_CHARS, apply_enrichment
+
+                apply_enrichment(doc, "\n".join(c.text for c in chunks)[:MAX_ENRICH_TEXT_CHARS])
+            except Exception:
+                logger.warning(
+                    "Enrichment failed for %s; document still indexed", job.document_id, exc_info=True
+                )
             await db.commit()
 
         if self._indexer is not None:  # a separate worker process leaves the index to the API process

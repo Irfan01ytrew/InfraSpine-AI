@@ -38,6 +38,7 @@ import { AlertTriangle, ArrowUp, ArrowUpRight, ChevronDown, Download, ExternalLi
 import { cn } from "../lib/utils";
 import { Alert, Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, EmptyState, Field, Input, Select, Skeleton, Tooltip } from "./ui";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { allTags, expiryBadgeText, expiryStatus, matchesLibraryQuery, matchesTag } from "../knowledge/documentMeta.mjs";
 
 const STATUS_LABEL: Record<RagDocument["status"], string> = {
   pending: "Queued",
@@ -359,9 +360,11 @@ export function KnowledgePage({ user }: { user: User }) {
   // ---- library search and filter (client-side over the loaded list)
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const needle = query.trim().toLowerCase();
+  // Step AB slice 5: filter by enrichment tag (derived metadata, app/rag/auto_enrich.py).
+  const [tagFilter, setTagFilter] = useState<string>("all");
   const statusMatch = STATUS_FILTERS.find((f) => f.value === statusFilter)!.matches;
-  const shownDocs = docs?.filter((d) => statusMatch(d) && (!needle || d.filename.toLowerCase().includes(needle))) ?? [];
+  const tags = allTags(docs);
+  const shownDocs = docs?.filter((d) => statusMatch(d) && matchesTag(d, tagFilter) && matchesLibraryQuery(d, query)) ?? [];
 
   // ---- "Ask about this document": the next questions in the open chat search this document only
   const [focusDoc, setFocusDoc] = useState<FocusDocument | null>(null);
@@ -610,6 +613,16 @@ export function KnowledgePage({ user }: { user: User }) {
                   onValueChange={(v) => setStatusFilter(v as StatusFilter)}
                   options={STATUS_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
                 />
+                {tags.length > 0 && (
+                  <Select
+                    size="sm"
+                    className="w-[150px] shrink-0"
+                    aria-label="Filter by tag"
+                    value={tagFilter}
+                    onValueChange={(v) => setTagFilter(v)}
+                    options={[{ value: "all", label: "All tags" }, ...tags.map((t) => ({ value: t, label: t }))]}
+                  />
+                )}
               </div>
             )}
 
@@ -625,7 +638,7 @@ export function KnowledgePage({ user }: { user: User }) {
               <EmptyState
                 icon={<Search />}
                 title="No documents match"
-                action={<Button size="sm" variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); }}>Clear filters</Button>}
+                action={<Button size="sm" variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setTagFilter("all"); }}>Clear filters</Button>}
               />
             ) : (
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
@@ -656,6 +669,24 @@ export function KnowledgePage({ user }: { user: User }) {
                             timeAgo(doc.updated_at),
                           ].filter(Boolean).join(" · ")}
                         </p>
+                        {doc.summary && (
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-muted">{doc.summary}</p>
+                        )}
+                        {((doc.tags?.length ?? 0) > 0 || doc.expiry_date) && (
+                          <p className="mt-1.5 flex flex-wrap items-center gap-1">
+                            {doc.tags?.map((tag) => (
+                              <Badge key={tag} title={`Show only documents tagged ${tag}`} className="cursor-pointer" onClick={() => setTagFilter(tag)}>{tag}</Badge>
+                            ))}
+                            {doc.expiry_date && (
+                              <Badge
+                                tone={expiryStatus(doc.expiry_date) === "expired" ? "danger" : expiryStatus(doc.expiry_date) === "due_soon" ? "warning" : "neutral"}
+                                title={`Expiry date ${doc.expiry_date}`}
+                              >
+                                {expiryBadgeText(doc.expiry_date)}
+                              </Badge>
+                            )}
+                          </p>
+                        )}
                       </div>
                     </div>
 
