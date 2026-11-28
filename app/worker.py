@@ -108,9 +108,7 @@ async def _run(args: argparse.Namespace) -> int:
                 "staged locally" if embedder.available_locally else "download permitted (connectivity not checked)"
             )
             print(
-                # getattr: lightweight/fake settings objects (worker healthcheck
-                # tests) may not carry the property; real Settings always does.
-                f"Worker configuration OK: workflow engine {'on' if getattr(settings, 'workflow_engine_on', False) else 'off'}, "
+                f"Worker configuration OK: workflow engine {'on' if settings.workflow_engine_on else 'off'}, "
                 f"data dir {data_dir}, concurrency {concurrency}, "
                 f"isolation {'on' if settings.rag_parse_isolation else 'off'}, timeout "
                 f"{settings.rag_processing_timeout_seconds}s, parser memory {settings.rag_parser_memory_mb} MB, "
@@ -154,7 +152,7 @@ async def _run(args: argparse.Namespace) -> int:
             await cleanup_orphans(sessionmaker, settings=settings)
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
-            if getattr(settings, "workflow_engine_on", False):
+            if settings.workflow_engine_on:
                 from app.core.crypto import CredentialCipher
                 from app.workflows.engine import tick
 
@@ -194,7 +192,7 @@ async def _run(args: argparse.Namespace) -> int:
         from app.services.folder_sync import run_folder_sync_worker
 
         background = []
-        if getattr(settings, "workflow_engine_on", False):
+        if settings.workflow_engine_on:
             # Unified workflow runtime (step E): automation rules, the invoice flow and governance actions.
             # On by default; WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch. Leased claims make it safe to
             # run here and in the API at the same time. Agent Studio steps wait for the API process (LLM runtime).

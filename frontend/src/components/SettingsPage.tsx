@@ -7,10 +7,9 @@ import { MediaTranscriptionSection } from "./MediaTranscriptionSection";
 import { OcrEngineSection } from "./OcrEngineSection";
 import { OrgSettingsSection } from "./OrgSettingsSection";
 import { VectorStoreSection } from "./VectorStoreSection";
-import { BankConnectorSection } from "../finance/BankConnectorSection";
 import { PageHeader, Tabs } from "./ui";
 
-type SettingsTab = "organization" | "models" | "documents" | "media" | "index" | "imports" | "finance";
+type SettingsTab = "organization" | "models" | "documents" | "media" | "index" | "imports";
 
 const TABS: { value: SettingsTab; label: string; description: string }[] = [
   { value: "organization", label: "Organization", description: "The organization's time zone decides what \"today\" means for delegations, budgets and due dates." },
@@ -19,7 +18,6 @@ const TABS: { value: SettingsTab; label: string; description: string }[] = [
   { value: "media", label: "Audio & video", description: "Local speech-to-text and on-screen text from video frames." },
   { value: "index", label: "Search index", description: "Where document vectors are stored, and its health." },
   { value: "imports", label: "Imports & sync", description: "Large folder imports and scheduled folder synchronization." },
-  { value: "finance", label: "Finance", description: "Payment connector for invoices: which bank connector is active and where the choice comes from." },
 ];
 
 const STORAGE_KEY = "infraspine_settings_tab";
@@ -47,7 +45,6 @@ export function SettingsPage() {
         {current.value === "media" && <MediaTranscriptionSection />}
         {current.value === "index" && <VectorStoreSection />}
         {current.value === "imports" && <><FolderImportProgressSection /><FolderSyncSection /></>}
-        {current.value === "finance" && <BankConnectorSection />}
       </div>
     </>
   );

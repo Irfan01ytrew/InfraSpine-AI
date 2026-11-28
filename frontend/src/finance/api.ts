@@ -24,18 +24,8 @@ export interface PaymentApproval {
   vendor_name: string; payee_account: string; invoice_numbers: (string | null)[]; requested_by: string; own_request: boolean;
 }
 export interface SpendRow { month: string; department: string; currency: string; amount: string; count: number }
-export type ConnectorMode = "mock" | "http" | "http+mock";
-export interface ConnectorStatus {
-  source: string; admin_mode: string | null; environment_mode: string; modes: string[];
-  http_configured: boolean; http_host: string | null; http_token_set: boolean;
-  mock_allowed: boolean; production: boolean; test_override: boolean;
-  active: string | null; available: boolean; problem: string | null; is_mock: boolean;
-  real_bank: boolean; reachable?: boolean; probe_error?: string;
-}
 export interface Spend { months: string[]; from: string; departments: string[]; currencies: string[]; rows: SpendRow[] }
 export interface Vendor { id: string; name: string; bank_account: string; currency: string; tax_id: string | null; status: string }
-export interface KnowledgeDocument { id: string; filename: string; folder: string | null; indexed: boolean; updated_at: string | null }
-export interface SkippedDocument { document_id: string; filename: string; reason: string }
 export interface InvoiceInput {
   invoice_number?: string; vendor_name?: string; po_number?: string; amount?: string; currency?: string;
   invoice_date?: string; department?: string; bank_account_on_invoice?: string;
@@ -52,15 +42,6 @@ export const financeApi = {
   batch: (id: string) => call<{ batch: Batch; summary: BatchSummary; invoices: Invoice[]; payments: Payment[] }>("GET", `/batches/${id}`),
   addInvoices: (id: string, invoices: InvoiceInput[], texts: string[]) => call<{ invoices: Invoice[] }>("POST", `/batches/${id}/invoices`, { invoices, texts }),
   upload: (id: string, file: File) => { const form = new FormData(); form.append("file", file); return call<{ invoices: Invoice[] }>("POST", `/batches/${id}/invoices/upload`, form); },
-  knowledgeDocuments: (folder?: string, q?: string) => {
-    const params = new URLSearchParams();
-    if (folder) params.set("folder", folder);
-    if (q) params.set("q", q);
-    const query = params.toString();
-    return call<{ documents: KnowledgeDocument[]; folders: string[] }>("GET", `/knowledge-documents${query ? `?${query}` : ""}`);
-  },
-  addInvoicesFromDocuments: (id: string, documentIds: string[], folder?: string | null) =>
-    call<{ invoices: Invoice[]; skipped: SkippedDocument[] }>("POST", `/batches/${id}/invoices/from-documents`, { document_ids: documentIds, folder: folder ?? null }),
   start: (id: string) => call<{ batch: Batch; run_id: string }>("POST", `/batches/${id}/start`),
   exceptions: (group?: string) => call<{ invoices: Invoice[] }>("GET", `/exceptions${group ? `?group_id=${group}` : ""}`),
   resolve: (id: string, action: "correct" | "reject", fields: InvoiceInput | null, note: string) =>
@@ -69,8 +50,6 @@ export const financeApi = {
   decide: (id: string, decision: "approve" | "reject", presented_hash: string, note = "") =>
     call<{ approval_id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, presented_hash, note }),
   spend: (months = 12, group?: string) => call<Spend>("GET", `/spend?months=${months}${group ? `&group_id=${group}` : ""}`),
-  connector: () => call<ConnectorStatus>("GET", "/connector"),
-  setConnector: (mode: ConnectorMode | null) => call<ConnectorStatus>("PUT", "/connector", { mode }),
   perform: (group: string, run: string, step: string) =>
     request<unknown>("POST", `/api/workflow-engine/scopes/${group}/runs/${run}/steps/${step}/perform`),
 };
