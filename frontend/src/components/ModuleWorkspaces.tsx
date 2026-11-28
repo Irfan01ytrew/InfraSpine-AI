@@ -9,9 +9,11 @@ import { workflowApi } from "../workflows/api";
 import type { Dashboard as WorkflowDashboard, Scope, Spec, Template, Workflow as WorkflowRow } from "../workflows/types";
 import { bc } from "../continuity/api";
 import type { Dashboard as ContinuityDashboard, Workspace } from "../continuity/types";
+import { resilienceApi } from "../resilience/api";
+import type { DisruptionKind, Overview, Simulation } from "../resilience/types";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Input, PageHeader, Skeleton, Stat, Textarea } from "./ui";
 
-export type WorkspaceView = "company-graph" | "workflow-engine" | "governance" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality";
+export type WorkspaceView = "company-graph" | "workflow-engine" | "governance" | "continuity" | "resilience" | "frontend-ux" | "integrations" | "infrastructure" | "quality";
 type Navigate = (view: string) => void;
 
 export function ModuleWorkspacesPage({ view, onNavigate }: { view: WorkspaceView; onNavigate: Navigate }) {
@@ -20,6 +22,7 @@ export function ModuleWorkspacesPage({ view, onNavigate }: { view: WorkspaceView
     case "workflow-engine": return <WorkflowEngineWorkspace />;
     case "governance": return <GovernanceWorkspace onNavigate={onNavigate} />;
     case "continuity": return <ContinuityWorkspace />;
+    case "resilience": return <ResilienceWorkspace />;
     case "frontend-ux": return <FrontendUxWorkspace onNavigate={onNavigate} />;
     case "integrations": return <IntegrationsWorkspace />;
     case "infrastructure": return <InfrastructureWorkspace />;
@@ -172,6 +175,56 @@ export function ContinuityWorkspace() {
       <div className="grid gap-4 xl:grid-cols-2"><Card><CardHeader title="Resources and dependencies" description={`${dashboard.nodes.length} resources · ${dashboard.links.length} dependency links`} icon={<Network />} /><CardBody className="grid gap-2">{dashboard.nodes.slice(0, 8).map(node => <div key={node.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><span className="min-w-0 truncate text-sm">{node.name}</span><Badge tone={node.data.critical ? "warning" : "neutral"}>{node.data.critical ? "Critical" : node.kind}</Badge></div>)}{!dashboard.nodes.length && <p className="text-sm text-muted">No resources are recorded in this scope.</p>}</CardBody></Card><Card><CardHeader title="Continuity plans" description="Draft, approval and active status comes from saved plans." icon={<ShieldCheck />} /><CardBody className="grid gap-2">{dashboard.plans.length ? dashboard.plans.slice(0, 8).map(plan => <div key={plan.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{plan.title}</p><p className="text-xs text-muted">Version {plan.version} · review due {new Date(plan.review_due_at).toLocaleDateString()}</p></div><Badge>{plan.status}</Badge></div>) : <p className="text-sm text-muted">No continuity plans are available in this scope.</p>}</CardBody></Card></div>
       <Alert title="Evidence scope">{dashboard.metric_note}</Alert></>}
     {loading && !dashboard && <Skeleton className="h-56 w-full" />}
+  </div>;
+}
+
+export function ResilienceWorkspace() {
+  const [scopes, setScopes] = useState<Scope[]>([]);
+  const [scopeId, setScopeId] = useState("");
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [simulation, setSimulation] = useState<Simulation | null>(null);
+  const [kind, setKind] = useState<DisruptionKind>("server_outage");
+  const [targetId, setTargetId] = useState("");
+  const [durationDays, setDurationDays] = useState(1);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [simulating, setSimulating] = useState(false);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => { let live = true; workflowApi.scopes().then(result => { if (live) { setScopes(result.scopes); setScopeId(current => current || result.scopes[0]?.id || ""); } }).catch(err => { if (live) setError(describeError(err)); }).finally(() => { if (live) setLoading(false); }); return () => { live = false; }; }, []);
+  useEffect(() => { if (!scopeId) return; let live = true; setLoading(true); resilienceApi.overview(scopeId).then(result => { if (live) { setOverview(result); setSimulation(null); setTargetId(current => current || result.ranked[0]?.node_id || ""); } }).catch(err => { if (live) setError(describeError(err)); }).finally(() => { if (live) setLoading(false); }); return () => { live = false; }; }, [scopeId, revision]);
+  const topRisk = overview?.ranked[0];
+  const runSimulation = () => {
+    if (!scopeId || !targetId) return;
+    setSimulating(true);
+    resilienceApi.simulate(scopeId, kind, [targetId], durationDays)
+      .then(result => { setSimulation(result); setError(""); })
+      .catch(err => setError(describeError(err)))
+      .finally(() => setSimulating(false));
+  };
+  const riskTone = (level: string) => level === "critical" ? "danger" : level === "high" ? "warning" : level === "medium" ? "primary" : "neutral";
+  return <div className="grid gap-5 pb-8">
+    <ModulePageHeader module="M08" eyebrow="MODULE 08 · RESILIENCE" title="Company resilience" description="Dependency map, ranked risks, disruption simulation and recovery progress for this department. Advisory only — nothing here executes a recovery step." actions={<Button variant="secondary" onClick={() => setRevision(value => value + 1)} disabled={loading}><RefreshCw className={loading ? "animate-spin" : ""} /> Refresh</Button>} />
+    {error && <ErrorAlert error={error} />}
+    {scopes.length > 0 && <label className="grid max-w-lg gap-1 text-xs font-semibold text-foreground-2">Workflow scope<select className="h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-foreground" value={scopeId} onChange={event => setScopeId(event.target.value)}>{scopes.map(item => <option key={item.id} value={item.id}>{item.name}{item.can_manage ? " · manager" : ""}</option>)}</select></label>}
+    {!scopes.length && !loading && !error && <EmptyModule title="No authorized workflow scope" description="Resilience data is limited to the signed-in user's company scopes. Ask an administrator to grant a workflow role." />}
+    {overview && <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Mapped entities" value={overview.entities} hint={`${overview.relationships} dependency links`} icon={<Network />} /><Stat label="Top risk score" value={topRisk ? `${topRisk.risk_score} / 100` : "—"} hint={topRisk ? `${topRisk.name} · ${topRisk.risk_level}` : "No risks ranked"} icon={<Gauge />} /><Stat label="Recovery plans" value={overview.plans.length} hint={overview.plans.some(plan => plan.progress.steps.some(step => step.waiting_for_approval)) ? "A plan is waiting for approval" : "No plan waiting"} icon={<ShieldCheck />} /><Stat label="Map freshness" value={overview.freshness ? new Date(overview.freshness).toLocaleDateString() : "—"} hint={overview.freshness ? `Updated ${new Date(overview.freshness).toLocaleString()}` : "No records yet"} icon={<Clock3 />} /></div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card><CardHeader title="Ranked risks" description="Highest first. Only records you may read are counted or named." icon={<Gauge />} /><CardBody className="grid gap-2">{overview.ranked.length ? overview.ranked.slice(0, 8).map(item => <div key={item.node_id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{item.name}</p><p className="text-xs text-muted">{item.kind} · {item.factors.slice(0, 2).join(" · ") || "no risk factors recorded"}</p></div><Badge tone={riskTone(item.risk_level)}>{item.risk_score}</Badge></div>) : <p className="text-sm text-muted">No risks are ranked for this scope yet — add continuity resources or company-graph records first.</p>}</CardBody></Card>
+        <Card><CardHeader title="Disruption simulation" description="Score one disruption over this map. Advisory only; it changes nothing." icon={<Activity />} /><CardBody className="grid gap-3">
+          <label className="grid gap-1 text-xs font-semibold text-foreground-2">Disruption kind<select className="h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-foreground" value={kind} onChange={event => setKind(event.target.value as DisruptionKind)}><option value="person_absence">Person absence</option><option value="team_absence">Team absence</option><option value="server_outage">Server outage</option><option value="cyber_incident">Cyber incident</option><option value="supplier_failure">Supplier failure</option></select></label>
+          <label className="grid gap-1 text-xs font-semibold text-foreground-2">Target<select className="h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-foreground" value={targetId} onChange={event => setTargetId(event.target.value)}>{overview.ranked.map(item => <option key={item.node_id} value={item.node_id}>{item.name} · {item.kind}</option>)}</select></label>
+          <label className="grid gap-1 text-xs font-semibold text-foreground-2">Duration (days)<Input type="number" min={1} max={365} value={durationDays} onChange={event => setDurationDays(Math.max(1, Number(event.target.value) || 1))} /></label>
+          <div><Button variant="primary" onClick={runSimulation} loading={simulating} disabled={!targetId}>Simulate disruption</Button></div>
+          {simulation && <div className="grid gap-2 rounded-lg border border-border p-3"><p className="text-sm font-semibold">Severity: {simulation.analysis.severity} · {simulation.analysis.affected.length} entit{simulation.analysis.affected.length === 1 ? "y" : "ies"} affected</p>{Object.keys(simulation.analysis.money_at_risk).length > 0 && <p className="text-xs text-muted">Money at risk: {Object.entries(simulation.analysis.money_at_risk).map(([currency, amount]) => `${currency} ${amount}`).join(", ")}</p>}{simulation.analysis.recovery_options.slice(0, 3).map(option => <p key={option.action} className="text-xs text-muted">· {option.action} — {option.owner}, {option.eta_days} day(s)</p>)}</div>}
+        </CardBody></Card>
+      </div>
+      <Card><CardHeader title="Recovery plans" description="Plans run as approval-bound workflow runs; progress is tracked step by step." icon={<ShieldCheck />} /><CardBody className="grid gap-2">{overview.plans.length ? overview.plans.map(plan => <div key={plan.plan_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{plan.plan_id}</p><p className="text-xs text-muted">Started {plan.created_at ? new Date(plan.created_at).toLocaleString() : "—"} · {plan.progress.counts.done ?? 0}/{plan.progress.total_steps} steps done</p></div><div className="flex items-center gap-2"><Badge tone={plan.status === "completed" ? "success" : plan.progress.steps.some(step => step.waiting_for_approval) ? "warning" : "neutral"}>{plan.progress.steps.some(step => step.waiting_for_approval) ? "Waiting for approval" : plan.status}</Badge></div></div>) : <p className="text-sm text-muted">No recovery plans have been started in this scope yet.</p>}</CardBody></Card>
+      {overview.recent_audit.length > 0 && <Card><CardHeader title="Recent resilience activity" description="Audit trail entries for this scope, newest first." icon={<Clock3 />} /><CardBody className="grid gap-2">{overview.recent_audit.slice(0, 5).map((entry, index) => <div key={`${entry.created_at}-${index}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{entry.action}</p><p className="text-xs text-muted">{entry.actor_email ?? "system"} · {new Date(entry.created_at).toLocaleString()}</p></div><Badge tone={entry.outcome === "ok" ? "success" : "warning"}>{entry.outcome}</Badge></div>)}</CardBody></Card>}
+      <Alert title="What this map covers">{overview.notes.join(" ")}</Alert>
+      <div><Button variant="secondary" onClick={() => { window.open(resilienceApi.exportUrl(scopeId), "_blank"); }}>Download audit export (CSV, owner only)</Button></div>
+    </>}
+    {loading && !overview && <Skeleton className="h-56 w-full" />}
   </div>;
 }
 

@@ -37,6 +37,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "governance", label: "06 · Governance & security", icon: ShieldCheck },
         { view: "recovery", label: "07 · Exception & recovery", icon: LifeBuoy },
         { view: "continuity", label: "08 · Business continuity", icon: ShieldCheck },
+        { view: "resilience", label: "08 · Company resilience", icon: ShieldCheck },
         { view: "frontend-ux", label: "09 · Frontend & UX", icon: Sparkles },
         { view: "integrations", label: "10 · Integrations", icon: Cloud },
         { view: "infrastructure", label: "11 · Infrastructure", icon: Cpu },
