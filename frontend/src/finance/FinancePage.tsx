@@ -5,8 +5,8 @@ import { describeError } from "../api";
 import { useFeedback } from "../components/Feedback";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, SelectInput, Skeleton, Stat, Table, Tabs, Textarea } from "../components/ui";
 import { financeApi } from "./api";
-import type { Batch, BatchSummary, FinanceScope, Invoice, KnowledgeDocument, Payment, PaymentApproval, Spend } from "./api";
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "./financeView.mjs";
+import type { Batch, BatchSummary, FinanceScope, Invoice, Payment, PaymentApproval, Spend } from "./api";
+import { actionableStep, headline, reasonCounts, shortHash, spendSeries } from "./financeView.mjs";
 
 type Tab = "batches" | "exceptions" | "approvals" | "spend";
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger";
@@ -120,9 +120,6 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
 }) {
   const [data, setData] = useState<{ batch: Batch; summary: BatchSummary; invoices: Invoice[]; payments: Payment[] } | null>(null);
   const [texts, setTexts] = useState("");
-  const [knowledge, setKnowledge] = useState<{ documents: KnowledgeDocument[]; folders: string[] } | null>(null);
-  const [knowledgeQuery, setKnowledgeQuery] = useState("");
-  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [filter, setFilter] = useState("all");
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => financeApi.batch(id).then(setData).catch((err) => toast("error", "Batch could not be loaded", describeError(err))), [id, toast]);
@@ -142,26 +139,6 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
     const parts = texts.split(/\n-{3,}\n/).map((part) => part.trim()).filter(Boolean);
     if (parts.length) await act("Invoices added", () => financeApi.addInvoices(id, [], parts));
     setTexts("");
-  }
-  async function loadKnowledge() {
-    setBusy(true);
-    try { setKnowledge(await financeApi.knowledgeDocuments(undefined, knowledgeQuery.trim() || undefined)); }
-    catch (err) { toast("error", "Knowledge documents could not be loaded", describeError(err)); }
-    finally { setBusy(false); }
-  }
-  async function addFromKnowledge() {
-    if (!selectedDocs.length) return;
-    setBusy(true);
-    try {
-      const result = await financeApi.addInvoicesFromDocuments(id, selectedDocs);
-      const skipped = skippedSummary(result.skipped);
-      if (skipped) toast("info", "Invoices added from Knowledge", skipped);
-      else toast("success", "Invoices added from Knowledge");
-      setSelectedDocs([]);
-      await load();
-      onChanged();
-    } catch (err) { toast("error", "Invoices could not be added from Knowledge", describeError(err)); }
-    finally { setBusy(false); }
   }
   return <div className="grid gap-4">
     <div className="grid gap-3 sm:grid-cols-4">
@@ -190,29 +167,6 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
                 onChange={(event) => { const file = event.target.files?.[0]; if (file) void act("Invoice uploaded", () => financeApi.upload(id, file)); event.target.value = ""; }} />
             </label>
           </div>
-        </div>}
-        {can("invoice.ingest") && <div className="grid gap-2 rounded-lg border border-border p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium">From Knowledge documents</span>
-            <span className="text-xs text-muted">Only documents you can read. Their text fills invoice fields only — it never chooses the payee.</span>
-            <Button variant="secondary" disabled={busy} onClick={loadKnowledge}>Browse documents</Button>
-          </div>
-          {knowledge && <>
-            <div className="flex gap-2">
-              <Input value={knowledgeQuery} onChange={(event) => setKnowledgeQuery(event.target.value)} placeholder="Search by filename" aria-label="Search Knowledge documents" />
-              <Button variant="secondary" disabled={busy} onClick={loadKnowledge}>Search</Button>
-            </div>
-            {knowledge.documents.length === 0
-              ? <p className="text-sm text-muted">No readable documents found.</p>
-              : <div className="grid max-h-48 gap-1 overflow-auto">{knowledge.documents.map((doc) => <label key={doc.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={selectedDocs.includes(doc.id)} disabled={busy || !doc.indexed}
-                  onChange={(event) => setSelectedDocs((cur) => event.target.checked ? [...cur, doc.id] : cur.filter((item) => item !== doc.id))} />
-                <span>{doc.filename}</span>
-                {!doc.indexed && <Badge tone="warning">not indexed yet</Badge>}
-                {doc.folder && <span className="text-xs text-muted">{doc.folder}</span>}
-              </label>)}</div>}
-            <div><Button variant="secondary" disabled={busy || selectedDocs.length === 0} onClick={addFromKnowledge}>Add selected invoices</Button></div>
-          </>}
         </div>}
         <div className="flex flex-wrap items-center gap-2">
           <Tabs value={filter} onValueChange={setFilter} items={[
