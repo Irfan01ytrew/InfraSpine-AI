@@ -365,6 +365,57 @@ export interface ProviderList {
   mode: "database";
   providers: ProviderState[];
 }
+export interface DatabaseSummary {
+  database: string;
+  health: {
+    reachable: boolean;
+    overall: string;
+    database_bytes: number;
+    connections: { total: number; active: number; idle_in_transaction: number; max: number; band: string };
+    longest_query_seconds: number;
+    longest_query_band: string;
+    locks: { total: number; blocked: number; oldest_lock_wait_seconds: number; band: string };
+    dead_tuples: number;
+    live_tuples: number;
+    dead_tuple_ratio: number;
+    bloat_band: string;
+    replication: { replicas: number; lag_seconds: number | null; band: string };
+    pg_stat_statements_available: boolean;
+  };
+  newest_backup: {
+    database: string;
+    path: string;
+    bytes: number;
+    sha256: string;
+    catalog_entries: number;
+    tables: number | null;
+    rows_total: number | null;
+    status: string;
+    drill_verified: boolean;
+    created_at: string | null;
+  } | null;
+  latest_drill: {
+    target_database: string;
+    passed: boolean;
+    failures: unknown[];
+    tables_expected: number;
+    tables_restored: number;
+    rows_checked: number;
+    rows_matched: number;
+    sha256_match: boolean;
+    created_at: string | null;
+  } | null;
+  integrity: {
+    passed: boolean;
+    foreign_keys: number;
+    unvalidated: string[];
+    orphans: { constraint: string; orphans: number }[];
+    total_orphans: number;
+    checked_at: string;
+  };
+  migration_gate: { allowed: boolean; reasons: string[]; newest_verified_backup: string | null; rpo_hours: number };
+  restore_note: string;
+}
 
 export interface TestConnectionResult {
   ok: boolean;

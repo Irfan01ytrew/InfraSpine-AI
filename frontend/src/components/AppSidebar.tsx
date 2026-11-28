@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
 import { Dialog as D } from "radix-ui";
 import {
   BarChart3, BookOpen, Home, Bot, Boxes, Briefcase, Building2, ChevronDown, ChevronsLeft, ChevronsRight, ClipboardCheck, Cloud,
-  Cpu, FileSearch, FileText, GraduationCap, Handshake, KeyRound, Languages, LayoutList, LifeBuoy, LogOut, Mic, Network,
+  Cpu, Database, FileSearch, FileText, GraduationCap, Handshake, KeyRound, Languages, LayoutList, LifeBuoy, LogOut, Mic, Network,
   Receipt, ScrollText, UserPlus, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, UserCog, Users, Workflow, X, Brain, Globe2, Sun, Moon, Monitor, Wallet, ClipboardList, Webhook,
 } from "lucide-react";
 import { initials } from "../format";
@@ -87,6 +87,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "webhooks", label: "Webhooks", icon: Webhook },
         { view: "providers", label: "AI providers", icon: Cpu, keywords: "model llm" },
         { view: "settings", label: "Settings", icon: Settings2, keywords: "ocr parser vector embedding" },
+        { view: "database", label: "Database operations", icon: Database, keywords: "backup restore health" },
         { view: "deployment", label: "Company setup", icon: Building2, keywords: "brand license" },
         { view: "reports", label: "Usage reports", icon: BarChart3 },
         { view: "traces", label: "Knowledge Quality", icon: LayoutList },

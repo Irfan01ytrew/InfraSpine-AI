@@ -150,6 +150,56 @@ async def rag_import_folder(
         await engine.dispose()
 
 
+async def db_backup_cycle(output_dir: Path | None = None, drill_database: str | None = None) -> None:
+    """Step AO slice 2: one scheduled backup + restore drill; exit 2 when the cycle does not pass."""
+    from app.ops.backup_schedule import run_backup_cycle
+
+    url = DatabaseSettings().database_url.get_secret_value()
+    database = make_url(url).database or "postgres"
+    admin_url = str(make_url(url).set(database="postgres"))
+    if output_dir is None:
+        output_dir = Path(".backups")
+    engine = create_engine(url, pool_size=1, max_overflow=0)
+    try:
+        summary = await run_backup_cycle(
+            source_url=url,
+            backup_dir=output_dir,
+            admin_url=admin_url,
+            receipt_engine=engine,
+            drill_db_name=drill_database,
+        )
+    finally:
+        await engine.dispose()
+    print(json.dumps(summary, sort_keys=True))
+    if not summary["passed"]:
+        sys.exit(2)
+
+
+async def db_migrate_safe(
+    check_only: bool, last_migration_at: datetime | None, rpo_hours: float
+) -> None:
+    """Step AO slice 6: backup-before-migrate gate; exit 2 when the gate refuses."""
+    from app.ops.migration_safety import run_migrate_safe
+
+    url = DatabaseSettings().database_url.get_secret_value()
+    database = make_url(url).database or "postgres"
+    engine = create_engine(url, pool_size=1, max_overflow=0)
+    try:
+        decision = await run_migrate_safe(
+            engine,
+            database,
+            last_migration_at,
+            datetime.now(UTC),
+            rpo_hours=rpo_hours,
+            check_only=check_only,
+        )
+    finally:
+        await engine.dispose()
+    print(json.dumps(decision, sort_keys=True))
+    if not decision["allowed"] or (not check_only and not decision["migrated"]):
+        sys.exit(2)
+
+
 def db_backup(destination: Path | None = None) -> None:
     from app.ops.postgres_backup import create_backup
 
@@ -220,10 +270,17 @@ def main() -> None:
     folder.add_argument("--no-retry-failed", action="store_true", help="Leave failed unchanged files for manual reprocess")
     backup = sub.add_parser("db-backup", help="Create a verified custom-format PostgreSQL backup without overwriting files")
     backup.add_argument("--output", type=Path)
+    cycle = sub.add_parser("db-backup-cycle", help="Step AO: run one scheduled backup + restore drill and record the receipt")
+    cycle.add_argument("--output-dir", type=Path, help="Directory for the backup file (default .backups)")
+    cycle.add_argument("--drill-database", help="Throwaway drill database name (default ao_drill_<db>_<stamp>)")
     verify = sub.add_parser("db-verify-backup", help="Verify a PostgreSQL backup catalog")
     verify.add_argument("--path", type=Path, required=True)
     restore = sub.add_parser("db-restore-empty", help="Restore into the configured database only if it is empty")
     restore.add_argument("--path", type=Path, required=True)
+    migrate = sub.add_parser("db-migrate-safe", help="Step AO: migrate only when a fresh drill-verified backup exists")
+    migrate.add_argument("--check-only", action="store_true", help="Evaluate the gate without migrating")
+    migrate.add_argument("--last-migration-at", help="ISO timestamp the last migration was applied (deploy record)")
+    migrate.add_argument("--rpo-hours", type=float, default=24.0, help="Recovery-point objective in hours (default 24)")
     snapshot = sub.add_parser("deployment-snapshot-create", help="Create an integrity-checked snapshot of quiesced local data and a verified PostgreSQL dump")
     snapshot.add_argument("--database-backup", type=Path, required=True)
     snapshot.add_argument("--application-data", type=Path, required=True)
@@ -256,10 +313,15 @@ def main() -> None:
         )
     elif args.command == "db-backup":
         db_backup(args.output)
+    elif args.command == "db-backup-cycle":
+        asyncio.run(db_backup_cycle(args.output_dir, args.drill_database))
     elif args.command == "db-verify-backup":
         db_verify_backup(args.path)
     elif args.command == "db-restore-empty":
         asyncio.run(db_restore_empty(args.path))
+    elif args.command == "db-migrate-safe":
+        last_migration = datetime.fromisoformat(args.last_migration_at) if args.last_migration_at else None
+        asyncio.run(db_migrate_safe(args.check_only, last_migration, args.rpo_hours))
     elif args.command == "deployment-snapshot-create":
         deployment_snapshot_create(args.database_backup, args.output, args.application_data, args.qdrant_data)
     elif args.command == "deployment-snapshot-verify":

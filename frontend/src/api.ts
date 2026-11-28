@@ -47,7 +47,8 @@ import type {
   FinancialFormReviewQueueItem,
   DatabaseAnalysisCatalog,
   DatabaseAnalysisQuery,
-  DatabaseAnalysisResult,
+  DatabaseAnalysisResult,  DatabaseSummary,
+
   CloudConnector,
   CloudConnectorCreateInput,
   CloudConnectorSyncResult,
@@ -445,6 +446,7 @@ export const api = {
   catalog: () =>
     request<{ providers: ProviderMetadata[] }>("GET", "/api/admin/providers/catalog"),
   providers: () => request<ProviderList>("GET", "/api/admin/providers"),
+  databaseSummary: () => request<DatabaseSummary>("GET", "/api/admin/database/summary"),
   createCustomProvider: (input: CreateCustomProviderInput) =>
     request<ProviderState>("POST", "/api/admin/providers/custom", input),
   updateProvider: (
