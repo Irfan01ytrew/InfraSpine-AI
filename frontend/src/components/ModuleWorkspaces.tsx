@@ -280,6 +280,7 @@ export function GovernanceWorkspace({ onNavigate }: { onNavigate: Navigate }) {
     <Card><CardHeader title="Governance workspaces" description="Open the established application workflow for each decision type." icon={<ShieldCheck />} /><CardBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{[
       { label: "Knowledge claims", description: "Review submitted knowledge contributions and evidence.", view: "claims" },
       { label: "Approval queue", description: "Inspect and decide approval-gated business actions.", view: "approvals" },
+      { label: "Decision memory", description: "Review org decisions, their evidence and review dates.", view: "decisions" },
       { label: "Knowledge quality", description: "Review traces, refusals and citation evidence.", view: "traces" },
       { label: "People & access", description: "Manage people, roles and scoped permissions.", view: "people" },
       { label: "Account security", description: "Inspect sign-in and multi-factor security settings.", view: "security" },

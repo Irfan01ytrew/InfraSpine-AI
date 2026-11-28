@@ -10,6 +10,9 @@ PERMISSION_REPORTS_VIEW = "reports.view"
 PERMISSION_PEOPLE_INVITE = "people.invite"  # invite Employees into the departments in scope
 PERMISSION_TRAINING_MANAGE = "training.manage"  # assign training to, and follow progress in, departments in scope
 PERMISSION_AGENTS_MANAGE = "agents.manage"  # create, version and disable department agents in scope
+PERMISSION_DECISION_RECORD = "decision.record"  # record, supersede and revoke org decisions (Step M)
+PERMISSION_DECISION_READ = "decision.read"  # read org decisions and their readable evidence (Step M)
+PERMISSION_DECISION_APPROVE = "decision.approve"  # approve sensitive org decisions (Step M)
 DEPARTMENT_CAPABILITIES = (PERMISSION_PEOPLE_INVITE, PERMISSION_TRAINING_MANAGE, PERMISSION_AGENTS_MANAGE)
 
 
@@ -29,6 +32,9 @@ PERMISSION_CATALOG = (
     PermissionDefinition(PERMISSION_PEOPLE_INVITE, "people", "invite", ("access_group",)),
     PermissionDefinition(PERMISSION_TRAINING_MANAGE, "training", "manage", ("access_group",)),
     PermissionDefinition(PERMISSION_AGENTS_MANAGE, "agents", "manage", ("access_group",)),
+    PermissionDefinition(PERMISSION_DECISION_RECORD, "decision", "record", ("access_group",)),
+    PermissionDefinition(PERMISSION_DECISION_READ, "decision", "read", ("access_group",)),
+    PermissionDefinition(PERMISSION_DECISION_APPROVE, "decision", "approve", ("access_group",)),
 )
 PERMISSION_BY_KEY = {item.permission: item for item in PERMISSION_CATALOG}
 PERMISSIONS = tuple(item.permission for item in PERMISSION_CATALOG)

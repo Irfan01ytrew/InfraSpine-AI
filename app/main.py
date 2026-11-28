@@ -57,6 +57,7 @@ from app.api.routes import (
     scim,
     collaboration,
     governance,
+    decisions,
     handoffs,
     health,
     knowledge,
@@ -159,6 +160,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await rebind_legacy_credentials(app.state.sessionmaker, app.state.cipher)
     except Exception as exc:
         logger.error("Binding stored provider credentials to their endpoints failed: %s", type(exc).__name__)
+    try:  # one-time setup: decision-memory roles exist so administrators can grant them (idempotent)
+        async with app.state.sessionmaker() as db:
+            await decisions.ensure_decision_roles(db)
+            await db.commit()
+    except Exception as exc:
+        logger.error("Creating decision memory roles failed: %s", type(exc).__name__)
     # One runtime per process; it caches the client built from the active DB configuration.
     app.state.llm_runtime = LLMRuntime(settings, app.state.cipher)
 
@@ -429,6 +436,7 @@ def create_app() -> FastAPI:
     app.include_router(org.chart_router)
     app.include_router(departments.router)
     app.include_router(governance.router)
+    app.include_router(decisions.router)
     app.include_router(rag.router)
     app.include_router(conversations.router)
     app.include_router(memory.router)

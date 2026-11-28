@@ -58,6 +58,7 @@ const RequestFormsPage = lazyNamedPage(() => import("./RequestFormsPage"), "Requ
 const WebhooksPage = lazyNamedPage(() => import("./WebhooksPage"), "WebhooksPage");
 const PartnerWorkspacesPage = lazyNamedPage(() => import("./PartnerWorkspacesPage"), "PartnerWorkspacesPage");
 const CloudConnectorsPage = lazyNamedPage(() => import("./CloudConnectorsPage"), "CloudConnectorsPage");
+const DecisionsPage = lazyNamedPage(() => import("../decisions/DecisionsPage"), "DecisionsPage");
 
 const RecoveryPage = lazy(async () => {
   const module = await import("../recovery/RecoveryPage");
@@ -76,7 +77,7 @@ const WorkspacesPage = lazy(async () => {
   return { default: module.WorkspacesPage };
 });
 
-type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
+type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "decisions" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
 
 // The view lives in the URL hash so a refresh keeps the page and it can be linked (#/logs).
 function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = false, canInvite = false): View {
@@ -91,7 +92,7 @@ function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = fal
   if (view === "departments") return isManager ? view : "knowledge";
   if (view === "budgets") return isAdmin || isManager ? view : "knowledge";
   if (view === "request-forms" || view === "webhooks") return isAdmin ? view : "knowledge";
-  if (view === "memory" || view === "claims" || view === "org" || view === "research" || view === "proposals" || view === "forecasts" || view === "market-research" || view === "training" || view === "approvals" || view === "handoffs" || view === "meetings" || view === "requests" || view === "expertise" || view === "my-work" || view === "automation" || view === "agents" || view === "agent-studio" || view === "interviews" || view === "security") return view;
+  if (view === "memory" || view === "claims" || view === "org" || view === "research" || view === "proposals" || view === "forecasts" || view === "market-research" || view === "training" || view === "approvals" || view === "decisions" || view === "handoffs" || view === "meetings" || view === "requests" || view === "expertise" || view === "my-work" || view === "automation" || view === "agents" || view === "agent-studio" || view === "interviews" || view === "security") return view;
   if (view.startsWith("c/")) return "knowledge"; // a saved conversation link (#/c/<id>)
   if (view === "home") return isAdmin ? view : "knowledge";
   if (view === "knowledge" || !isAdmin) return "knowledge";
@@ -248,6 +249,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <ClaimsPage />
         ) : view === "approvals" ? (
           <ApprovalsPage />
+        ) : view === "decisions" ? (
+          <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><DecisionsPage /></Suspense>
         ) : view === "handoffs" ? (
           <HandoffsPage user={user} />
         ) : view === "requests" ? (

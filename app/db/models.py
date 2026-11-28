@@ -2477,3 +2477,4 @@ from app.db.agent_studio_whatsapp_models import (  # noqa: E402,F401
     AgentStudioWhatsAppInbound,
 )
 from app.db.agent_studio_baileys_models import BaileysConnection, BaileysMessage  # noqa: E402,F401
+from app.db.decision_models import DecisionEventRow, DecisionRecordRow  # noqa: E402,F401

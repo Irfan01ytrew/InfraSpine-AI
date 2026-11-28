@@ -63,6 +63,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
     {
       id: "operations", label: "Operations", items: [
         { view: "approvals", label: "Approvals", icon: ClipboardCheck },
+        { view: "decisions", label: "Decisions", icon: ScrollText, keywords: "decision memory review why supersede rationale" },
         { view: "finance", label: "Invoices & payments", icon: Receipt, keywords: "finance invoice verification payment spend vendor" },
         { view: "claims", label: "Claims", icon: Receipt },
         { view: "process-intelligence", label: "Process intelligence", icon: Workflow },
