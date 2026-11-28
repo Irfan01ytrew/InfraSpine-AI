@@ -35,7 +35,13 @@ async def health() -> HealthResponse:
 
 @router.get("/health/ready")
 async def readiness(request: Request) -> JSONResponse:
-    """Readiness check: report database health and whether queued media can be processed."""
+    """Readiness check: report database health, whether queued media can be processed, and
+    workflow-engine worker health (Step Q slice 3). The workflow block reports the Gap 5 kill
+    switch (``engine_on``), the newest workflow event as the last recorded engine activity
+    (``last_tick_at`` -- the engine keeps no heartbeat row, so an idle engine reports an old
+    timestamp honestly), and how many active runs are due (``due_runs``). An engine that is
+    off is a valid operator choice, not an outage: readiness stays ``ready`` with
+    ``workflow_engine.status`` ``off``."""
     try:
         async with request.app.state.engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
@@ -58,6 +64,19 @@ async def readiness(request: Request) -> JSONResponse:
                 "ingestion": {"mode": settings.rag_ingestion_mode, "status": "unknown", "workers_online": 0},
             },
         )
+    try:
+        from app.control_room.service import workflow_engine_health
+
+        async with request.app.state.sessionmaker() as db:
+            workflow_engine = await workflow_engine_health(db)
+    except Exception as exc:  # the engine report must never mask a healthy database
+        logger.error("Workflow-engine readiness check failed: %s", type(exc).__name__)
+        workflow_engine = {
+            "engine_on": bool(getattr(settings, "workflow_engine_on", False)),
+            "status": "unknown",
+            "last_tick_at": None,
+            "due_runs": 0,
+        }
     return JSONResponse(
         content={
             "status": "ready",
@@ -68,6 +87,14 @@ async def readiness(request: Request) -> JSONResponse:
                 "mode": settings.rag_ingestion_mode,
                 "status": "available" if active_workers else "waiting_for_worker",
                 "workers_online": active_workers,
+            },
+            "workflow_engine": {
+                **workflow_engine,
+                "last_tick_at": (
+                    None
+                    if workflow_engine.get("last_tick_at") is None
+                    else workflow_engine["last_tick_at"].isoformat()
+                ),
             },
         }
     )
