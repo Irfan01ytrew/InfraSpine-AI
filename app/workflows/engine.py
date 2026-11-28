@@ -493,6 +493,11 @@ async def tick(sessionmaker, cipher, *, now=None):
         await mirror_pending_proposals(sessionmaker, cipher)
     except Exception as exc:
         log.warning('Agent action mirroring skipped (%s)', type(exc).__name__)
+    try:
+        from app.voice.unified import mirror_pending_voice_proposals
+        await mirror_pending_voice_proposals(sessionmaker, cipher)
+    except Exception as exc:
+        log.warning('Voice proposal mirroring skipped (%s)', type(exc).__name__)
     claim = await claim_next(sessionmaker, cipher, now=now)
     if claim:
         try:

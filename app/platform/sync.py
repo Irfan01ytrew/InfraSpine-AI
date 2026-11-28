@@ -56,11 +56,13 @@ ORG_ROLES = {
     "org.member": frozenset({"org.access", "agent.run", "documents.read", "channel.reply"}),
     # Mirrors the legacy installation administrator: every department's workflow authority (legacy is_manager)
     # and the QA console. It holds no business duties (invoice.verify, payment.approve, funds.transfer).
-    "org.admin": frozenset({"org.admin", "group.access", "workflow.access", "workflow.manage", "qa.manage"}),
+    # Voice notes are founder/manager actions: org admins and department managers hold voice.manage.
+    "org.admin": frozenset({"org.admin", "group.access", "workflow.access", "workflow.manage", "qa.manage",
+                            "voice.manage"}),
 }
 GROUP_ROLES = {
     "group.member": frozenset({"group.access", "workflow.access"}),
-    "group.manager": frozenset({"group.access", "workflow.access", "workflow.manage"}),
+    "group.manager": frozenset({"group.access", "workflow.access", "workflow.manage", "voice.manage"}),
 }
 
 

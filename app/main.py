@@ -74,6 +74,7 @@ from app.api.routes import (
     proposal_coverage,
     role_templates,
     service_requests,
+    voice,
 )
 from app.core.config import get_settings
 from app.core.crypto import CredentialCipher
@@ -389,6 +390,7 @@ def create_app() -> FastAPI:
     app.include_router(workflow_engine.router)
     app.include_router(finance.router)
     app.include_router(approval_routes.router)
+    app.include_router(voice.router)
     app.include_router(recovery_router)
     app.include_router(continuity_router)
     app.include_router(integrations.router)

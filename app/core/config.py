@@ -251,6 +251,11 @@ class Settings(DatabaseSettings):
     # APP_ENV=testing. WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch (read from the environment or .env);
     # with it off, the legacy Agent Studio and automation loops run their work as before.
     workflow_engine_worker_enabled: bool | None = None
+    # Voice-first founder mode (Step O, slice 5): text-to-speech provider for
+    # voice replies. "none" (default) = text fallback only; "local" = the
+    # machine's espeak-ng/espeak, if installed; "api" = unconfigured, always
+    # falls back to text until an owner configures a TTS API.
+    voice_tts_provider: str = Field(default="none", max_length=32)
     agent_studio_run_timeout_seconds: int = Field(default=300, ge=10, le=3600)
     # Optional exact provider/model rates, keyed as "provider:model". No rate means cost is unavailable.
     llm_model_pricing_json: dict[str, dict[str, float]] = Field(default_factory=dict)
