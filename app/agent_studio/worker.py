@@ -110,6 +110,19 @@ async def claim_agent_studio_run(
         )
         if run_id is not None:
             query = query.where(AgentStudioRun.id == run_id)
+        # Step J slice 5: runs of registry-paused/retired agents are never
+        # claimed — the workforce lifecycle is a second pause switch
+        # beside the island's own paused flag. (Owner-revoked agents are
+        # already excluded by the User.is_active filter above, since a
+        # Studio agent's owner is its run owner.)
+        from sqlalchemy import exists
+
+        from app.db.workforce_registry_models import WorkforceRegistryAgent
+
+        query = query.where(~exists().where(
+            WorkforceRegistryAgent.agent_kind == "studio",
+            WorkforceRegistryAgent.agent_id == AgentStudioRun.agent_id,
+            WorkforceRegistryAgent.lifecycle_state.in_(["paused", "retired"])))
         if exclude_unified:
             from sqlalchemy import String, exists
             from app.db.workflow_engine_models import WorkflowRun

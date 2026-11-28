@@ -350,4 +350,28 @@ async def revoke_user_access(db: AsyncSession, actor: Principal, user_id: uuid.U
                   actor.trace_id)
     audit(db, actor, "platform.access_revoked", target=str(user_id), details={"reason": reason, **counts})
     await db.commit()
+    # Step J slice 5: the revoked owner's workforce agents are paused and
+    # their verified skills frozen. This runs after the commit above, in
+    # its own transaction, and never fails the revocation itself: even if
+    # the hook errors, the registry read view already derives "paused"
+    # from the revoked owner, and an administrator can re-run the hook
+    # from POST /api/workforce/owner-revocations. Local import: the
+    # workforce package imports this module.
+    try:
+        from app.services.audit import AuditContext
+        from app.workforce.registry_service import apply_owner_revocation_for_platform
+
+        hook_ctx = AuditContext(actor_user_id=actor.user_id, actor_email=actor.email,
+                                ip_address=None, request_id=str(actor.trace_id))
+        hook_counts = await apply_owner_revocation_for_platform(
+            db, actor, hook_ctx, user_id, reason=f"access revoked: {reason}")
+        counts["workforce_agents_paused"] = hook_counts["agents_paused"]
+        counts["workforce_skills_frozen"] = hook_counts["skills_frozen"]
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Workforce owner-revocation hook failed for %s; the registry "
+            "still derives the pause from the revoked owner.",
+            user_id, exc_info=True)
     return counts

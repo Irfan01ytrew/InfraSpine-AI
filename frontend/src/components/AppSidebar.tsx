@@ -81,6 +81,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
     groups.push({
       id: "admin", label: "Administration", items: [
         { view: "people", label: "People & access", icon: UserCog },
+        { view: "workforce", label: "AI Workforce", icon: Bot, keywords: "agents registry lifecycle delegation budget spend" },
         { view: "partner-workspaces", label: "Partner access", icon: KeyRound, keywords: "external" },
         { view: "workspaces", label: "Client workspaces", icon: Boxes, keywords: "project" },
         { view: "connectors", label: "Cloud connectors", icon: Cloud },

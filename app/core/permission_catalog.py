@@ -10,6 +10,8 @@ PERMISSION_REPORTS_VIEW = "reports.view"
 PERMISSION_PEOPLE_INVITE = "people.invite"  # invite Employees into the departments in scope
 PERMISSION_TRAINING_MANAGE = "training.manage"  # assign training to, and follow progress in, departments in scope
 PERMISSION_AGENTS_MANAGE = "agents.manage"  # create, version and disable department agents in scope
+PERMISSION_WORKFORCE_MANAGE = "workforce.manage"  # manage the org-wide workforce skill registry (Step J)
+PERMISSION_WORKFORCE_READ = "workforce.read"  # view workforce skills (Step J)
 DEPARTMENT_CAPABILITIES = (PERMISSION_PEOPLE_INVITE, PERMISSION_TRAINING_MANAGE, PERMISSION_AGENTS_MANAGE)
 
 
@@ -29,6 +31,8 @@ PERMISSION_CATALOG = (
     PermissionDefinition(PERMISSION_PEOPLE_INVITE, "people", "invite", ("access_group",)),
     PermissionDefinition(PERMISSION_TRAINING_MANAGE, "training", "manage", ("access_group",)),
     PermissionDefinition(PERMISSION_AGENTS_MANAGE, "agents", "manage", ("access_group",)),
+    PermissionDefinition(PERMISSION_WORKFORCE_MANAGE, "workforce", "manage", ()),  # org-wide skill registry
+    PermissionDefinition(PERMISSION_WORKFORCE_READ, "workforce", "read", ()),  # org-wide skill registry, read-only
 )
 PERMISSION_BY_KEY = {item.permission: item for item in PERMISSION_CATALOG}
 PERMISSIONS = tuple(item.permission for item in PERMISSION_CATALOG)

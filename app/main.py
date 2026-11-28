@@ -74,6 +74,7 @@ from app.api.routes import (
     proposal_coverage,
     role_templates,
     service_requests,
+    workforce,
 )
 from app.core.config import get_settings
 from app.core.crypto import CredentialCipher
@@ -442,6 +443,7 @@ def create_app() -> FastAPI:
     app.include_router(request_forms.router)
     app.include_router(webhook_routes.router)
     app.include_router(expertise.router)
+    app.include_router(workforce.router)
     app.include_router(forecasts.router)
     app.include_router(exports.router)
     app.include_router(exports.image_router)
