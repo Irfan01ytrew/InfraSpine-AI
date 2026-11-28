@@ -100,3 +100,23 @@ class AgentStudioWhatsAppInbound(Base):
     last_error: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class WhatsAppPathSetting(Base):
+    """Per-owner WhatsApp transport path preference (Step F slice 3).
+
+    ``cloud``, ``baileys`` or ``auto`` (default). The setting only picks the
+    *primary* transport; ``auto`` prefers the channel a message arrived on.
+    A primary that is not configured or not connected is skipped, and a
+    primary that fails with a retryable provider error is retried exactly
+    once on the other path (see ``app/integrations/whatsapp_failover.py``).
+    No row means ``auto``.
+    """
+    __tablename__ = "whatsapp_path_settings"
+    __table_args__ = (
+        CheckConstraint("path IN ('cloud', 'baileys', 'auto')", name="whatsapp_path_valid"),
+    )
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    path: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'auto'"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

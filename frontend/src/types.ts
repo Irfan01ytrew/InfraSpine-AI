@@ -1288,6 +1288,8 @@ export interface AgentStudioMemory {
   updated_at: string;
 }
 
+export type WhatsAppPath = "cloud" | "baileys" | "auto";
+
 export interface AgentStudioWhatsAppConnection {
   id: string;
   agent_id: string;

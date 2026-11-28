@@ -13,14 +13,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent_studio.service import AgentStudioService, create_thread
 from app.core.config import Settings
 from app.core.crypto import CredentialCipher, EncryptedValue
-from app.core.errors import InvalidInputError, NotFoundError
+from app.core.errors import InvalidInputError, NotFoundError, RateLimitedError
 from app.db.agent_studio_models import AgentStudioAgent, AgentStudioThread
 from app.db.agent_studio_whatsapp_models import (
     AgentStudioWhatsAppConnection,
@@ -28,6 +28,8 @@ from app.db.agent_studio_whatsapp_models import (
     AgentStudioWhatsAppInbound,
 )
 from app.db.models import User
+from app.services import audit
+from app.services.audit import AuditContext
 from app.services.llm_runtime import LLMRuntime
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,13 @@ _META_ID = re.compile(r"^[0-9]{5,64}$")
 _SENDER_ID = re.compile(r"^[0-9]{8,16}$")
 _API_VERSION = re.compile(r"^v[0-9]{1,2}\.0$")
 MAX_WEBHOOK_BYTES = 1_000_000
+# Step F slice 2: per-sender intake abuse control. A sender may queue at most
+# WHATSAPP_INTAKE_RATE_LIMIT messages per connection per WHATSAPP_INTAKE_RATE_WINDOW_SECONDS.
+# Excess messages are never stored as tasks; they are audited and the webhook answers 429 when
+# nothing in the payload was accepted. The verification flow itself is in-app and is never
+# subject to this limit.
+WHATSAPP_INTAKE_RATE_LIMIT = 10
+WHATSAPP_INTAKE_RATE_WINDOW_SECONDS = 60
 _QUEUE_POLL_SECONDS = 1.0
 
 
@@ -175,6 +184,50 @@ async def save_connection(
     return row
 
 
+# Step F slice 6: the secrets a connection verifies with can be rotated
+# one at a time, without touching the others. Rotation is a distinct,
+# audited operation (unlike PUT /whatsapp, which re-saves the whole
+# connection): the old value stops working immediately, the new value is
+# sealed with the same cipher, and the secret itself is never logged.
+ROTATABLE_WHATSAPP_SECRETS = ("access_token", "app_secret", "verify_token")
+
+
+async def rotate_connection_secret(
+    db: AsyncSession,
+    user: User,
+    cipher: CredentialCipher,
+    name: str,
+    new_value: str,
+) -> AgentStudioWhatsAppConnection:
+    """Replace one stored WhatsApp secret with a new value (owner only).
+
+    The old secret stops verifying at once: webhooks signed with the old
+    app secret fail the HMAC check, and the old verify token no longer
+    answers the subscription challenge. Raises ``InvalidInputError`` for
+    an unknown secret name or an empty/overlong value.
+    """
+    if name not in ROTATABLE_WHATSAPP_SECRETS:
+        raise InvalidInputError("Choose access_token, app_secret or verify_token to rotate.")
+    value = str(new_value or "").strip()
+    if not value or len(value) > 10_000 or any(ord(char) < 32 for char in value):
+        raise InvalidInputError("The new secret is invalid or too long.")
+    row = await db.scalar(select(AgentStudioWhatsAppConnection).where(
+        AgentStudioWhatsAppConnection.owner_id == user.id
+    ).with_for_update())
+    if row is None:
+        raise NotFoundError("WhatsApp integration not found.")
+    sealed = _seal(cipher, name, row.id, value)
+    setattr(row, f"{name}_ciphertext", sealed.ciphertext)
+    setattr(row, f"{name}_nonce", sealed.nonce)
+    setattr(row, f"{name}_key_id", sealed.key_id)
+    row.updated_at = datetime.now(UTC)
+    audit.record(db, AuditContext(user.id, None, None, None), "integration.whatsapp_secret_rotated",
+                 target=str(row.id), details={"secret": name})
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
 async def _meta_request(
     connection: AgentStudioWhatsAppConnection,
     cipher: CredentialCipher,
@@ -289,12 +342,27 @@ def _incoming_events(payload: dict[str, Any], connection: AgentStudioWhatsAppCon
                 text = ""
                 if kind == "text" and isinstance(item.get("text"), dict):
                     text = str(item["text"].get("body") or "")[:6000]
+                elif kind == "audio" and isinstance(item.get("audio"), dict):
+                    # Step F slice 4: the worker downloads the audio later via
+                    # the Graph API, so the Meta media id rides in the sealed
+                    # text field until then (no migration: the id is transient
+                    # and the field is encrypted opaque bytes). The worker
+                    # treats a decrypted audio text as a media id, never as
+                    # user text.
+                    text = str(item["audio"].get("id") or "")[:160]
                 elif kind == "interactive" and isinstance(item.get("interactive"), dict):
                     interaction = item["interactive"]
                     reply = interaction.get("button_reply") or interaction.get("list_reply") or {}
                     if not isinstance(reply, dict):
                         continue
-                    text = str(reply.get("title") or reply.get("id") or "")[:6000]
+                    reply_id = str(reply.get("id") or "")
+                    # Step F slice 5: an approval button reply keeps its id
+                    # (wa-approve:/wa-reject:) so the worker can verify the
+                    # decision; every other button still flattens to its title.
+                    if reply_id.startswith(("wa-approve:", "wa-reject:")):
+                        text = reply_id[:6000]
+                    else:
+                        text = str(reply.get("title") or reply.get("id") or "")[:6000]
                     kind = "text"
                 events.append((external_id, sender, kind, text))
     return events
@@ -326,9 +394,31 @@ async def accept_webhook(
         raise InvalidInputError("WhatsApp webhook body must be a JSON object.")
 
     accepted = 0
+    limited = 0
+    # Messages already queued for this sender inside the window, per call. Rows stored by this
+    # very call are counted too (via the local counter), so one oversized payload cannot burst
+    # past the limit before the next commit.
+    queued_in_window: dict[str, int] = {}
+    window_start = datetime.now(UTC) - timedelta(seconds=WHATSAPP_INTAKE_RATE_WINDOW_SECONDS)
     for external_id, sender, kind, text in _incoming_events(payload, connection):
+        seen = queued_in_window.get(sender)
+        if seen is None:
+            seen = int(await db.scalar(select(func.count()).select_from(AgentStudioWhatsAppInbound).where(
+                AgentStudioWhatsAppInbound.connection_id == connection.id,
+                AgentStudioWhatsAppInbound.from_wa_id == sender,
+                AgentStudioWhatsAppInbound.created_at >= window_start,
+            )) or 0)
+            queued_in_window[sender] = seen
+        if seen >= WHATSAPP_INTAKE_RATE_LIMIT:
+            limited += 1
+            audit.record(db, AuditContext(connection.owner_id, None, None, None),
+                         "integration.whatsapp_rate_limited", outcome="failure",
+                         target=str(connection.id),
+                         details={"limit": WHATSAPP_INTAKE_RATE_LIMIT,
+                                  "window_seconds": WHATSAPP_INTAKE_RATE_WINDOW_SECONDS})
+            continue
         inbound_id = uuid.uuid4()
-        stored_text = text if kind == "text" else ""
+        stored_text = text if kind in ("text", "audio") else ""
         sealed = _seal(cipher, "inbound", inbound_id, stored_text)
         result = await db.execute(
             pg_insert(AgentStudioWhatsAppInbound)
@@ -349,8 +439,13 @@ async def accept_webhook(
             .on_conflict_do_nothing(index_elements=["external_message_id"])
             .returning(AgentStudioWhatsAppInbound.id)
         )
-        accepted += int(result.scalar_one_or_none() is not None)
+        inserted = result.scalar_one_or_none() is not None
+        accepted += int(inserted)
+        if inserted:
+            queued_in_window[sender] = seen + 1
     await db.commit()
+    if accepted == 0 and limited > 0:
+        raise RateLimitedError("Too many WhatsApp messages from this sender. Please try again shortly.")
     return accepted
 
 

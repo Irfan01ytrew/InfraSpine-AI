@@ -88,6 +88,12 @@ class InvalidInputError(AppError):
     message = "The request contains invalid values."
 
 
+class RateLimitedError(AppError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "rate_limited"
+    message = "Too many requests. Please try again shortly."
+
+
 class FileRejectedError(AppError):
     status_code = status.HTTP_415_UNSUPPORTED_MEDIA_TYPE
     code = "file_rejected"

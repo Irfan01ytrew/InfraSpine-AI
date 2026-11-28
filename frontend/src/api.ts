@@ -70,6 +70,7 @@ import type {
   AgentStudioAgentInput,
   AgentStudioMemory,
   AgentStudioWhatsAppConnection,
+  WhatsAppPath,
   AgentStudioWhatsAppInput,
   AgentStudioRun,
   AgentStudioAnalytics,
@@ -863,7 +864,7 @@ export const api = {
     request<{ memories: AgentStudioMemory[] }>("GET", "/api/agent-studio/agents/" + encodeURIComponent(id) + "/memories"),
   deleteAgentStudioMemory: (agentId: string, memoryId: string) =>
     request<void>("DELETE", "/api/agent-studio/agents/" + encodeURIComponent(agentId) + "/memories/" + encodeURIComponent(memoryId)),
-  agentStudioWhatsApp: () => request<{ connection: AgentStudioWhatsAppConnection | null }>("GET", "/api/agent-studio/whatsapp"),
+  agentStudioWhatsApp: () => request<{ connection: AgentStudioWhatsAppConnection | null; path_setting: WhatsAppPath; active_path: WhatsAppPath | null; cloud_available: boolean; baileys_available: boolean }>("GET", "/api/agent-studio/whatsapp"),
   agentStudioWhatsAppQr: () => request<{ available: boolean; connection: {
     id: string; agent_id: string; enabled: boolean; status: string; phone_suffix: string | null; qr: string | null; last_error: string | null;
     latest_command?: { id: string; status: string; receipt: "server_acknowledged" | "device_delivered" | "read" | null; received_at: string } | null;
@@ -875,6 +876,8 @@ export const api = {
     request<{ connection: AgentStudioWhatsAppConnection }>("PUT", "/api/agent-studio/whatsapp", input),
   verifyAgentStudioWhatsApp: () => request<{ verified_name: string | null; display_phone_number: string | null; subscribed: boolean }>("POST", "/api/agent-studio/whatsapp/verify"),
   disconnectAgentStudioWhatsApp: () => request<void>("DELETE", "/api/agent-studio/whatsapp"),
+  setAgentStudioWhatsAppPath: (path: WhatsAppPath) =>
+    request<{ path_setting: WhatsAppPath; active_path: WhatsAppPath | null; cloud_available: boolean; baileys_available: boolean }>("PUT", "/api/agent-studio/whatsapp/path", { path }),
   agentDepartments: () => request<{ departments: AgentDepartment[] }>("GET", "/api/agents/departments"),
   createAgentProfile: (input: {
     name: string; department_group_id: string; agent_type: AgentType;

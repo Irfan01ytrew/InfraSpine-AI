@@ -177,6 +177,28 @@ class LLMRuntime:
                 return client
         raise LLMUnavailableError("Live web search requires a configured Gemini model that supports Google Search.")
 
+    async def get_audio_transcription_client(self, db: AsyncSession) -> LLMClient:
+        """The configured fallback provider's client for Whisper-compatible audio transcription.
+
+        Local Whisper is the primary transcriber (see app/integrations/whatsapp_voice.py);
+        the API fallback follows the platform fallback rule: only the provider named by
+        ``llm_fallback_provider`` is tried, and only when it serves audio transcription.
+        Raises LLMUnavailableError when no fallback is configured or it cannot transcribe.
+        """
+        fallback_id = self._settings.llm_fallback_provider
+        if not fallback_id:
+            raise LLMUnavailableError("No fallback provider is configured for audio transcription.")
+        try:
+            client = await self._client(db, (fallback_id, None))
+        except Exception as exc:
+            logger.warning("Fallback provider %s is not usable for audio transcription: %s", fallback_id, type(exc).__name__)
+            raise LLMUnavailableError() from exc
+        if not bool(getattr(client, "supports_audio_transcription", False)) or not callable(
+            getattr(client, "transcribe_audio", None)
+        ):
+            raise LLMUnavailableError("The configured fallback provider does not support audio transcription.")
+        return client
+
     async def _client(self, db: AsyncSession, choice: tuple[str, str | None] | None) -> LLMClient:
         query = select(ProviderConfig, ProviderCredential).join(
             ProviderCredential, ProviderCredential.provider_config_id == ProviderConfig.id

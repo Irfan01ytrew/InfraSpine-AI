@@ -26,6 +26,7 @@ from app.core.crypto import EncryptedValue
 from app.db.agent_studio_baileys_models import BaileysConnection, BaileysMessage
 from app.db.agent_studio_models import AgentStudioAgent
 from app.db.models import User
+from app.integrations import whatsapp_voice
 
 logger = logging.getLogger(__name__)
 BRIDGE = Path(__file__).resolve().parents[2] / "integrations" / "whatsapp-baileys" / "bridge.mjs"
@@ -221,14 +222,31 @@ class BridgeSession:
                 external_id = str(event.get("id", ""))
                 body = str(event.get("text", "")).strip()
                 jid = str(event.get("jid", ""))
-                if not external_id or len(external_id) > 100 or not body or len(body) > 12000 or not jid.endswith(("@s.whatsapp.net", "@lid")):
+                audio = event.get("audio")
+                mime = str(event.get("mime", ""))
+                audio_too_large = bool(event.get("audioTooLarge"))
+                if not external_id or len(external_id) > 100 or not jid.endswith(("@s.whatsapp.net", "@lid")):
+                    return
+                # A voice note carries no text: it is admitted on its audio
+                # (the bridge only forwards voice notes inside an active
+                # follow-up window). An oversized note is admitted too, so
+                # the worker can answer "[NEEDS INPUT]" instead of silence.
+                if not body and not audio and not audio_too_large:
+                    return
+                if len(body) > 12000:
+                    return
+                if audio is not None and (not isinstance(audio, str) or len(audio) > whatsapp_voice.MAX_WHATSAPP_VOICE_B64_CHARS):
                     return
                 pending = await db.scalar(select(BaileysMessage.id).where(BaileysMessage.connection_id == self.id, BaileysMessage.status.in_(["queued", "processing", "ready", "sending"])).offset(19).limit(1))
                 if pending:
                     row.last_error = "Command queue is full; wait for the current tasks before sending more."
                 else:
                     message_id = uuid.uuid4()
-                    payload = seal(self.cipher, f"message:{message_id}", json.dumps({"text": body, "jid": jid}))
+                    payload = seal(self.cipher, f"message:{message_id}", json.dumps({
+                        "text": body, "jid": jid,
+                        "audio": audio if isinstance(audio, str) else None,
+                        "mime": mime, "audio_too_large": audio_too_large,
+                    }))
                     await db.execute(insert(BaileysMessage).values(id=message_id, connection_id=self.id, external_id=f"{self.id}:{external_id}", payload_sealed=payload, status="queued").on_conflict_do_nothing(index_elements=["external_id"]))
             await db.commit()
         if kind == "auth":
@@ -257,6 +275,90 @@ class BridgeSession:
             else:
                 await asyncio.sleep(1)
 
+    async def _transcribe_baileys_voice(self, db, user, message_id, payload):
+        """Transcribe a Baileys voice note; returns the transcript or None.
+
+        None means the user gets a "[NEEDS INPUT]" reply (no crash, no
+        retry): oversized audio, an unsupported format, no speech, or no
+        transcriber available. The staged audio is always removed.
+        """
+        from app.core.errors import FileRejectedError, FileTooLargeError, InvalidInputError
+        from app.integrations.transport import TransportError
+        from app.services import audit as audit_service
+        from app.services.audit import AuditContext
+
+        try:
+            audio_bytes, suffix = whatsapp_voice.decode_baileys_audio(payload.get("audio"), payload.get("mime"))
+            transcript, source = await whatsapp_voice.transcribe_voice_note(
+                audio_bytes, suffix, runtime=self.app.state.llm_runtime, db=db
+            )
+        except (FileTooLargeError, FileRejectedError, InvalidInputError, TransportError) as exc:
+            audit_service.record(db, AuditContext(user.id, None, None, None), "integration.whatsapp_voice_failed",
+                                 target=str(message_id), details={"error": getattr(exc, "code", type(exc).__name__)})
+            return None
+        except Exception as exc:
+            audit_service.record(db, AuditContext(user.id, None, None, None), "integration.whatsapp_voice_failed",
+                                 target=str(message_id), details={"error": type(exc).__name__})
+            return None
+        audit_service.record(db, AuditContext(user.id, None, None, None), "integration.whatsapp_voice_transcribed",
+                             target=str(message_id), details={"source": source, "bytes": len(audio_bytes)})
+        return transcript
+
+    async def _run_agent_task(self, db, user, connection, agent, message_id, jid, task_text):
+        """Acknowledge, run the agent on task_text, and return the reply text (unprefixed)."""
+        # Release the database connection while waiting for the transport.
+        await db.commit()
+        if not await self.send_reply_once(
+            db, user, message_id, "ack",
+            uuid.uuid5(message_id, "ack").hex.upper(),
+            jid,
+            f"InfraSpine AI · {agent.name}\n\nRequest received. The result or next step will follow here.",
+            timeout=5,
+        ):
+            logger.info("WhatsApp acknowledgement unavailable id=%s", message_id)
+        if not connection.thread_id:
+            thread = await create_thread(db, user, self.cipher, agent.id, "WhatsApp · My agent")
+            connection.thread_id = thread.id
+            await db.commit()
+        run, state, pending_approval = await AgentStudioService(
+            db, user, self.settings, self.cipher, self.app.state.llm_runtime, self.app.state.rag
+        ).start_run(
+            agent.id,
+            connection.thread_id,
+            task_text,
+            idempotency_key=f"baileys:{message_id}",
+            execute_inline=True,
+        )
+        if run.status == "awaiting_approval":
+            if pending_approval is not None:
+                # Step F slice 5: send the approval card as text, bound to
+                # the exact action hash.
+                from app.integrations.whatsapp_approvals import (
+                    approval_action_hash,
+                    approval_card_text,
+                    approval_summary,
+                    decode_approval_action,
+                )
+                from app.platform.side_effects import org_scope_id
+
+                scope_id = await org_scope_id(db)
+                action_hash = approval_action_hash(self.cipher, pending_approval, scope_id)
+                action = decode_approval_action(self.cipher, pending_approval)
+                return approval_card_text(
+                    tool_name=pending_approval.tool_name,
+                    summary=approval_summary(pending_approval.tool_name, action),
+                    approval_id=pending_approval.id, action_hash=action_hash,
+                )
+            return "*Approval required*\nOpen InfraSpine AI → AI Agents → Approvals & execution log to review the proposed action."
+        if run.status == "completed":
+            # Step F slice 5: "Done (verified)" only when the execute_once
+            # read-back verified the attempt.
+            from app.integrations.whatsapp_approvals import completed_reply
+
+            answer = str(state.get("answer") or "Open AI Agents for the execution details.")
+            return await completed_reply(db, run, "*Result*\n" + answer)
+        return "*Task incomplete*\nCheck AI Agents → execution log for details."
+
     async def execute(self, message_id):
         async with self.db() as db:
             active = await self.active(db)
@@ -278,6 +380,42 @@ class BridgeSession:
                 raise RuntimeError("identity_revoked")
             if message.reply_sealed:
                 reply = unseal(self.cipher, f"reply:{message_id}", message.reply_sealed)
+            elif payload.get("audio_too_large"):
+                reply = f"InfraSpine AI · {agent.name}\n\n[NEEDS INPUT] That voice note is too large to transcribe. Please send a shorter voice note or resend your request as text."
+                message.reply_sealed = seal(self.cipher, f"reply:{message_id}", reply)
+                message.status = "ready"
+                await db.commit()
+            elif payload.get("audio"):
+                # Step F slice 4: a voice note is transcribed (local Whisper
+                # first, API fallback) and the transcript becomes the task,
+                # marked as machine text. Anything unusable gets a
+                # "[NEEDS INPUT]" reply instead of an agent run.
+                # Step F slice 6: a spoken approval command is a decision,
+                # not a task — the raw transcript (no machine-text marker)
+                # is checked first, exactly like a typed command.
+                transcript = await self._transcribe_baileys_voice(db, user, message_id, payload)
+                if transcript is None:
+                    reply = "[NEEDS INPUT] I could not understand that voice note. Please resend your request as text, or send the voice note again."
+                else:
+                    from app.integrations.whatsapp_approvals import decide_from_whatsapp, parse_approval_command
+
+                    approval_cmd = parse_approval_command(transcript)
+                    if approval_cmd is not None:
+                        decision, approval_id, presented_hash = approval_cmd
+                        reply = await decide_from_whatsapp(
+                            db, principal_user_id=principal.user_id, approval_id=approval_id,
+                            decision=decision, presented_hash=presented_hash, cipher=self.cipher,
+                            settings=self.settings, runtime=self.app.state.llm_runtime,
+                            rag=self.app.state.rag, channel="whatsapp_baileys",
+                        )
+                    else:
+                        reply = await self._run_agent_task(db, user, connection, agent, message_id, payload["jid"],
+                                                           whatsapp_voice.mark_machine_text(transcript))
+                # Do not allow generated content to become a self-chat command.
+                reply = f"InfraSpine AI · {agent.name}\n\n" + reply[:11500]
+                message.reply_sealed = seal(self.cipher, f"reply:{message_id}", reply)
+                message.status = "ready"
+                await db.commit()
             elif " ".join(payload["text"].casefold().split()) in {
                 "laptop status", "laptop diagnostics", "laptop check karo", "mera laptop check karo",
             }:
@@ -288,35 +426,21 @@ class BridgeSession:
                 message.status = "ready"
                 await db.commit()
             else:
-                # Release the database connection while waiting for the transport.
-                await db.commit()
-                if not await self.send_reply_once(
-                    db, user, message_id, "ack",
-                    uuid.uuid5(message_id, "ack").hex.upper(),
-                    payload["jid"],
-                    f"InfraSpine AI · {agent.name}\n\nRequest received. The result or next step will follow here.",
-                    timeout=5,
-                ):
-                    logger.info("WhatsApp acknowledgement unavailable id=%s", message_id)
-                if not connection.thread_id:
-                    thread = await create_thread(db, user, self.cipher, agent.id, "WhatsApp · My agent")
-                    connection.thread_id = thread.id
-                    await db.commit()
-                run, state, _ = await AgentStudioService(
-                    db, user, self.settings, self.cipher, self.app.state.llm_runtime, self.app.state.rag
-                ).start_run(
-                    agent.id,
-                    connection.thread_id,
-                    payload["text"],
-                    idempotency_key=f"baileys:{message_id}",
-                    execute_inline=True,
-                )
-                if run.status == "awaiting_approval":
-                    reply = "*Approval required*\nOpen InfraSpine AI → AI Agents → Approvals & execution log to review the proposed action."
-                elif run.status == "completed":
-                    reply = "*Result*\n" + str(state.get("answer") or "Open AI Agents for the execution details.")
+                from app.integrations.whatsapp_approvals import decide_from_whatsapp, parse_approval_command
+
+                approval_cmd = parse_approval_command(payload["text"])
+                if approval_cmd is not None:
+                    # Step F slice 5: an approval decision is not a task —
+                    # decide it through the Agent Studio service and reply.
+                    decision, approval_id, presented_hash = approval_cmd
+                    reply = await decide_from_whatsapp(
+                        db, principal_user_id=principal.user_id, approval_id=approval_id,
+                        decision=decision, presented_hash=presented_hash, cipher=self.cipher,
+                        settings=self.settings, runtime=self.app.state.llm_runtime,
+                        rag=self.app.state.rag, channel="whatsapp_baileys",
+                    )
                 else:
-                    reply = "*Task incomplete*\nCheck AI Agents → execution log for details."
+                    reply = await self._run_agent_task(db, user, connection, agent, message_id, payload["jid"], payload["text"])
                 # Do not allow generated content to become a self-chat command.
                 reply = f"InfraSpine AI · {agent.name}\n\n" + reply[:11500]
                 message.reply_sealed = seal(self.cipher, f"reply:{message_id}", reply)
@@ -354,10 +478,47 @@ class BridgeSession:
         )
 
         async def dispatch():
-            ok = await self.send_reply(delivery_id, jid, reply, timeout=timeout)
-            if not ok:
-                raise RuntimeError("delivery_failed")
-            return str(delivery_id)
+            # Step F slice 3: this bridge send is the primary; when it
+            # cannot deliver, retry once on Cloud (if the owner has an
+            # enabled Cloud connection and the recipient is a phone JID).
+            # The adapter runs inside dispatch_once, so the same key covers
+            # both legs and the reply is never sent twice. A dispatch
+            # failure still returns False through dispatch_once (it records
+            # the failed execution instead of raising), so the ack path
+            # below keeps its log-and-continue behaviour.
+            from app.integrations.whatsapp_failover import (
+                BaileysTransport,
+                CloudTransport,
+                cloud_connection_for,
+                cloud_stand_in,
+                get_path_setting,
+                jid_to_phone,
+                send_with_failover,
+            )
+            from app.services import audit as audit_service
+            from app.services.audit import AuditContext
+
+            setting = await get_path_setting(db, user.id)
+            baileys = BaileysTransport(self, delivery_id=delivery_id, timeout=timeout)
+            cloud = None
+            phone = jid_to_phone(jid)
+            if phone is not None:
+                connection = await cloud_connection_for(db, user.id)
+                if connection is not None:
+                    cloud = CloudTransport(connection, cloud_stand_in(phone), self.cipher)
+
+            async def on_failover(from_path, to_path, reason, failover_key, *, outcome, fallback_code=None):
+                audit_service.record(db, AuditContext(user.id, None, None, None), "integration.whatsapp_failover",
+                                     outcome=outcome, target=failover_key,
+                                     details={"from_path": from_path, "to_path": to_path, "reason": reason,
+                                              "fallback_code": fallback_code})
+
+            ref, _used = await send_with_failover(
+                setting=setting, own_channel="baileys",
+                to={"cloud": phone or "", "baileys": jid},
+                text=reply, key=key, cloud=cloud, baileys=baileys, on_failover=on_failover,
+            )
+            return ref
 
         try:
             result = await dispatch_once(db, p, key, action, duty="channel.reply", dispatch=dispatch)
@@ -379,7 +540,12 @@ class BridgeSession:
 
 
 async def run_baileys_worker(app, settings, stop):
-    sessions = {}
+    # Step F slice 3: the live sessions live on app.state so the Cloud
+    # worker can fail over to a connected Baileys bridge for the same owner.
+    sessions = getattr(app.state, "baileys_sessions", None)
+    if sessions is None:
+        sessions = {}
+        app.state.baileys_sessions = sessions
     try:
         while not stop.is_set():
             try:

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, Link2, MessageCircle, Plus, RefreshCw, ShieldCheck, Unlink } from "lucide-react";
 import { api, describeError } from "../api";
 import { formatDate } from "../format";
-import type { AgentStudioAgent, AgentStudioWhatsAppConnection } from "../types";
+import type { AgentStudioAgent, AgentStudioWhatsAppConnection, WhatsAppPath } from "../types";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, Field, Input, Textarea } from "./ui";
 import { AgentStudioWhatsAppQrPanel } from "./AgentStudioWhatsAppQrPanel";
 
@@ -34,6 +34,9 @@ export function AgentStudioWhatsAppPanel({ agents, onCreateAgent, onConfigureAge
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pathSetting, setPathSetting] = useState<WhatsAppPath>("auto");
+  const [activePath, setActivePath] = useState<WhatsAppPath | null>(null);
+  const [pathAvailable, setPathAvailable] = useState({ cloud: false, baileys: false });
   const activeAgents = useMemo(() => agents.filter((agent) => agent.enabled), [agents]);
   const selectedAgentId = draft.agent_id || activeAgents[0]?.id || "";
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
@@ -41,9 +44,12 @@ export function AgentStudioWhatsAppPanel({ agents, onCreateAgent, onConfigureAge
 
   useEffect(() => {
     let cancelled = false;
-    void api.agentStudioWhatsApp().then(({ connection: current }) => {
+    void api.agentStudioWhatsApp().then(({ connection: current, path_setting, active_path, cloud_available, baileys_available }) => {
       if (cancelled) return;
       setConnection(current);
+      setPathSetting(path_setting ?? "auto");
+      setActivePath(active_path ?? null);
+      setPathAvailable({ cloud: Boolean(cloud_available), baileys: Boolean(baileys_available) });
       if (current) {
         setDraft({
           ...EMPTY,
@@ -95,6 +101,20 @@ export function AgentStudioWhatsAppPanel({ agents, onCreateAgent, onConfigureAge
     finally { setBusy(false); }
   }
 
+  async function savePath() {
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await api.setAgentStudioWhatsAppPath(pathSetting);
+      setPathSetting(result.path_setting);
+      setActivePath(result.active_path);
+      setPathAvailable({ cloud: result.cloud_available, baileys: result.baileys_available });
+      setNotice(result.active_path
+        ? `WhatsApp path set to ${result.path_setting}. Replies now use ${result.active_path === "cloud" ? "Meta Cloud API" : "Baileys (QR)"}.`
+        : "WhatsApp path saved, but no transport is available yet — connect Cloud or Baileys first.");
+    } catch (cause) { setError(describeError(cause)); }
+    finally { setBusy(false); }
+  }
+
   async function disconnect() {
     setBusy(true); setError(null); setNotice(null);
     try {
@@ -114,13 +134,29 @@ export function AgentStudioWhatsAppPanel({ agents, onCreateAgent, onConfigureAge
   const webhookIsPublicHttps = webhookUrl.startsWith("https://") && !/localhost|127\.0\.0\.1/i.test(webhookUrl);
 
   return <div className="grid gap-4">
+    <Card>
+      <CardHeader title="WhatsApp path" description="Which transport replies use. A failed primary is retried once on the other path." icon={<MessageCircle />} actions={<Badge tone={activePath ? "success" : "warning"} dot>{activePath ? `Active: ${activePath === "cloud" ? "Meta Cloud API" : "Baileys (QR)"}` : "No transport available"}</Badge>} />
+      <CardBody className="grid gap-3">
+        <Field label="Preferred path" hint="Auto prefers the channel the message arrived on. Cloud or Baileys pins the primary; the other path is still the failover.">
+          <select className="h-10 w-full rounded-md border border-border bg-surface px-3 text-sm" value={pathSetting} onChange={(event) => setPathSetting(event.target.value as WhatsAppPath)}>
+            <option value="auto">Auto — reply on the channel the message came in on</option>
+            <option value="cloud">Meta Cloud API first</option>
+            <option value="baileys">Baileys (QR) first</option>
+          </select>
+        </Field>
+        <p className="text-xs text-muted">Meta Cloud API: {pathAvailable.cloud ? "connected" : "not connected"}. Baileys: {pathAvailable.baileys ? "connected" : "not connected"}. When the primary cannot deliver, the reply is sent once on the other path instead — never twice.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" disabled={busy} onClick={() => void savePath()}>{busy ? "Saving…" : "Save path"}</Button>
+        </div>
+      </CardBody>
+    </Card>
+    {error && <Alert tone="danger" title="WhatsApp setup needs attention">{error}</Alert>}
+    {notice && <Alert tone="success" title={notice} />}
     <div className="flex gap-2">
       <Button variant={mode === "qr" ? "primary" : "secondary"} onClick={() => setMode("qr")}>QR se connect · Baileys</Button>
       <Button variant={mode === "cloud" ? "primary" : "secondary"} onClick={() => setMode("cloud")}>Meta Cloud API</Button>
     </div>
     {mode === "qr" ? <AgentStudioWhatsAppQrPanel agents={agents} onCreateAgent={onCreateAgent} onConfigureAgent={onConfigureAgent} /> : <>
-    {error && <Alert tone="danger" title="WhatsApp setup needs attention">{error}</Alert>}
-    {notice && <Alert tone="success" title={notice} />}
     <Card>
       <CardHeader title="How the WhatsApp connection works" description="This uses the official Meta WhatsApp Business Cloud API. Your regular personal WhatsApp account cannot be connected directly." icon={<MessageCircle />} />
       <CardBody className="grid gap-3 sm:grid-cols-3">

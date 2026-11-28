@@ -250,6 +250,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.integrations.whatsapp import run_whatsapp_agent_worker
         from app.services.agent_studio_baileys import run_baileys_worker
 
+        # Step F slice 3: the live Baileys bridge sessions are shared on
+        # app.state so the Cloud worker can fail over to them.
+        app.state.baileys_sessions = {}
+
         worker_tasks.append(asyncio.create_task(
             run_baileys_worker(app, settings, stop_worker), name="agent-studio-baileys-worker"
         ))
@@ -262,6 +266,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.llm_runtime,
                 app.state.rag,
                 stop_worker,
+                baileys_sessions=app.state.baileys_sessions,
             ),
             name="agent-studio-whatsapp-worker",
         ))

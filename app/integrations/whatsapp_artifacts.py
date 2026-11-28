@@ -239,9 +239,13 @@ def artifact_reply(reply: str, results: dict[str, int]) -> str:
         return reply
     # Signed download tokens are bearer links. After delivery, keep only the visible filename/label in WhatsApp.
     visible = _MARKDOWN_LINK.sub(lambda match: re.match(r"!?\[([^\]]*)\]", match.group(0)).group(1), reply)
-    answer = visible.removeprefix("[SUCCESS] ").strip()
+    # Step F slice 5: the reply may carry "Done (verified)" instead of
+    # "[SUCCESS] " — strip either marker before checking the artifacts.
+    answer = visible.removeprefix("[SUCCESS] ").removeprefix("Done (verified)").strip()
     if results["failed"]:
         status = f"[PARTIAL] Agent task completed; {results['failed']} output file(s) could not be delivered to WhatsApp."
+    elif visible.startswith("Done (verified)"):
+        status = f"Done (verified) — Agent task completed. WhatsApp accepted {results['sent']} output file(s) for delivery."
     else:
-        status = f"[SUCCESS] Agent task completed. WhatsApp accepted {results['sent']} output file(s) for delivery."
+        status = f"Agent task completed. WhatsApp accepted {results['sent']} output file(s) for delivery."
     return f"{status}\n\n{answer}"[:12000]
