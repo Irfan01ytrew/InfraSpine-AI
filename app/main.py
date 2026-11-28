@@ -386,6 +386,8 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     from app.api.routes import company_graph
     app.include_router(company_graph.router)
+    from app.api.routes import whatif
+    app.include_router(whatif.router)
     app.include_router(workflow_engine.router)
     app.include_router(finance.router)
     app.include_router(approval_routes.router)
