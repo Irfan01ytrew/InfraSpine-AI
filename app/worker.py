@@ -156,6 +156,8 @@ async def _run(args: argparse.Namespace) -> int:
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
             if getattr(settings, "workflow_engine_on", False):
                 from app.core.crypto import CredentialCipher
+                from app.finance.approval_reminders import process_finance_approval_reminders
+                from app.services.finance_autopilot import process_finance_autopilot
                 from app.workflows.engine import tick
 
                 cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
@@ -163,6 +165,10 @@ async def _run(args: argparse.Namespace) -> int:
                 while ticks < 1000 and await tick(sessionmaker, cipher):
                     ticks += 1
                 log.info("Workflow engine: %s ticks", ticks)
+                autopilot_decisions = await process_finance_autopilot(sessionmaker, settings=settings, cipher=cipher)
+                log.info("Finance autopilot: %s sweep decisions", autopilot_decisions)
+                finance_reminders = await process_finance_approval_reminders(sessionmaker)
+                log.info("Finance approval reminders: %s approvals nudged", finance_reminders)
             log.info(
                 "Processed %s documents, %s training reminders, %s personal task reminders, %s workflow events, %s service request SLA escalations and %s folder sync runs",
                 processed,
@@ -189,6 +195,8 @@ async def _run(args: argparse.Namespace) -> int:
         from app.services.automation_worker import run_automation_worker
         from app.services.service_request_worker import run_service_request_sla_worker
         from app.services.approval_reminders import run_approval_reminders
+        from app.finance.approval_reminders import run_finance_approval_reminders
+        from app.services.finance_autopilot import run_finance_autopilot
         from app.services.request_attachments import run_attachment_cleanup
         from app.services.webhooks import run_webhook_worker
         from app.services.folder_sync import run_folder_sync_worker
@@ -203,6 +211,10 @@ async def _run(args: argparse.Namespace) -> int:
 
             cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
             background.append(run_workflow_engine(sessionmaker, cipher, stop))
+            # Finance autopilot (step R slice 2): same kill switch; the org-settings policy gates the sweep itself.
+            background.append(run_finance_autopilot(sessionmaker, stop, settings=settings, cipher=cipher))
+            # Finance approval reminders (step R slice 3): same kill switch; nudges only, never decides.
+            background.append(run_finance_approval_reminders(sessionmaker, stop))
             log.info("Workflow engine worker started (WORKFLOW_ENGINE_WORKER_ENABLED=false turns it off)")
         else:
             log.warning("Workflow engine worker is OFF (WORKFLOW_ENGINE_WORKER_ENABLED=false)")

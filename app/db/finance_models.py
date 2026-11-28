@@ -9,8 +9,8 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import (CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint,
-                        func, text)
+from sqlalchemy import (Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String,
+                        UniqueConstraint, func, text)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,11 @@ class FinVendor(Base):
     bank_account: Mapped[str] = mapped_column(String(64))
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(16), default='active', server_default=text("'active'"))
+    # Step R slice 4: only allow-listed vendors may be auto-picked-up by the
+    # autopilot sweep. Default False: a new vendor always needs a human to
+    # start its first batch. Set only via the vendor save endpoint.
+    autopilot_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                                    server_default=text("false"))
     created_at: Mapped[datetime] = _ts()
 
 

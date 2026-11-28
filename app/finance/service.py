@@ -97,7 +97,8 @@ class FinanceService:
         return list((await self.db.scalars(select(FinVendor).where(FinVendor.group_id == group_id)
                                            .order_by(FinVendor.name))).all())
 
-    async def save_vendor(self, group_id, *, name, bank_account, currency, tax_id=None, status='active') -> FinVendor:
+    async def save_vendor(self, group_id, *, name, bank_account, currency, tax_id=None, status='active',
+                        autopilot_allowed=False) -> FinVendor:
         await self.require(group_id, 'finance.manage')
         key = name_key(name)
         if not key:
@@ -114,10 +115,14 @@ class FinanceService:
         else:
             before = row.bank_account
         row.bank_account, row.currency, row.tax_id, row.status = account, currency.upper(), tax_id, status
+        # Step R slice 4: the allow-list flag is set only here, by a finance
+        # manager through the vendor endpoint — never by the sweep, never
+        # from invoice/document text. Default False for new vendors.
+        row.autopilot_allowed = bool(autopilot_allowed)
         await self.db.flush()
         audit(self.db, self.p, 'finance.vendor_saved', target=str(row.id),
               details={'group_id': str(group_id), 'bank_account_changed': before is not None and before != account,
-                       'status': status})
+                       'status': status, 'autopilot_allowed': bool(autopilot_allowed)})
         return row
 
     async def purchase_orders(self, group_id) -> list[dict]:
@@ -288,6 +293,59 @@ class FinanceService:
         audit(self.db, self.p, 'finance.connector_changed', target='org_settings',
               details={'from': previous, 'to': mode})
         return await connector_status(self.db, self.settings)
+
+    async def autopilot_status(self) -> dict:
+        """Admin status (slice 2): the org-settings policy plus the last sweep from the audit log."""
+        from app.finance.autopilot import load_policy
+        from app.platform.side_effects import org_scope_id
+        from app.services.finance_autopilot import last_sweep
+
+        await require(self.db, self.p, 'platform.manage', await org_scope_id(self.db))
+        policy = await load_policy(self.db)
+        last = await last_sweep(self.db)
+        return {'policy': {'enabled': policy.enabled, 'dry_run': policy.dry_run,
+                           'max_payment_amount': money(policy.max_payment_amount),
+                           'daily_cap': money(policy.daily_cap)},
+                'last_sweep': None if last is None else {
+                    'at': last.created_at.isoformat(), 'actor_email': last.actor_email,
+                    'decisions': (last.details or {}).get('decisions', [])}}
+
+    async def set_autopilot_policy(self, *, enabled: bool, dry_run: bool,
+                                   max_payment_amount: Decimal | None,
+                                   daily_cap: Decimal | None) -> dict:
+        """Administrator choice of autopilot policy (slice 2). Limits are hard caps, never warnings;
+        a negative limit is rejected. Enabling the policy only arms the sweep: it still runs as a
+        clerk (never as an approver) and only on the worker schedule. The settings row is
+        created on first write, like ``set_org_time_zone`` (migration 0098 seeds it, but the
+        row may not exist on installations that predate it)."""
+        from app.platform.models import OrgSettings
+        from app.platform.side_effects import org_scope_id
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        await require(self.db, self.p, 'platform.manage', await org_scope_id(self.db))
+        for name, value in (('max_payment_amount', max_payment_amount), ('daily_cap', daily_cap)):
+            if value is not None and value < 0:
+                raise InvalidInputError(f'{name} must be zero or more.')
+        row = await self.db.get(OrgSettings, 1, populate_existing=True)
+        previous = {'enabled': False, 'dry_run': False, 'max_payment_amount': None, 'daily_cap': None}
+        if row is not None:
+            previous = {'enabled': bool(row.finance_autopilot_enabled),
+                        'dry_run': bool(row.finance_autopilot_dry_run),
+                        'max_payment_amount': money(row.finance_autopilot_max_payment_amount),
+                        'daily_cap': money(row.finance_autopilot_daily_cap)}
+        new_values = {'finance_autopilot_enabled': bool(enabled), 'finance_autopilot_dry_run': bool(dry_run),
+                      'finance_autopilot_max_payment_amount': max_payment_amount,
+                      'finance_autopilot_daily_cap': daily_cap, 'updated_at': func.now()}
+        await self.db.execute(
+            pg_insert(OrgSettings).values(id=1, **new_values)
+            .on_conflict_do_update(index_elements=[OrgSettings.id], set_=new_values))
+        await self.db.flush()
+        audit(self.db, self.p, 'finance.autopilot_policy_changed', target='org_settings',
+              details={'from': previous,
+                       'to': {'enabled': bool(enabled), 'dry_run': bool(dry_run),
+                              'max_payment_amount': money(max_payment_amount),
+                              'daily_cap': money(daily_cap)}})
+        return await self.autopilot_status()
 
     async def start(self, batch_id) -> tuple[FinInvoiceBatch, WorkflowRun]:
         """Start (or re-start after corrections) the unified workflow for this batch."""

@@ -32,6 +32,10 @@ class OrgSettings(Base):
         CheckConstraint("id = 1", name="single_row"),
         CheckConstraint("finance_payment_connector IS NULL OR finance_payment_connector IN ('mock','http','http+mock')",
                         name="finance_connector_valid"),
+        CheckConstraint("finance_autopilot_max_payment_amount IS NULL OR finance_autopilot_max_payment_amount >= 0",
+                        name="autopilot_amounts_valid"),
+        CheckConstraint("finance_autopilot_daily_cap IS NULL OR finance_autopilot_daily_cap >= 0",
+                        name="autopilot_cap_valid"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
@@ -41,6 +45,12 @@ class OrgSettings(Base):
     # Admin choice of payment connector (step E). NULL = use FINANCE_PAYMENT_CONNECTOR / FINANCE_PAYMENT_FALLBACK.
     # Bank URL and token stay in the environment (secrets are never stored here).
     finance_payment_connector: Mapped[str | None] = mapped_column(String(16))
+    # Finance autopilot policy (step R slice 2). All default to off / unset: upgrading never starts a sweep.
+    # Departments are not stored here; slice 4 adds a per-vendor allow-list.
+    finance_autopilot_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    finance_autopilot_dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    finance_autopilot_max_payment_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    finance_autopilot_daily_cap: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     updated_at: Mapped[datetime] = _now()
 
 

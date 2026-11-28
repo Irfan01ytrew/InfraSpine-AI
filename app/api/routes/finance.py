@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import AppSettings, CurrentUser, DbSession
+from app.api.deps import AdminUser, AppSettings, CurrentUser, DbSession
 from app.core.errors import InvalidInputError
 from app.finance import extraction
 from app.finance.connectors import resolve_connector
@@ -37,6 +37,10 @@ class VendorIn(Strict):
     currency: str = Field(pattern=CURRENCY)
     tax_id: str | None = Field(default=None, max_length=64)
     status: Literal['active', 'blocked'] = 'active'
+    # Step R slice 4: only allow-listed vendors may be auto-picked-up by the
+    # autopilot sweep. Default False: a new vendor always needs a human to
+    # start its first batch.
+    autopilot_allowed: bool = False
 
 
 class PurchaseOrderIn(Strict):
@@ -105,13 +109,21 @@ class ConnectorIn(Strict):
     mode: Literal['mock', 'http', 'http+mock'] | None = None
 
 
+class AutopilotPolicyIn(Strict):
+    enabled: bool = False
+    dry_run: bool = False
+    max_payment_amount: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)
+    daily_cap: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)
+
+
 def svc(request: Request, db, user, settings) -> FinanceService:
     return FinanceService(db, user, settings, request.app.state.cipher)
 
 
 def vendor_out(v) -> dict:
     return {'id': str(v.id), 'name': v.name, 'bank_account': v.bank_account, 'currency': v.currency,
-            'tax_id': v.tax_id, 'status': v.status}
+            'tax_id': v.tax_id, 'status': v.status,
+            'autopilot_allowed': bool(getattr(v, 'autopilot_allowed', False))}
 
 
 @router.get('/scopes')
@@ -245,6 +257,32 @@ async def connector(request: Request, db: DbSession, user: CurrentUser, settings
 @router.put('/connector')
 async def set_connector(body: ConnectorIn, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings):
     out = await svc(request, db, user, settings).set_connector(body.mode)
+    await db.commit()
+    return out
+
+
+@router.get('/autopilot/status')
+async def autopilot_status(request: Request, db: DbSession, user: AdminUser, settings: AppSettings):
+    return await svc(request, db, user, settings).autopilot_status()
+
+
+@router.get('/duplicate-guard/report')
+async def duplicate_guard_report(request: Request, db: DbSession, user: AdminUser, settings: AppSettings):
+    """Step R slice 5: run the duplicate-payment guard on demand and return
+    the report. Read-only (payment rows + connector read-back); it creates
+    no payment and touches no approval. One audit event is written per run."""
+    from app.finance.duplicate_guard import run_duplicate_guard
+
+    report = await run_duplicate_guard(db, user, settings, cipher=request.app.state.cipher)
+    return report.to_dict()
+
+
+@router.put('/autopilot/policy')
+async def set_autopilot_policy(body: AutopilotPolicyIn, request: Request, db: DbSession, user: AdminUser,
+                               settings: AppSettings):
+    out = await svc(request, db, user, settings).set_autopilot_policy(
+        enabled=body.enabled, dry_run=body.dry_run,
+        max_payment_amount=body.max_payment_amount, daily_cap=body.daily_cap)
     await db.commit()
     return out
 
