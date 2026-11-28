@@ -58,6 +58,11 @@ _QUERY_STOP_WORDS = frozenset({
     "hai", "hain", "he", "h", "ka", "ke", "ki", "karo", "kro", "karna", "krna",
     "kya", "kia", "konsi", "konse", "konsa", "konsay", "koun", "kounsa", "kounsi",
     "mujhe", "mujhay", "mujai", "meri", "mere", "mera", "mein", "mai", "me", "par", "pe",
+    # Roman Urdu interrogatives ("kb" is "kab" = when). Without these, a question like
+    # "pak a ka next match kb hai?" produced the nonsense search query "pak next kb".
+    "kb", "kab", "kub", "kahan", "kha", "kidhar", "kidr", "kidher", "kis", "kisko",
+    "kon", "kaun", "kaunsa", "kaunsi", "kaunse", "kyun", "kyu", "kaise", "kaisa", "kaisi",
+    "kese", "kabhi", "kitna", "kitni", "kitne", "kitnay", "kahaan",
     "please", "se", "sy", "to", "ye", "yeh", "iss", "is", "kiya", "jao", "jayein",
 })
 _DATE_WORDS = frozenset({
@@ -65,7 +70,7 @@ _DATE_WORDS = frozenset({
     "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
 })
 _SEARCH_QUERY_NOISE = frozenset({
-    "what", "there", "none", "no", "say", "says", "so", "else", "status", "ongoing", "match", "matches", "source",
+    "what", "there", "none", "no", "say", "says", "so", "else", "status", "ongoing", "source",
     "sources", "link", "links", "cite", "citations", "summaries", "summary", "please", "whether",
     "include", "three", "points", "point", "publication", "date",
     "official", "program", "update", "updates", "major", "news", "story", "stories", "headline", "headlines",

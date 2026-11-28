@@ -450,8 +450,19 @@ def is_web_lookup_request(question: str) -> bool:
         or (
             not refers_to_uploads(question)
             and not is_company_specific(question)
-            and re.search(r"\b(?:cricket|match|scorecard)\b|کرکٹ|میچ", question, re.I)
-            and re.search(r"\b(?:is+s?\s+wa[qk]t|ho\s+rah[aeiy]+\s+(?:hain|hen|hai)|aaj|aj|abhi|kal|today|currently|latest|live|score|jeeta|jeetae|kon jeeta)\b|آج|اسکور|سکور|جیتا", question, re.I)
+            # A question that names a file is about that document, not a public fixture.
+            and not re.search(
+                r"\b(?:file|document|doc|pdf|spreadsheet|sheet)\b|[\w\-]+\.(?:pdf|docx?|xlsx?|pptx?|txt|csv)\b",
+                question,
+                re.I,
+            )
+            # Live/future sport questions in Roman Urdu or English: "pak a ka next match kb hai?",
+            # "pakistan ka agla match kab hai?", "pak ka next match kis se hai?". The old
+            # time-word list had no "when" word (kb/kab) and no "next/upcoming/schedule", so
+            # these fell through to document RAG and died at the evidence gate even though no
+            # uploaded document could ever answer them.
+            and re.search(r"\b(?:cricket|match|scorecard|football|hockey|psl|ipl|t20i?|odi|fifa|world\s+cup)\b|کرکٹ|میچ", question, re.I)
+            and re.search(r"\b(?:is+s?\s+wa[qk]t|ho\s+rah[aeiy]+\s+(?:hain|hen|hai)|aaj|aj|abhi|kal|today|currently|latest|live|score|jeeta|jeetae|kon jeeta|kb|kab|kub|next|agla|agli|agle|agley|upcoming|schedule|fixture|fixtures|series|kis\s+se|kis\s+ke\s+sath|kahan|kidhar|kidr|venue|ground|stadium)\b|آج|اسکور|سکور|جیتا|کب|اگلا|اگلی|آئندہ", question, re.I)
         )
     )
 
