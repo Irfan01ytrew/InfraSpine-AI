@@ -21,6 +21,7 @@ from app.integrations.transport import request as provider_request, TransportErr
 from app.integrations.whatsapp_artifacts import artifact_refs, artifact_reply, deliver_artifacts
 from app.services import agent_studio_whatsapp as legacy, audit
 from app.services.audit import AuditContext
+from app.whatsapp_auto.knowledge_reply import try_auto_reply
 
 def event_values(payload, connection):
     for entry in payload.get("entry", []):
@@ -206,51 +207,60 @@ async def process(sessionmaker, identity, settings, cipher, runtime, rag):
             elif inbound.message_type != "text":
                 reply = "[NEEDS INPUT] This connection currently accepts text tasks. Please resend your request as text or contact a human operator for this attachment."
             else:
-                if dispatch.progress_message_id is None:
-                    dispatch.phase = "progress_sending"
-                    await db.commit()
-                    progress_id = await send_text_once(
-                        db,
-                        user,
-                        connection,
-                        inbound,
-                        cipher,
-                        "Request received. The agent is working on it; I will send the result here.",
-                        key=f"whatsapp:{inbound.id}:progress",
-                    )
-                    inbound, dispatch = await locked(db, identity)
-                    if inbound is None: return
-                    dispatch.progress_message_id = progress_id
-                    dispatch.progress_status = "accepted"
-                    dispatch.progress_at = datetime.now(UTC)
-                    dispatch.phase = "executing"
-                    await db.commit()
-                contact = await db.scalar(select(Contact).where(Contact.connection_id == connection.id,
-                    Contact.owner_id == user.id, Contact.wa_id == inbound.from_wa_id))
-                if contact is None:
-                    thread = await create_thread(db, user, cipher, agent.id, "WhatsApp · " + inbound.from_wa_id[-4:])
-                    await db.execute(pg_insert(Contact).values(id=uuid.uuid4(), connection_id=connection.id, owner_id=user.id,
-                        wa_id=inbound.from_wa_id, thread_id=thread.id).on_conflict_do_nothing(index_elements=["connection_id", "wa_id"]))
-                    await db.commit()
+                # Step AE: try the customer auto-reply first (a Knowledge
+                # answer from the customer-visible documents, or lead
+                # capture). A reply here skips the progress message and
+                # the Agent Studio task run; anything else falls through
+                # to the task path below, unchanged.
+                message = legacy._open(cipher, "inbound", inbound.id, inbound.text_ciphertext, inbound.text_nonce, inbound.text_key_id)
+                auto_reply = await try_auto_reply(db, user, settings, runtime, rag, inbound, message)
+                if auto_reply is not None:
+                    reply = auto_reply
+                else:
+                    if dispatch.progress_message_id is None:
+                        dispatch.phase = "progress_sending"
+                        await db.commit()
+                        progress_id = await send_text_once(
+                            db,
+                            user,
+                            connection,
+                            inbound,
+                            cipher,
+                            "Request received. The agent is working on it; I will send the result here.",
+                            key=f"whatsapp:{inbound.id}:progress",
+                        )
+                        inbound, dispatch = await locked(db, identity)
+                        if inbound is None: return
+                        dispatch.progress_message_id = progress_id
+                        dispatch.progress_status = "accepted"
+                        dispatch.progress_at = datetime.now(UTC)
+                        dispatch.phase = "executing"
+                        await db.commit()
                     contact = await db.scalar(select(Contact).where(Contact.connection_id == connection.id,
                         Contact.owner_id == user.id, Contact.wa_id == inbound.from_wa_id))
-                message = legacy._open(cipher, "inbound", inbound.id, inbound.text_ciphertext, inbound.text_nonce, inbound.text_key_id)
-                run, state, _ = await AgentStudioService(db, user, settings, cipher, runtime, rag).start_run(
-                    agent.id,
-                    contact.thread_id,
-                    message,
-                    idempotency_key=f"whatsapp-cloud:{inbound.id}",
-                    execute_inline=True,
-                )
-                answer = str(state.get("answer") or "").strip()
-                if run.status == "awaiting_approval":
-                    reply = "[REQUIRES APPROVAL] This task is waiting for approval in InfraSpine AI → AI Agents → Approvals & execution log."
-                elif run.status == "completed" and answer:
-                    reply = "[SUCCESS] " + answer
-                elif run.status == "failed":
-                    reply = "[FAILED] " + (answer or "The agent could not verify a completed result. Check the AI Agents execution log.")
-                else:
-                    reply = "[IN PROGRESS] This task is still queued or running. Check the AI Agents execution log for updates."
+                    if contact is None:
+                        thread = await create_thread(db, user, cipher, agent.id, "WhatsApp · " + inbound.from_wa_id[-4:])
+                        await db.execute(pg_insert(Contact).values(id=uuid.uuid4(), connection_id=connection.id, owner_id=user.id,
+                            wa_id=inbound.from_wa_id, thread_id=thread.id).on_conflict_do_nothing(index_elements=["connection_id", "wa_id"]))
+                        await db.commit()
+                        contact = await db.scalar(select(Contact).where(Contact.connection_id == connection.id,
+                            Contact.owner_id == user.id, Contact.wa_id == inbound.from_wa_id))
+                    run, state, _ = await AgentStudioService(db, user, settings, cipher, runtime, rag).start_run(
+                        agent.id,
+                        contact.thread_id,
+                        message,
+                        idempotency_key=f"whatsapp-cloud:{inbound.id}",
+                        execute_inline=True,
+                    )
+                    answer = str(state.get("answer") or "").strip()
+                    if run.status == "awaiting_approval":
+                        reply = "[REQUIRES APPROVAL] This task is waiting for approval in InfraSpine AI → AI Agents → Approvals & execution log."
+                    elif run.status == "completed" and answer:
+                        reply = "[SUCCESS] " + answer
+                    elif run.status == "failed":
+                        reply = "[FAILED] " + (answer or "The agent could not verify a completed result. Check the AI Agents execution log.")
+                    else:
+                        reply = "[IN PROGRESS] This task is still queued or running. Check the AI Agents execution log for updates."
             inbound, dispatch = await locked(db, identity)
             if inbound is None: return
             connection, _, _ = await bound_identity(db, inbound)

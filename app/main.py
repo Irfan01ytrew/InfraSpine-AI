@@ -27,6 +27,7 @@ from app.api.routes import (
     agent_studio,
     agent_studio_whatsapp,
     agent_studio_baileys,
+    whatsapp_auto,
     request_forms,
     webhooks as webhook_routes,
     access_admin,
@@ -401,6 +402,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(agent_studio.router)
     app.include_router(agent_studio_whatsapp.router)
+    app.include_router(whatsapp_auto.router)
     app.include_router(agent_studio_baileys.router)
     app.include_router(agent_catalog.router)
     app.include_router(agents.router)

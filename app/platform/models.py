@@ -41,6 +41,12 @@ class OrgSettings(Base):
     # Admin choice of payment connector (step E). NULL = use FINANCE_PAYMENT_CONNECTOR / FINANCE_PAYMENT_FALLBACK.
     # Bank URL and token stay in the environment (secrets are never stored here).
     finance_payment_connector: Mapped[str | None] = mapped_column(String(16))
+    # Step AE: Knowledge documents WhatsApp auto-replies may quote (list of
+    # document UUID strings). Default empty: auto-reply answers nothing from
+    # documents until the owner flags documents customer-visible.
+    whatsapp_customer_visible_document_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     updated_at: Mapped[datetime] = _now()
 
 

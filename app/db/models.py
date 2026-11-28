@@ -2476,4 +2476,5 @@ from app.db.agent_studio_whatsapp_models import (  # noqa: E402,F401
     AgentStudioWhatsAppContact,
     AgentStudioWhatsAppInbound,
 )
+from app.db.whatsapp_lead_models import WhatsAppLead  # noqa: E402,F401
 from app.db.agent_studio_baileys_models import BaileysConnection, BaileysMessage  # noqa: E402,F401
