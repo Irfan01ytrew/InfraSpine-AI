@@ -17,11 +17,10 @@ case "$role" in
   api)
     workers=${API_WORKERS:-1}
     server=${API_SERVER:-uvicorn}
-    port=${PORT:-8000}
     if [ "$server" = "gunicorn" ]; then
-      exec gunicorn app.main:app         --worker-class uvicorn.workers.UvicornWorker         --bind 0.0.0.0:"$port"         --workers "$workers"         --timeout "${API_TIMEOUT:-300}"         --access-logfile -         --error-logfile -         "$@"
+      exec gunicorn app.main:app         --worker-class uvicorn.workers.UvicornWorker         --bind 0.0.0.0:8000         --workers "$workers"         --timeout "${API_TIMEOUT:-300}"         --access-logfile -         --error-logfile -         "$@"
     fi
-    exec uvicorn app.main:app --host 0.0.0.0 --port "$port" --workers "$workers" "$@"
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "$workers" "$@"
     ;;
   worker)
     exec python -m app.worker "$@"

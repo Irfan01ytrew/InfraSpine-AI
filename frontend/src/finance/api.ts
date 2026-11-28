@@ -24,14 +24,6 @@ export interface PaymentApproval {
   vendor_name: string; payee_account: string; invoice_numbers: (string | null)[]; requested_by: string; own_request: boolean;
 }
 export interface SpendRow { month: string; department: string; currency: string; amount: string; count: number }
-export type ConnectorMode = "mock" | "http" | "http+mock";
-export interface ConnectorStatus {
-  source: string; admin_mode: string | null; environment_mode: string; modes: string[];
-  http_configured: boolean; http_host: string | null; http_token_set: boolean;
-  mock_allowed: boolean; production: boolean; test_override: boolean;
-  active: string | null; available: boolean; problem: string | null; is_mock: boolean;
-  real_bank: boolean; reachable?: boolean; probe_error?: string;
-}
 export interface Spend { months: string[]; from: string; departments: string[]; currencies: string[]; rows: SpendRow[] }
 export interface Vendor { id: string; name: string; bank_account: string; currency: string; tax_id: string | null; status: string }
 export interface KnowledgeDocument { id: string; filename: string; folder: string | null; indexed: boolean; updated_at: string | null }
@@ -69,8 +61,6 @@ export const financeApi = {
   decide: (id: string, decision: "approve" | "reject", presented_hash: string, note = "") =>
     call<{ approval_id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, presented_hash, note }),
   spend: (months = 12, group?: string) => call<Spend>("GET", `/spend?months=${months}${group ? `&group_id=${group}` : ""}`),
-  connector: () => call<ConnectorStatus>("GET", "/connector"),
-  setConnector: (mode: ConnectorMode | null) => call<ConnectorStatus>("PUT", "/connector", { mode }),
   perform: (group: string, run: string, step: string) =>
     request<unknown>("POST", `/api/workflow-engine/scopes/${group}/runs/${run}/steps/${step}/perform`),
 };
