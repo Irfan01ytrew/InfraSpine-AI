@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { RunsPanel } from "../workflows/RunsPanel";
+import { FlowDiagram } from "../workflows/FlowDiagram";
 import { Activity, ArrowRight, Boxes, Check, CircleAlert, Clock3, Database, Gauge, Layers3, Network, RefreshCw, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import { describeError, request } from "../api";
 import { graphApi } from "../company-graph/api";
 import { GraphMap } from "../company-graph/GraphMap";
 import type { Graph, GraphRecord, Quality, Tenant } from "../company-graph/types";
 import { workflowApi } from "../workflows/api";
+import { templateDraftState, templateSummary } from "../workflows/templatePicker";
 import type { Dashboard as WorkflowDashboard, Scope, Spec, Template, Workflow as WorkflowRow } from "../workflows/types";
 import { bc } from "../continuity/api";
 import type { Dashboard as ContinuityDashboard, Workspace } from "../continuity/types";
@@ -100,8 +102,9 @@ export function WorkflowEngineWorkspace() {
   const [workflows, setWorkflows] = useState<WorkflowRow[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [requirements, setRequirements] = useState("");
-  const [draft, setDraft] = useState<{ spec: Spec; errors: { code: string; message: string; node_id: string | null }[]; requires_review: boolean } | null>(null);
+  const [draft, setDraft] = useState<{ spec: Spec; errors: { code: string; message: string; node_id: string | null }[]; requires_review: boolean; workflowId?: string; baseVersion?: number } | null>(null);
   const [draftName, setDraftName] = useState("New workflow draft");
+  const [selectedNode, setSelectedNode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -128,10 +131,29 @@ export function WorkflowEngineWorkspace() {
     catch (err) { setError(describeError(err)); }
     finally { setBusy(false); }
   }
+  async function validateDraft() {
+    if (!scopeId || !draft) return;
+    setBusy(true); setError("");
+    try { const result = await workflowApi.validate(scopeId, draft.spec); setDraft({ ...draft, errors: result.errors }); }
+    catch (err) { setError(describeError(err)); }
+    finally { setBusy(false); }
+  }
+  async function useTemplate(key: string) {
+    if (!scopeId) return;
+    setBusy(true); setError("");
+    try {
+      const result = await workflowApi.templateDraft(scopeId, key);
+      const created = templateDraftState(result);
+      setDraft({ spec: created.spec, errors: created.errors, requires_review: created.requiresReview, workflowId: created.workflowId, baseVersion: created.baseVersion });
+      setDraftName(result.workflow.name);
+      setSelectedNode("");
+    } catch (err) { setError(describeError(err)); }
+    finally { setBusy(false); }
+  }
   async function saveDraft() {
     if (!scopeId || !draft) return;
     setBusy(true); setError("");
-    try { await workflowApi.save(scopeId, draftName.trim() || "Workflow draft", "AI-assisted draft. Review the definition and approvals before publishing.", draft.spec); setDraft(null); setRequirements(""); setRevision(value => value + 1); }
+    try { await workflowApi.save(scopeId, draftName.trim() || "Workflow draft", draft.workflowId ? "Template draft. Review the definition and approvals before publishing." : "AI-assisted draft. Review the definition and approvals before publishing.", draft.spec, draft.workflowId, draft.baseVersion); setDraft(null); setRequirements(""); setRevision(value => value + 1); }
     catch (err) { setError(describeError(err)); }
     finally { setBusy(false); }
   }
@@ -143,8 +165,11 @@ export function WorkflowEngineWorkspace() {
     {scopeId && <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Total runs" value={dashboard?.total_runs ?? "—"} hint="Persisted workflow history" icon={<Activity />} /><Stat label="Completion rate" value={dashboard?.completion_rate == null ? "—" : `${Math.round(dashboard.completion_rate * 100)}%`} hint="Recorded successful runs" icon={<Check />} /><Stat label="Waiting for review" value={dashboard?.waiting_count ?? "—"} hint="Human task or approval queue" icon={<Clock3 />} /><Stat label="Overdue steps" value={dashboard?.overdue_steps ?? "—"} hint="Requires authorized review" icon={<CircleAlert />} /></div>
       <Card><CardHeader title="Draft a workflow from instructions" description="This creates a draft for review. It never publishes or executes the generated workflow." icon={<Sparkles />} /><CardBody><form className="grid gap-3" onSubmit={event => void createDraft(event)}><Textarea value={requirements} onChange={event => setRequirements(event.target.value)} rows={3} maxLength={8000} minLength={10} placeholder="Describe the process, people involved, decision points and required evidence…" /><div className="flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-muted">Available templates: {templates.length} · adapters: review permissions in scope</span><Button type="submit" variant="primary" loading={busy} disabled={requirements.trim().length < 10}>Create reviewed draft</Button></div></form>
-        {draft && <div className="mt-4 rounded-xl border border-primary/20 bg-primary-soft/30 p-4"><div className="flex flex-wrap items-end justify-between gap-3"><div className="grid min-w-60 gap-2"><Badge tone="primary">Draft · review required</Badge><label className="grid gap-1 text-xs font-medium">Draft name<Input value={draftName} onChange={event => setDraftName(event.target.value)} maxLength={160} /></label><p className="text-sm font-semibold">{draft.spec.nodes.length} steps · {draft.errors.length} validation findings</p></div><Button variant="primary" onClick={() => void saveDraft()} loading={busy} disabled={!draft.spec.nodes.length || !draftName.trim()}>Save draft to workflow list</Button></div><div className="mt-3 grid gap-2">{draft.errors.map((item, index) => <Alert key={`${item.code}-${index}`} tone={item.code === "error" ? "danger" : "warning"}>{item.message}</Alert>)}</div><details className="mt-3"><summary className="cursor-pointer text-xs font-medium">Review generated workflow definition</summary><pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-surface p-3 text-xs">{JSON.stringify(draft.spec, null, 2)}</pre></details></div>}
+        {draft && <div className="mt-4 rounded-xl border border-primary/20 bg-primary-soft/30 p-4"><div className="flex flex-wrap items-end justify-between gap-3"><div className="grid min-w-60 gap-2"><Badge tone="primary">Draft · review required</Badge><label className="grid gap-1 text-xs font-medium">Draft name<Input value={draftName} onChange={event => setDraftName(event.target.value)} maxLength={160} /></label><p className="text-sm font-semibold">{draft.spec.nodes.length} steps · {draft.errors.length} validation findings</p></div><Button variant="primary" onClick={() => void saveDraft()} loading={busy} disabled={!draft.spec.nodes.length || !draftName.trim()}>Save draft to workflow list</Button></div><div className="mt-3 grid gap-2">{draft.errors.map((item, index) => <Alert key={`${item.code}-${index}`} tone={item.code === "error" ? "danger" : "warning"}>{item.message}</Alert>)}</div>
+        <div className="mt-4"><p className="mb-2 text-xs font-medium">Workflow diagram — drag steps from the palette onto the canvas, drag nodes to move them, use a node's port to connect it. Validate the edited diagram before saving.</p><FlowDiagram spec={draft.spec} onChange={next => setDraft({ ...draft, spec: next })} selected={selectedNode} onSelect={setSelectedNode} errors={draft.errors} /><div className="mt-2 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => void validateDraft()} loading={busy}>Validate diagram</Button></div></div>
+        <details className="mt-3"><summary className="cursor-pointer text-xs font-medium">Review generated workflow definition</summary><pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-surface p-3 text-xs">{JSON.stringify(draft.spec, null, 2)}</pre></details></div>}
       </CardBody></Card>
+      <Card><CardHeader title="Template library" description="One click creates a draft from a template and opens it in the canvas below. Drafts are never published or executed — review stays a separate, owner-gated step." icon={<Workflow />} /><CardBody className="grid gap-2">{templates.length ? templates.map(item => { const summary = templateSummary(item); return <div key={item.key} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold">{summary.name}</p><Badge tone="neutral">{summary.category}</Badge><Badge>{summary.stepCount} steps</Badge></div><p className="mt-1 text-sm text-muted">{summary.description}</p>{summary.requiredInputs.length > 0 && <p className="mt-1 text-xs text-muted">Needs: {summary.requiredInputs.join(" · ")}</p>}</div><Button variant="secondary" onClick={() => void useTemplate(item.key)} loading={busy} disabled={!scopeId}>Use template</Button></div>; }) : <p className="text-sm text-muted">No templates are available in this scope yet.</p>}</CardBody></Card>
       <Card><CardHeader title="Workflow definitions" description="Review draft and published versions before enabling event or scheduled execution." icon={<Workflow />} /><CardBody className="grid gap-2">{workflows.length ? workflows.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="font-semibold">{item.name}</p><p className="text-xs text-muted">Version {item.latest_version} · updated {new Date(item.updated_at).toLocaleString()}</p></div><div className="flex items-center gap-2"><Badge tone={item.enabled ? "success" : "neutral"}>{item.enabled ? "Enabled" : item.latest_status ?? "Draft"}</Badge><Badge>{item.latest_status ?? "unknown"}</Badge></div></div>) : <p className="text-sm text-muted">No workflow definitions are visible in this scope yet.</p>}</CardBody></Card>
       <RunsPanel scopeId={scopeId} revision={revision} />
       {Object.keys(counts).length > 0 && <Card><CardHeader title="Run queue" description={`Current workflow snapshot: ${dashboard?.as_of ? new Date(dashboard.as_of).toLocaleString() : "loading"}.`} icon={<Layers3 />} /><CardBody className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(counts).map(([status, count]) => <div key={status} className="rounded-lg border border-border p-3"><p className="text-xs capitalize text-muted">{status.replaceAll("_", " ")}</p><p className="mt-1 text-xl font-semibold">{count}</p></div>)}</CardBody></Card>}

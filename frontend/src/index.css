@@ -99,3 +99,25 @@
   .markdown .hljs-comment, .markdown .hljs-quote { color: var(--muted); font-style: italic; }
   .markdown .hljs-deletion { color: var(--error-text); }
 }
+
+/* Workflow diagram canvas (Step AD slice 3). FlowDiagram.tsx shipped with
+   class names but no rules, so the mounted canvas rendered unstyled. */
+.wf-diagram-shell { display: grid; gap: 8px; }
+.wf-diagram-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.wf-inline { display: flex; align-items: center; gap: 6px; }
+.wf-inline button, .wf-palette button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.wf-inline button:hover, .wf-palette button:hover { border-color: var(--border-strong); }
+.wf-palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.wf-canvas { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.wf-dot-grid { fill: var(--surface-2); }
+.wf-edge { fill: none; stroke: var(--border-strong); stroke-width: 2; }
+.wf-edge-label { fill: var(--muted); font-size: 11px; }
+.wf-node { cursor: grab; outline: none; }
+.wf-node rect { fill: var(--surface); stroke: var(--border-strong); }
+.wf-node.selected rect { stroke: var(--primary); stroke-width: 2; }
+.wf-node.invalid rect { stroke: var(--danger); }
+.wf-node-accent { fill: var(--primary); }
+.wf-node-kind { fill: var(--muted); font-size: 10px; font-weight: 600; }
+.wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.wf-node-meta { fill: var(--muted); font-size: 11px; }
+.wf-port { fill: var(--surface); stroke: var(--primary); cursor: crosshair; }
