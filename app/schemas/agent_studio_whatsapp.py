@@ -1,6 +1,7 @@
 """Validated payloads for Agent Studio's Meta WhatsApp Cloud API connection."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -41,6 +42,23 @@ class WhatsAppConnectionOut(BaseModel):
 
 class WhatsAppConnectionResponse(BaseModel):
     connection: WhatsAppConnectionOut | None
+    # Step F slice 3: the owner's runtime path setting and the transport a
+    # reply would actually use right now (None when neither path can send).
+    path_setting: str = "auto"
+    active_path: str | None = None
+    cloud_available: bool = False
+    baileys_available: bool = False
+
+
+class WhatsAppPathSave(BaseModel):
+    path: Literal["cloud", "baileys", "auto"]
+
+
+class WhatsAppPathResponse(BaseModel):
+    path_setting: str
+    active_path: str | None
+    cloud_available: bool
+    baileys_available: bool
 
 
 class WhatsAppVerifyResponse(BaseModel):

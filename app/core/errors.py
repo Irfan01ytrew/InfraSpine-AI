@@ -46,6 +46,19 @@ class AccountLockedError(AppError):
     message = "Too many failed sign-in attempts. The account is locked; try again later."
 
 
+class RateLimitError(AppError):
+    """Step I slice 2: the caller exceeded an API rate limit (per-IP or per-user).
+
+    Distinct from AccountLockedError (per-account failed-login lockout): this
+    is the flood/abuse throttle. Handlers render it as 429 with the standard
+    error envelope; the middleware also sends a Retry-After header.
+    """
+
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "rate_limited"
+    message = "Too many requests. Please try again shortly."
+
+
 class PermissionDeniedError(AppError):
     status_code = status.HTTP_403_FORBIDDEN
     code = "forbidden"
@@ -86,6 +99,12 @@ class InvalidInputError(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "invalid_input"
     message = "The request contains invalid values."
+
+
+class RateLimitedError(AppError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "rate_limited"
+    message = "Too many requests. Please try again shortly."
 
 
 class FileRejectedError(AppError):

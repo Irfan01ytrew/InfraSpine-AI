@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
@@ -29,6 +29,13 @@ class DocumentOut(BaseModel):
     can_modify: bool
     created_at: datetime
     updated_at: datetime
+    # Step AB derived metadata (app/rag/auto_enrich.py): tags, an extractive
+    # summary and the earliest expiry date pulled from the document text.
+    # Visible only to users who may already read the document — DocumentOut is
+    # only built for readable docs (see service.list()).
+    tags: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    expiry_date: date | None = None
 
     @classmethod
     def build(
@@ -55,6 +62,9 @@ class DocumentOut(BaseModel):
             can_modify=access.can_modify(user, doc) if can_modify is None else can_modify,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
+            tags=list(doc.tags or []),
+            summary=doc.summary,
+            expiry_date=doc.expiry_date,
         )
 
 
@@ -510,6 +520,10 @@ class RagVoiceQuestionResponse(BaseModel):
     """A transient transcript and its answer; neither is saved as a conversation."""
 
     transcript: str = Field(..., min_length=1, max_length=4000)
+    # Language the transcript was spoken in (Step Z slice 6), from the same
+    # shared detector typed chat uses. Metadata only — it never changes
+    # authorization or what the asker may read. Defaults for older callers.
+    detected_language: str = "unknown"
     answer: RagChatResponse
 
 

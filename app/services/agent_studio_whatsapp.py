@@ -13,14 +13,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent_studio.service import AgentStudioService, create_thread
 from app.core.config import Settings
 from app.core.crypto import CredentialCipher, EncryptedValue
-from app.core.errors import InvalidInputError, NotFoundError
+from app.core.errors import InvalidInputError, NotFoundError, RateLimitedError
 from app.db.agent_studio_models import AgentStudioAgent, AgentStudioThread
 from app.db.agent_studio_whatsapp_models import (
     AgentStudioWhatsAppConnection,
@@ -28,6 +28,8 @@ from app.db.agent_studio_whatsapp_models import (
     AgentStudioWhatsAppInbound,
 )
 from app.db.models import User
+from app.services import audit
+from app.services.audit import AuditContext
 from app.services.llm_runtime import LLMRuntime
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,13 @@ _META_ID = re.compile(r"^[0-9]{5,64}$")
 _SENDER_ID = re.compile(r"^[0-9]{8,16}$")
 _API_VERSION = re.compile(r"^v[0-9]{1,2}\.0$")
 MAX_WEBHOOK_BYTES = 1_000_000
+# Step F slice 2: per-sender intake abuse control. A sender may queue at most
+# WHATSAPP_INTAKE_RATE_LIMIT messages per connection per WHATSAPP_INTAKE_RATE_WINDOW_SECONDS.
+# Excess messages are never stored as tasks; they are audited and the webhook answers 429 when
+# nothing in the payload was accepted. The verification flow itself is in-app and is never
+# subject to this limit.
+WHATSAPP_INTAKE_RATE_LIMIT = 10
+WHATSAPP_INTAKE_RATE_WINDOW_SECONDS = 60
 _QUEUE_POLL_SECONDS = 1.0
 
 
@@ -326,7 +335,29 @@ async def accept_webhook(
         raise InvalidInputError("WhatsApp webhook body must be a JSON object.")
 
     accepted = 0
+    limited = 0
+    # Messages already queued for this sender inside the window, per call. Rows stored by this
+    # very call are counted too (via the local counter), so one oversized payload cannot burst
+    # past the limit before the next commit.
+    queued_in_window: dict[str, int] = {}
+    window_start = datetime.now(UTC) - timedelta(seconds=WHATSAPP_INTAKE_RATE_WINDOW_SECONDS)
     for external_id, sender, kind, text in _incoming_events(payload, connection):
+        seen = queued_in_window.get(sender)
+        if seen is None:
+            seen = int(await db.scalar(select(func.count()).select_from(AgentStudioWhatsAppInbound).where(
+                AgentStudioWhatsAppInbound.connection_id == connection.id,
+                AgentStudioWhatsAppInbound.from_wa_id == sender,
+                AgentStudioWhatsAppInbound.created_at >= window_start,
+            )) or 0)
+            queued_in_window[sender] = seen
+        if seen >= WHATSAPP_INTAKE_RATE_LIMIT:
+            limited += 1
+            audit.record(db, AuditContext(connection.owner_id, None, None, None),
+                         "integration.whatsapp_rate_limited", outcome="failure",
+                         target=str(connection.id),
+                         details={"limit": WHATSAPP_INTAKE_RATE_LIMIT,
+                                  "window_seconds": WHATSAPP_INTAKE_RATE_WINDOW_SECONDS})
+            continue
         inbound_id = uuid.uuid4()
         stored_text = text if kind == "text" else ""
         sealed = _seal(cipher, "inbound", inbound_id, stored_text)
@@ -349,8 +380,13 @@ async def accept_webhook(
             .on_conflict_do_nothing(index_elements=["external_message_id"])
             .returning(AgentStudioWhatsAppInbound.id)
         )
-        accepted += int(result.scalar_one_or_none() is not None)
+        inserted = result.scalar_one_or_none() is not None
+        accepted += int(inserted)
+        if inserted:
+            queued_in_window[sender] = seen + 1
     await db.commit()
+    if accepted == 0 and limited > 0:
+        raise RateLimitedError("Too many WhatsApp messages from this sender. Please try again shortly.")
     return accepted
 
 

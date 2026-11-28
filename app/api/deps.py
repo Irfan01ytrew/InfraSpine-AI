@@ -20,6 +20,7 @@ from app.core.errors import (
 )
 from app.core.security import CSRF_HEADER_NAME, PARTNER_SESSION_COOKIE_NAME, SESSION_COOKIE_NAME
 from app.db.models import ROLE_ADMIN, ROLE_MANAGER, User
+from app.security.rate_limit import check_user_rate_limit
 from app.services import auth
 from app.services.audit import AuditContext
 from app.services.llm_runtime import LLMRuntime
@@ -82,6 +83,7 @@ async def get_current_user(request: Request, db: DbSession, settings: AppSetting
     # unless that membership was platform-revoked.
     from app.platform.sync import reconcile_user
     await db.run_sync(lambda s: reconcile_user(s.connection(), user.id))
+    check_user_rate_limit(request, user, settings)
     if settings.org_mfa_required:
         enrollment_required, reauthentication_required = await auth.mfa_policy_state(db, user, token, settings)
         if enrollment_required and request.url.path not in _MFA_ENROLLMENT_PATHS:
@@ -118,6 +120,28 @@ async def require_admin(user: CurrentUser) -> User:
 AdminUser = Annotated[User, Depends(require_admin)]
 
 
+async def require_platform_admin(db: DbSession, user: CurrentUser) -> User:
+    """Identity administration behind an explicit platform gate (Step I slice 3).
+
+    The legacy admin role still decides who may administer (everyone else
+    keeps the same 403 as require_admin gave), and the platform gate adds
+    the principal-freshness and membership decision on top: a revoked or
+    stale principal is refused even if the legacy role still says admin.
+    In enforce mode the platform can only take access away, never add it,
+    so no authorized administrator loses access from this change.
+    """
+    if user.role != ROLE_ADMIN:
+        raise PermissionDeniedError()
+    from app.platform.modules import org_gate, raise_unless
+
+    gate = await org_gate(db, user, "platform.manage", legacy_allowed=True)
+    raise_unless(gate)
+    return user
+
+
+PlatformAdminUser = Annotated[User, Depends(require_platform_admin)]
+
+
 async def require_reports_viewer(user: CurrentUser, db: DbSession) -> User:
     """Administrators, or anyone holding an active (not expired or revoked) reports.view grant."""
     if user.role == ROLE_ADMIN:
@@ -140,7 +164,7 @@ ManagerUser = Annotated[User, Depends(require_manager)]
 
 
 async def get_provider_admin(
-    request: Request, db: DbSession, settings: AppSettings, admin: AdminUser
+    request: Request, db: DbSession, settings: AppSettings, admin: PlatformAdminUser
 ) -> ProviderAdminService:
     return ProviderAdminService(db, settings, request.app.state.cipher, audit_context(request, admin))
 

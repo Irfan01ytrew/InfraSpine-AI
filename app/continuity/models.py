@@ -188,3 +188,70 @@ class GrantRequest(Base):
     decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(16), default="pending")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class HandoverGrant(Base):
+    """A time-limited, revocable handover grant (Step G slice 5).
+
+    Created only after the effective-permission check passes for the named
+    replacement, and activated only by a second person's approval. Approval
+    creates one platform membership (role ``continuity.handover``) on the
+    resource's department scope, expiring at ``valid_to``. Revoke ends that
+    membership at once; expiry ends it by the clock.
+    """
+
+    __tablename__ = "bc_handover_grants"
+    __table_args__ = (
+        ForeignKeyConstraint(["tenant_id", "resource_id"], ["bc_nodes.tenant_id", "bc_nodes.id"],
+                             name="fk_handover_grants_resource"),
+        ForeignKeyConstraint(["tenant_id", "candidate_node_id"], ["bc_nodes.tenant_id", "bc_nodes.id"],
+                             name="fk_handover_grants_candidate"),
+        ForeignKeyConstraint(["tenant_id", "scenario_id"], ["bc_scenarios.tenant_id", "bc_scenarios.id"],
+                             name="fk_handover_grants_scenario"),
+        ForeignKeyConstraint(["tenant_id", "plan_id"], ["bc_plans.tenant_id", "bc_plans.id"],
+                             name="fk_handover_grants_plan"),
+        CheckConstraint("status IN ('pending','active','rejected','revoked')", name="handover_grant_status"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bc_tenants.id"), index=True)
+    scenario_id: Mapped[uuid.UUID | None] = mapped_column(UUID)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID)
+    resource_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    candidate_node_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    scope_id: Mapped[uuid.UUID | None] = mapped_column(UUID)
+    permissions: Mapped[list] = mapped_column(JSONB, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    requested_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str | None] = mapped_column(Text)
+    digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GraphLink(Base):
+    """One identity shared by the continuity graph and the company graph (Step G slice 6).
+
+    ``cg_tenant_id`` / ``cg_record_id`` are plain UUIDs, not foreign keys:
+    the company graph is a separate module and its tables must not couple
+    the continuity migrations. The pairing is established only through the
+    governed sync path, never by a direct write.
+    """
+
+    __tablename__ = "bc_graph_links"
+    __table_args__ = (
+        ForeignKeyConstraint(["bc_tenant_id", "bc_node_id"], ["bc_nodes.tenant_id", "bc_nodes.id"],
+                             name="fk_graph_links_node"),
+        UniqueConstraint("bc_tenant_id", "cg_tenant_id", "unified_key", name="uq_graph_links_identity"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    bc_tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bc_tenants.id"), index=True)
+    cg_tenant_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    bc_node_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    cg_record_id: Mapped[uuid.UUID] = mapped_column(UUID)
+    unified_key: Mapped[str] = mapped_column(String(220))
+    kind: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

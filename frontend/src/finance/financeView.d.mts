@@ -12,6 +12,7 @@ export function spendSeries(spend: Spend | null | undefined, currency?: string):
   series: { month: string; total: number; parts: { department: string; amount: number }[] }[];
 };
 export function shortHash(hash: string | null | undefined): string;
+export function spendMonthLabel(month: string | null | undefined, language?: string | null): string;
 export interface SkippedDocument { filename: string; reason: string }
 export function skippedSummary(skipped: readonly SkippedDocument[] | null | undefined): string;
 export function actionableStep<T extends StepLike>(run: { status: string; steps: T[] } | null | undefined,

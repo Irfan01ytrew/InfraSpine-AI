@@ -37,6 +37,33 @@ export function shortHash(hash) {
   return typeof hash === "string" && hash.length >= 12 ? `${hash.slice(0, 6)}…${hash.slice(-6)}` : String(hash ?? "");
 }
 
+// Short month names per language (Step Z slice 5). Roman Urdu month names
+// are the common Latin spellings; Urdu uses Urdu-script names and digits.
+const EN_MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const ROMAN_URDU_MONTHS_SHORT = ["Janvari", "Farvari", "March", "April", "Mai", "June", "Julai", "Agast", "Sitambar", "Aktobar", "Navambar", "Disambar"];
+const URDU_MONTHS = ["جنوری", "فروری", "مارچ", "اپریل", "مئی", "جون", "جولائی", "اگست", "ستمبر", "اکتوبر", "نومبر", "دسمبر"];
+const URDU_DIGITS = { 0: "۰", 1: "۱", 2: "۲", 3: "۳", 4: "۴", 5: "۵", 6: "۶", 7: "۷", 8: "۸", 9: "۹" };
+
+function toUrduDigits(text) {
+  return String(text).replace(/[0-9]/g, (digit) => URDU_DIGITS[digit]);
+}
+
+/**
+ * "2026-10" -> "Oct 26" (en), "Aktobar 26" (roman_urdu), "اکتوبر ۲۶" (urdu).
+ * Malformed input passes through unchanged instead of guessing.
+ */
+export function spendMonthLabel(month, language) {
+  if (typeof month !== "string") return String(month ?? "");
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return month;
+  const index = Number(match[2]) - 1;
+  if (index < 0 || index > 11) return month;
+  const shortYear = match[1].slice(2);
+  if (language === "urdu") return `${URDU_MONTHS[index]} ${toUrduDigits(shortYear)}`;
+  if (language === "roman_urdu") return `${ROMAN_URDU_MONTHS_SHORT[index]} ${shortYear}`;
+  return `${EN_MONTHS_SHORT[index]} ${shortYear}`;
+}
+
 /** Plain-language summary of documents skipped during Knowledge intake, for the toast body. */
 export function skippedSummary(skipped) {
   const rows = skipped ?? [];

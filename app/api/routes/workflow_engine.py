@@ -10,9 +10,10 @@ import json
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import Field
 from sqlalchemy import exists, func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession, audit_context
-from app.core.errors import ConflictError, InvalidInputError
+from app.core.errors import ConflictError, InvalidInputError, NotFoundError
 from app.db.models import AccessGroupMember, DepartmentManager, User
 from app.db.workflow_engine_models import (Workflow, WorkflowVersion, WorkflowRun, WorkflowStep,
     WorkflowDecision, WorkflowNotice)
@@ -86,8 +87,12 @@ async def scopes(request: Request, db: DbSession, user: CurrentUser):
 
 @router.get('/templates')
 async def templates(user: CurrentUser):
+    from app.agent_studio.templates import list_studio_templates
     from app.workflows.actions import catalog as action_catalog
-    return {'templates': template_catalog(), 'adapters': catalog(), 'actions': action_catalog()}
+    categories = {item['key']: item['category'] for item in list_studio_templates()}
+    enriched = [{**template, 'category': categories.get(template['key'], 'operations')}
+                for template in template_catalog()]
+    return {'templates': enriched, 'adapters': catalog(), 'actions': action_catalog()}
 
 
 @router.get('/scopes/{scope_id}/members')
@@ -155,6 +160,41 @@ async def workflow_detail(scope_id: UUID, workflow_id: UUID, request: Request, d
         WorkflowDecision.version_id.in_([v.id for v in versions])))).all()
     return {'workflow': row_dict(row), 'versions': [row_dict(v) for v in versions],
             'reviews': [row_dict(d, exclude={'evidence'}) for d in reviews]}
+
+
+class TemplateDraft(Strict):
+    name: str | None = Field(default=None, max_length=160)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+@router.post('/scopes/{scope_id}/templates/{template_key}/draft', status_code=201)
+async def create_template_draft(scope_id: UUID, template_key: str, payload: TemplateDraft,
+                                request: Request, db: DbSession, user: CurrentUser):
+    """Save a Studio draft from a template key (Step AD slice 2).
+
+    The draft is inert: ``origin='studio'``, ``origin_ref=<template key>``,
+    ``status='draft'`` — it is never published or executed by this endpoint.
+    One draft row exists per scope + template key (the ``uq_wf_definitions_origin_ref``
+    constraint), so a second click for the same template returns 409 and the
+    caller opens the existing draft from the workflow list instead.
+    """
+    from app.agent_studio.templates import create_draft_from_template
+    try:
+        draft = create_draft_from_template(template_key, name=payload.name, description=payload.description)
+    except ValueError as exc:
+        if str(exc).startswith('Unknown template'):
+            raise NotFoundError('Unknown workflow template.') from exc
+        raise InvalidInputError('The template produced an invalid workflow definition.') from exc
+    svc = service(request, db, user)
+    try:
+        workflow, version = await svc.save(scope_id, draft['name'], draft['description'],
+            Definition.model_validate(draft['spec']), origin='studio', origin_ref=template_key)
+    except IntegrityError:
+        await db.rollback()
+        raise ConflictError('A studio draft from this template already exists in this scope. '
+                            'Open it from the workflow list.') from None
+    await db.commit()
+    return {'workflow': row_dict(workflow), 'version': row_dict(version)}
 
 
 @router.post('/scopes/{scope_id}/workflows', status_code=201)

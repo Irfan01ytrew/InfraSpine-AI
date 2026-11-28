@@ -365,6 +365,57 @@ export interface ProviderList {
   mode: "database";
   providers: ProviderState[];
 }
+export interface DatabaseSummary {
+  database: string;
+  health: {
+    reachable: boolean;
+    overall: string;
+    database_bytes: number;
+    connections: { total: number; active: number; idle_in_transaction: number; max: number; band: string };
+    longest_query_seconds: number;
+    longest_query_band: string;
+    locks: { total: number; blocked: number; oldest_lock_wait_seconds: number; band: string };
+    dead_tuples: number;
+    live_tuples: number;
+    dead_tuple_ratio: number;
+    bloat_band: string;
+    replication: { replicas: number; lag_seconds: number | null; band: string };
+    pg_stat_statements_available: boolean;
+  };
+  newest_backup: {
+    database: string;
+    path: string;
+    bytes: number;
+    sha256: string;
+    catalog_entries: number;
+    tables: number | null;
+    rows_total: number | null;
+    status: string;
+    drill_verified: boolean;
+    created_at: string | null;
+  } | null;
+  latest_drill: {
+    target_database: string;
+    passed: boolean;
+    failures: unknown[];
+    tables_expected: number;
+    tables_restored: number;
+    rows_checked: number;
+    rows_matched: number;
+    sha256_match: boolean;
+    created_at: string | null;
+  } | null;
+  integrity: {
+    passed: boolean;
+    foreign_keys: number;
+    unvalidated: string[];
+    orphans: { constraint: string; orphans: number }[];
+    total_orphans: number;
+    checked_at: string;
+  };
+  migration_gate: { allowed: boolean; reasons: string[]; newest_verified_backup: string | null; rpo_hours: number };
+  restore_note: string;
+}
 
 export interface TestConnectionResult {
   ok: boolean;
@@ -556,6 +607,11 @@ export interface RagDocument {
   can_modify: boolean;
   created_at: string;
   updated_at: string;
+  // Step AB derived metadata (app/rag/auto_enrich.py): tags, an extractive
+  // summary and the earliest expiry date pulled from the document text.
+  tags?: string[];
+  summary?: string | null;
+  expiry_date?: string | null;
 }
 
 /** Whether queued documents will be processed: in "worker" mode a separate worker process must run. */
@@ -1213,6 +1269,59 @@ export interface AgentStudioAgent {
 
 export type AgentStudioAgentInput = Omit<AgentStudioAgent, "id" | "version" | "enabled" | "paused" | "created_at" | "updated_at">;
 
+/** Step AK: one per-agent control record (GET /api/agents/controls). Money is a 4dp decimal string, never a float. */
+export interface AgentControl {
+  agent_id: string;
+  agent_kind: string;
+  owner_id: string | null;
+  scope_id: string | null;
+  status: "active" | "paused" | "disabled" | "killed";
+  data_scopes: string[];
+  permissions: string[];
+  allowed_actions: string[];
+  spend_limit_usd: string | null;
+  spend_used_usd: string | null;
+  spend_state: "ok" | "near_limit" | "at_limit" | "over_limit";
+  alert_threshold: string | null;
+  max_steps: number;
+  delegate_to: string[];
+  max_delegation_depth: number;
+  killed_at: string | null;
+  killed_by: string | null;
+  kill_reason: string | null;
+  version: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AgentControlEvent {
+  id: number;
+  event: string;
+  actor_id: string | null;
+  reason: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export interface AgentSpendEntry {
+  id: string;
+  provider: string;
+  model: string;
+  tokens: number;
+  cost_usd: string;
+  idempotency_key: string;
+  recorded_at: string | null;
+}
+
+export interface AgentControlSpend {
+  agent_id: string;
+  spend_used_usd: string;
+  spend_limit_usd: string | null;
+  spend_state: "ok" | "near_limit" | "at_limit" | "over_limit";
+  recent: AgentSpendEntry[];
+}
+
 export interface AgentStudioThread {
   id: string;
   agent_id: string;
@@ -1287,6 +1396,8 @@ export interface AgentStudioMemory {
   value: string;
   updated_at: string;
 }
+
+export type WhatsAppPath = "cloud" | "baileys" | "auto";
 
 export interface AgentStudioWhatsAppConnection {
   id: string;
@@ -2521,4 +2632,74 @@ export interface OrgSettings {
   today: string;
   local_time: string;
   default_time_zone: string;
+}
+
+export interface FoundryScope {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+export interface FoundryAppSummary {
+  slug: string;
+  name: string;
+  builds: number;
+  latest_version: number | null;
+  latest_gate: string | null;
+  latest_deploy_state: string | null;
+  feedback_count: number;
+}
+
+export interface FoundryBuild {
+  id: string;
+  spec_version: number;
+  spec_fingerprint: string;
+  build_fingerprint: string;
+  gate: string;
+  preview_token: string;
+  preview_expires_in_seconds: number;
+  health: string;
+  tests_passed: number;
+  tests_failed: number;
+  deploy_state: string;
+  deploy_target: string | null;
+  approval_id: string | null;
+  created_at: string | null;
+}
+
+export interface FoundryFeedback {
+  id: string;
+  build_fingerprint: string;
+  kind: string;
+  note: string;
+  changes: string[];
+  author_id: string | null;
+  created_at: string | null;
+}
+
+export interface FoundryAppDetail {
+  slug: string;
+  name: string;
+  builds: FoundryBuild[];
+  feedback: FoundryFeedback[];
+}
+
+export interface FoundryDeployRequest {
+  approval_id: string;
+  action_hash: string;
+  action_type: string;
+  build_fingerprint: string;
+  target: string;
+}
+
+export interface FoundryRevisionPreview {
+  new_version: number;
+  new_fingerprint: string;
+  status: string;
+  live_build_fingerprint: string;
+}
+
+export interface FoundryFeedbackResult {
+  feedback: FoundryFeedback;
+  revision: FoundryRevisionPreview | null;
 }

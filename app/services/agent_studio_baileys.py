@@ -354,10 +354,47 @@ class BridgeSession:
         )
 
         async def dispatch():
-            ok = await self.send_reply(delivery_id, jid, reply, timeout=timeout)
-            if not ok:
-                raise RuntimeError("delivery_failed")
-            return str(delivery_id)
+            # Step F slice 3: this bridge send is the primary; when it
+            # cannot deliver, retry once on Cloud (if the owner has an
+            # enabled Cloud connection and the recipient is a phone JID).
+            # The adapter runs inside dispatch_once, so the same key covers
+            # both legs and the reply is never sent twice. A dispatch
+            # failure still returns False through dispatch_once (it records
+            # the failed execution instead of raising), so the ack path
+            # below keeps its log-and-continue behaviour.
+            from app.integrations.whatsapp_failover import (
+                BaileysTransport,
+                CloudTransport,
+                cloud_connection_for,
+                cloud_stand_in,
+                get_path_setting,
+                jid_to_phone,
+                send_with_failover,
+            )
+            from app.services import audit as audit_service
+            from app.services.audit import AuditContext
+
+            setting = await get_path_setting(db, user.id)
+            baileys = BaileysTransport(self, delivery_id=delivery_id, timeout=timeout)
+            cloud = None
+            phone = jid_to_phone(jid)
+            if phone is not None:
+                connection = await cloud_connection_for(db, user.id)
+                if connection is not None:
+                    cloud = CloudTransport(connection, cloud_stand_in(phone), self.cipher)
+
+            async def on_failover(from_path, to_path, reason, failover_key, *, outcome, fallback_code=None):
+                audit_service.record(db, AuditContext(user.id, None, None, None), "integration.whatsapp_failover",
+                                     outcome=outcome, target=failover_key,
+                                     details={"from_path": from_path, "to_path": to_path, "reason": reason,
+                                              "fallback_code": fallback_code})
+
+            ref, _used = await send_with_failover(
+                setting=setting, own_channel="baileys",
+                to={"cloud": phone or "", "baileys": jid},
+                text=reply, key=key, cloud=cloud, baileys=baileys, on_failover=on_failover,
+            )
+            return ref
 
         try:
             result = await dispatch_once(db, p, key, action, duty="channel.reply", dispatch=dispatch)
@@ -379,7 +416,12 @@ class BridgeSession:
 
 
 async def run_baileys_worker(app, settings, stop):
-    sessions = {}
+    # Step F slice 3: the live sessions live on app.state so the Cloud
+    # worker can fail over to a connected Baileys bridge for the same owner.
+    sessions = getattr(app.state, "baileys_sessions", None)
+    if sessions is None:
+        sessions = {}
+        app.state.baileys_sessions = sessions
     try:
         while not stop.is_set():
             try:

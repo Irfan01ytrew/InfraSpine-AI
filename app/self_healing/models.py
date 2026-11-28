@@ -1,0 +1,71 @@
+"""Step W — Self-Healing persistence: probe snapshots and incident records.
+
+Probes are append-only health snapshots (one row per component per collection).
+Incidents are one row per incident key carrying the auto-remedy attempt history
+(attempts + last attempt) so the detector's budget and cooldown survive restarts.
+Neither table holds business data, secrets, or money: only component health and
+remedy bookkeeping. Dropping them loses history, never business state.
+"""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, Float, Index, Integer, String, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+class SelfHealingProbe(Base):
+    __tablename__ = "self_healing_probes"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok', 'degraded', 'down', 'unknown')",
+            name="self_healing_probe_status_valid",
+        ),
+        Index("ix_self_healing_probes_component_recorded", "component", "recorded_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    component: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    age_seconds: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    error_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SelfHealingIncident(Base):
+    __tablename__ = "self_healing_incidents"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('low', 'medium', 'high', 'critical')",
+            name="self_healing_incident_severity_valid",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'remedied', 'escalated')",
+            name="self_healing_incident_status_valid",
+        ),
+        Index("ix_self_healing_incidents_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    component: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    evidence: Mapped[str] = mapped_column(String(2000), nullable=False, server_default=text("''"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

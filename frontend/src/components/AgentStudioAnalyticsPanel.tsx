@@ -23,7 +23,7 @@ function Metric({ label, value, note }: { label: string; value: string; note?: s
   return <div className="min-w-0 rounded-lg border border-border bg-surface-2/50 p-3">
     <p className="text-xs text-muted">{label}</p>
     <p className="mt-1 truncate text-xl font-semibold tabular-nums">{value}</p>
-    {note && <p className="mt-1 text-[11px] text-muted">{note}</p>}
+    {note && <p className="mt-1 text-xs text-muted">{note}</p>}
   </div>;
 }
 
@@ -103,7 +103,7 @@ export function AgentStudioAnalyticsPanel() {
                 </g>;
               })}
             </svg>
-            <div className="flex justify-between pt-1 text-[10px] text-muted"><span>{data.daily[0]?.date}</span><span>{data.daily.at(-1)?.date}</span></div>
+            <div className="flex justify-between pt-1 text-xs text-muted"><span>{data.daily[0]?.date}</span><span>{data.daily.at(-1)?.date}</span></div>
           </>}
         </CardBody>
       </Card>
@@ -119,7 +119,7 @@ export function AgentStudioAnalyticsPanel() {
                 <div className="h-full bg-danger" style={{ width: `${agent.total_runs ? (agent.failed / agent.total_runs) * 100 : 0}%` }} />
               </div>
             </div>
-            <p className="text-[11px] text-muted">{duration(agent.average_execution_ms)} average · {number(agent.prompt_tokens + agent.completion_tokens)} tokens</p>
+            <p className="text-xs text-muted">{duration(agent.average_execution_ms)} average · {number(agent.prompt_tokens + agent.completion_tokens)} tokens</p>
           </div>) : <p className="py-6 text-sm text-muted">Create an agent and run a task to start comparison.</p>}
         </CardBody>
       </Card>

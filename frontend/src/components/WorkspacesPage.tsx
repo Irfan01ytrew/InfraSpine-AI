@@ -170,7 +170,7 @@ export function WorkspacesPage() {
         <Icon className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted")} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-foreground">{group.name}</span>
-          <span className="block text-[11px] text-muted">{group.member_count} member{group.member_count === 1 ? "" : "s"}{group.lifecycle_status === "archived" ? " · archived" : ""}</span>
+          <span className="block text-xs text-muted">{group.member_count} member{group.member_count === 1 ? "" : "s"}{group.lifecycle_status === "archived" ? " · archived" : ""}</span>
         </span>
       </button>
     );
@@ -216,7 +216,7 @@ export function WorkspacesPage() {
                     {projects.filter((project) => project.parent_id === client.id).map((project) => workspaceButton(project, true))}
                   </div>
                 ))}
-                {standalone.length > 0 && <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-muted uppercase">Standalone projects</p>}
+                {standalone.length > 0 && <p className="px-3 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted uppercase">Standalone projects</p>}
                 {standalone.map((project) => <div role="listitem" key={project.id}>{workspaceButton(project)}</div>)}
               </div>
             )}
@@ -276,7 +276,7 @@ export function WorkspacesPage() {
                     <ul className="grid">
                       {members.map((member) => (
                         <li className="flex items-center justify-between gap-2 border-t border-border py-2.5 first:border-t-0" key={member.user_id}>
-                          <span className="flex min-w-0 items-center gap-2.5"><span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary-soft text-[11px] font-semibold text-primary uppercase">{member.email.slice(0, 2)}</span><span className="truncate text-[13px]">{member.email}</span></span>
+                          <span className="flex min-w-0 items-center gap-2.5"><span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary-soft text-xs font-semibold text-primary uppercase">{member.email.slice(0, 2)}</span><span className="truncate text-[13px]">{member.email}</span></span>
                           <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => void removeMember(member)}>Remove</Button>
                         </li>
                       ))}
@@ -293,7 +293,7 @@ export function WorkspacesPage() {
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0 rounded-lg bg-surface-2/60 px-3 py-2"><p className="text-[11px] font-medium text-muted">{label}</p><p className="truncate text-[13px] font-medium text-foreground">{value}</p></div>;
+  return <div className="min-w-0 rounded-lg bg-surface-2/60 px-3 py-2"><p className="text-xs font-medium text-muted">{label}</p><p className="truncate text-[13px] font-medium text-foreground">{value}</p></div>;
 }
 
 function SummaryStat({ label, value }: { label: string; value: number | string }) {

@@ -151,18 +151,33 @@ async def _run(args: argparse.Namespace) -> int:
             while completed_batch := await process_service_request_slas(sessionmaker):
                 sla_escalations += completed_batch
             approval_reminders = await process_approval_reminders(sessionmaker)
+            # Step AF slice 4: control-room alert dispatch (one pass). Guarded so
+            # an alert failure never blocks the rest of the worker run.
+            try:
+                from app.control_room.dispatch import process_control_room_alerts
+
+                control_room_alerts = await process_control_room_alerts(sessionmaker, settings)
+                log.info("Control room alerts: %s", control_room_alerts)
+            except Exception as exc:  # noqa: BLE001 - worker must not die on alerts
+                log.warning("Control room alert dispatch failed (%s)", type(exc).__name__)
             await cleanup_orphans(sessionmaker, settings=settings)
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
             if getattr(settings, "workflow_engine_on", False):
-                from app.core.crypto import CredentialCipher
+                from app.core.crypto import rotating_cipher_from_settings
+                from app.finance.approval_reminders import process_finance_approval_reminders
+                from app.services.finance_autopilot import process_finance_autopilot
                 from app.workflows.engine import tick
 
-                cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+                cipher = rotating_cipher_from_settings(settings)
                 ticks = 0
                 while ticks < 1000 and await tick(sessionmaker, cipher):
                     ticks += 1
                 log.info("Workflow engine: %s ticks", ticks)
+                autopilot_decisions = await process_finance_autopilot(sessionmaker, settings=settings, cipher=cipher)
+                log.info("Finance autopilot: %s sweep decisions", autopilot_decisions)
+                finance_reminders = await process_finance_approval_reminders(sessionmaker)
+                log.info("Finance approval reminders: %s approvals nudged", finance_reminders)
             log.info(
                 "Processed %s documents, %s training reminders, %s personal task reminders, %s workflow events, %s service request SLA escalations and %s folder sync runs",
                 processed,
@@ -189,6 +204,9 @@ async def _run(args: argparse.Namespace) -> int:
         from app.services.automation_worker import run_automation_worker
         from app.services.service_request_worker import run_service_request_sla_worker
         from app.services.approval_reminders import run_approval_reminders
+        from app.control_room.dispatch import run_alert_dispatch
+        from app.finance.approval_reminders import run_finance_approval_reminders
+        from app.services.finance_autopilot import run_finance_autopilot
         from app.services.request_attachments import run_attachment_cleanup
         from app.services.webhooks import run_webhook_worker
         from app.services.folder_sync import run_folder_sync_worker
@@ -198,11 +216,15 @@ async def _run(args: argparse.Namespace) -> int:
             # Unified workflow runtime (step E): automation rules, the invoice flow and governance actions.
             # On by default; WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch. Leased claims make it safe to
             # run here and in the API at the same time. Agent Studio steps wait for the API process (LLM runtime).
-            from app.core.crypto import CredentialCipher
+            from app.core.crypto import rotating_cipher_from_settings
             from app.workflows.engine import run_worker as run_workflow_engine
 
-            cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+            cipher = rotating_cipher_from_settings(settings)
             background.append(run_workflow_engine(sessionmaker, cipher, stop))
+            # Finance autopilot (step R slice 2): same kill switch; the org-settings policy gates the sweep itself.
+            background.append(run_finance_autopilot(sessionmaker, stop, settings=settings, cipher=cipher))
+            # Finance approval reminders (step R slice 3): same kill switch; nudges only, never decides.
+            background.append(run_finance_approval_reminders(sessionmaker, stop))
             log.info("Workflow engine worker started (WORKFLOW_ENGINE_WORKER_ENABLED=false turns it off)")
         else:
             log.warning("Workflow engine worker is OFF (WORKFLOW_ENGINE_WORKER_ENABLED=false)")
@@ -216,6 +238,7 @@ async def _run(args: argparse.Namespace) -> int:
             run_automation_worker(sessionmaker, stop),
             run_service_request_sla_worker(sessionmaker, stop),
             run_approval_reminders(sessionmaker, stop),
+            run_alert_dispatch(sessionmaker, settings, stop),
             run_attachment_cleanup(sessionmaker, stop),
             run_webhook_worker(sessionmaker, stop),
             run_folder_sync_worker(sessionmaker, settings, stop),

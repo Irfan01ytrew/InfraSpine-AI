@@ -25,6 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.db.models import Document, User
+from app.language import contains_roman_urdu_words, contains_urdu_script
+from app.language.preference import get_language_preference, prefer_roman_urdu
+from app.language.words import (
+    ROMAN_URDU_CONTENT_WORDS,
+    ROMAN_URDU_INVENTORY_WORDS,
+    ROMAN_URDU_MEDIA_WORDS,
+)
 from app.rag.answer import (
     NO_ANSWER_NOTE,
     GroundedAnswer,
@@ -92,6 +99,11 @@ from app.rag.tables import (
 from app.rag.tracing import decide, stage
 from app.rag.sufficiency import credential_values_in, is_company_specific, is_evaluative_question, redact_credentials
 from app.services.llm import LLMClient
+from app.services.live_data import (
+    LiveAnswer,
+    PublicWebLiveSearchProvider,
+    answer_live_question,
+)
 from app.services.public_web import (
     _query_terms,
     is_current_cricket_request,
@@ -293,6 +305,7 @@ def _indexed_media_answer(
     model: str | None,
     provider: str | None,
     media_kind: str,
+    language_preference: str | None = None,
 ):
     """Fallback to a cited description of the actual indexed transcript/frame evidence.
 
@@ -339,11 +352,11 @@ def _indexed_media_answer(
     frame_text = " ".join(frame_content).casefold()
     number_sequence = bool(re.search(r"\d(?:[\s,./-]*\d){2,}", transcript_text))
     keypad_visible = bool(re.search(r"\b(?:keypad|input\s+keys?|keys?|digits?)\b", frame_text))
-    roman_urdu = bool(re.search(r"[\u0600-\u06ff]", question) or re.search(
-        r"\b(?:kya|kia|kiya|btao|batao|rha|rhi|mein|mai|hain|hai|aap|tum|mujhe|mujh|iss|yeh)\b",
-        question,
-        re.IGNORECASE,
-    ))
+    roman_urdu = prefer_roman_urdu(
+        language_preference,
+        contains_urdu_script(question)
+        or contains_roman_urdu_words(question, ROMAN_URDU_MEDIA_WORDS),
+    )
     if roman_urdu:
         if transcript_citation and frame_citation:
             if number_sequence and keypad_visible:
@@ -385,6 +398,7 @@ def _format_web_answer(result: dict) -> str:
         str(result.get("answer") or "").strip(),
     )
     sources = result.get("sources") or []
+    checked_at = ""
     if sources:
         lines = []
         for index, source in enumerate(sources[:20], 1):
@@ -399,9 +413,38 @@ def _format_web_answer(result: dict) -> str:
                     f" · Retrieved: {retrieved_at}" if retrieved_at else ""
                 )
                 lines.append(f"- [W{index}] [{title or 'Web source'}](<{url}>){timestamp}")
+                if retrieved_at:
+                    checked_at = max(checked_at, retrieved_at)
         if lines:
             answer += "\n\n### Web sources\n" + "\n".join(lines)
+            answer += f"\n\nChecked live at {checked_at}."
     return answer
+
+
+def _live_answer_to_web_answer(live_answer: LiveAnswer) -> str:
+    """Render a live answer's findings in the chat's web-answer shape.
+
+    Live answers cite [S#] under "### Live sources"; the Knowledge chat renders
+    [W#] chips from the "### Web sources" block, so the citations are renamed
+    and the sources block is left to ``_format_web_answer``, which rebuilds it
+    from the source records (with the "Checked live at" line). Only the
+    findings part is returned here, so the sources block is never duplicated.
+    Follow-up actions (Step P slice 4) are offered as plain text; offering one
+    never creates it - the user must ask for it and approve it first.
+    """
+    findings = live_answer.text.split("### Live sources", 1)[0].rstrip()
+    converted = re.sub(
+        r"\[S\d+(?:\s*[,;]\s*S\d+)*\]",
+        lambda match: match.group().replace("S", "W"),
+        findings,
+    )
+    if live_answer.followup_actions:
+        offers = "\n".join(
+            f"- {action.label} (needs your approval first)"
+            for action in live_answer.followup_actions
+        )
+        converted += f"\n\nFollow-ups you can ask for:\n{offers}"
+    return converted
 
 
 @dataclass(frozen=True)
@@ -443,6 +486,11 @@ async def run_chat(
     route_web: bool = True,
 ) -> ChatResult:
     model = rag.embedder.model_name
+
+    # Per-user reply language (Step Z slice 3): an explicit preference wins
+    # over per-question detection at the Roman-Urdu decisions below; unset
+    # keeps detection. Never affects authorization or what the user may read.
+    language_preference = await get_language_preference(db, user.id)
 
     # Give the model trusted session facts and a bounded, permission-filtered metadata catalog. This list is never
     # treated as source evidence; content claims still require retrieval and citations.
@@ -555,7 +603,10 @@ async def run_chat(
         omitted = max(0, document_count - len(shown))
         if omitted:
             listing += f"\n- Plus {omitted} more document(s), omitted to keep this response bounded."
-        roman_urdu = bool(re.search(r"\b(?:kitna|kitni|kitne|ktna|ktni|ktne|kya|kia|kiya|meri|mere|mai|ab|tk|hain|hai)\b", question, re.I))
+        roman_urdu = prefer_roman_urdu(
+            language_preference,
+            contains_roman_urdu_words(question, ROMAN_URDU_INVENTORY_WORDS),
+        )
         gib = 1024 ** 3
         mib = 1024 ** 2
         data_size = (
@@ -947,14 +998,36 @@ async def run_chat(
                     native_error = exc
                     logger.info("Native live web grounding unavailable (%s); trying public search fallback", type(exc).__name__)
 
-                    try:
-                        # Public search extracts bounded, SSRF-safe passages before synthesis.
-                        web_result = await public_web_research(await get_llm(), settings, web_prompt, urls=urls)
-                    except (LLMUnavailableError, LLMTimeoutError, LLMRateLimitError, Exception) as fallback_exc:
+                    # Step P slice 2: the fallback answers through the live-data
+                    # provider seam (the same public search underneath), so the
+                    # answer is cited from retrieved sources only and a failed or
+                    # irrelevant lookup becomes an insufficient answer that never
+                    # guesses. Lookup failures are converted inside
+                    # ``answer_live_question`` instead of being raised.
+                    live_provider = PublicWebLiveSearchProvider(
+                        await get_llm(), settings, prompt=web_prompt, urls=urls
+                    )
+                    live_answer = await answer_live_question(live_provider, question)
+                    if live_answer.insufficient:
                         logger.info(
-                            "Public web fallback unavailable native_error=%s fallback_error=%s",
-                            type(native_error).__name__, type(fallback_exc).__name__,
+                            "Public web fallback returned no verifiable live sources native_error=%s",
+                            type(native_error).__name__,
                         )
+                    else:
+                        web_result = {
+                            "answer": _live_answer_to_web_answer(live_answer),
+                            "sources": [
+                                {
+                                    "title": source.title,
+                                    "url": source.url,
+                                    "published_at": source.published_at,
+                                    "retrieved_at": source.retrieved_at,
+                                }
+                                for source in live_answer.sources
+                            ],
+                            "model": live_provider.model,
+                            "provider": live_provider.provider,
+                        }
         if web_result is None:
             return ChatResult(
                 GroundedAnswer(
@@ -1290,7 +1363,10 @@ async def run_chat(
             answer = (
                 "Aap ki accessible library mein abhi kisi ready video ka searchable transcript ya frame text nahi mila. "
                 "Agar video abhi process ho rahi hai to Ready hone ke baad dobara poochhein."
-                if re.search(r"\b(?:kya|kia|kiya|batao|btao|mein|mai|hain|hai)\b", question, re.I)
+                if prefer_roman_urdu(
+                    language_preference,
+                    contains_roman_urdu_words(question, ROMAN_URDU_CONTENT_WORDS),
+                )
                 else "I couldn't find searchable transcript or extracted frame text for an accessible video yet. "
                 "If the video is still processing, ask again once it is ready."
             )
@@ -1414,7 +1490,10 @@ async def run_chat(
                 answer = (
                     "Aap ki permissions wali library mein abhi koi ready, searchable image nahi mili. Image upload ya "
                     "processing complete hone ke baad dobara poochhein."
-                    if re.search(r"\b(?:kya|kia|kiya|batao|btao|mein|mai|hain|hai)\b", question, re.I)
+                    if prefer_roman_urdu(
+                        language_preference,
+                        contains_roman_urdu_words(question, ROMAN_URDU_CONTENT_WORDS),
+                    )
                     else "I couldn't find a ready, searchable image in the documents you can access. Upload the image "
                     "or wait for its processing to finish, then ask again."
                 )
@@ -1538,7 +1617,9 @@ async def run_chat(
         on_token=None if media_question else on_token,
     )
     if media_question and passages and answer.insufficient_evidence:
-        media_answer = _indexed_media_answer(question, passages, answer.model, answer.provider, media_kind)
+        media_answer = _indexed_media_answer(
+            question, passages, answer.model, answer.provider, media_kind, language_preference
+        )
         if media_answer is not None:
             answer = media_answer
             if on_token is not None:

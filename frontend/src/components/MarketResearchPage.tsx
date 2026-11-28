@@ -109,7 +109,7 @@ export function MarketResearchPage({ isAdmin = false }: { isAdmin?: boolean }) {
             }} />
           </div>
           {report.sources.length > 0 && <div className="research-sources"><strong>Web sources</strong>{report.sources.map((source, index) => (
-            <div key={source.url} className="research-source"><span className="source-tag">S{index + 1}</span><span><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a><small>{source.url}</small></span></div>
+            <div key={source.url} className="research-source"><span className="source-tag">S{index + 1}</span><span><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a><small className="text-xs">{source.url}</small></span></div>
           ))}</div>}
         </article>
       </section>}

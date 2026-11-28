@@ -1,3 +1,5 @@
+import { localeForLanguage } from "./i18n.mjs";
+
 /** 384000 -> "384K", 32768 -> "32K", 1000000 -> "1M". */
 export function formatTokens(n: number): string {
   // Provider limits are published in decimal units (384K = 384,000); token budgets that
@@ -48,6 +50,29 @@ export function setRegionalSettings(next: { locale?: string | null; time_zone?: 
 
 export function regionalSettings(): RegionalSettings {
   return regional;
+}
+
+/** Money in the viewer's language (Step Z slice 5): Roman Urdu keeps Latin digits with the Urdu locale,
+    Urdu script uses Urdu digits; falls back to the organization locale when Intl rejects the locale. */
+export function formatMoneyForLanguage(amount: number, currency: string | null | undefined, language: string): string {
+  try {
+    const locale = localeForLanguage(language);
+    if (!currency) return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(amount);
+    return new Intl.NumberFormat(locale, { style: "currency", currency }).format(amount);
+  } catch {
+    return formatMoney(amount, currency);
+  }
+}
+
+/** Calendar date only, in the viewer's language (Step Z slice 5). */
+export function formatDayForLanguage(value: string | number | Date, language: string): string {
+  const date = toDate(value);
+  if (Number.isNaN(date.valueOf())) return "Date unavailable";
+  try {
+    return date.toLocaleDateString(localeForLanguage(language), { dateStyle: "medium", timeZone: regional.timeZone });
+  } catch {
+    return formatDay(value);
+  }
 }
 
 function toDate(value: string | number | Date): Date {

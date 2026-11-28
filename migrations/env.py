@@ -19,9 +19,17 @@ from app.recovery import models as recovery_models  # noqa: F401
 from app.continuity import models as continuity_models  # noqa: F401
 from app.integrations import models as integrations_models  # noqa: F401
 from app.db import workflow_engine_models as workflow_models  # noqa: F401
+from app.db import workforce_skill_models  # noqa: F401
+from app.db import voice_models  # noqa: F401
 from app.db import finance_models  # noqa: F401
+from app.db import control_room_models  # noqa: F401
+from app.foundry import models as foundry_models  # noqa: F401
+from app.db import ao_backup_models  # noqa: F401
 from app.qa import models as quality_models  # noqa: F401
 from app.platform import models as platform_models  # noqa: F401
+from app.self_healing import models as self_healing_models  # noqa: F401
+from app.whatif import models as whatif_models  # noqa: F401
+from app.predictive_continuity import models as predictive_continuity_models  # noqa: F401
 from app.db.session import test_engine_options
 
 config = context.config

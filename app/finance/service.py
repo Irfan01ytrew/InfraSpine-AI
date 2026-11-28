@@ -289,6 +289,59 @@ class FinanceService:
               details={'from': previous, 'to': mode})
         return await connector_status(self.db, self.settings)
 
+    async def autopilot_status(self) -> dict:
+        """Admin status (slice 2): the org-settings policy plus the last sweep from the audit log."""
+        from app.finance.autopilot import load_policy
+        from app.platform.side_effects import org_scope_id
+        from app.services.finance_autopilot import last_sweep
+
+        await require(self.db, self.p, 'platform.manage', await org_scope_id(self.db))
+        policy = await load_policy(self.db)
+        last = await last_sweep(self.db)
+        return {'policy': {'enabled': policy.enabled, 'dry_run': policy.dry_run,
+                           'max_payment_amount': money(policy.max_payment_amount),
+                           'daily_cap': money(policy.daily_cap)},
+                'last_sweep': None if last is None else {
+                    'at': last.created_at.isoformat(), 'actor_email': last.actor_email,
+                    'decisions': (last.details or {}).get('decisions', [])}}
+
+    async def set_autopilot_policy(self, *, enabled: bool, dry_run: bool,
+                                   max_payment_amount: Decimal | None,
+                                   daily_cap: Decimal | None) -> dict:
+        """Administrator choice of autopilot policy (slice 2). Limits are hard caps, never warnings;
+        a negative limit is rejected. Enabling the policy only arms the sweep: it still runs as a
+        clerk (never as an approver) and only on the worker schedule. The settings row is
+        created on first write, like ``set_org_time_zone`` (migration 0098 seeds it, but the
+        row may not exist on installations that predate it)."""
+        from app.platform.models import OrgSettings
+        from app.platform.side_effects import org_scope_id
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        await require(self.db, self.p, 'platform.manage', await org_scope_id(self.db))
+        for name, value in (('max_payment_amount', max_payment_amount), ('daily_cap', daily_cap)):
+            if value is not None and value < 0:
+                raise InvalidInputError(f'{name} must be zero or more.')
+        row = await self.db.get(OrgSettings, 1, populate_existing=True)
+        previous = {'enabled': False, 'dry_run': False, 'max_payment_amount': None, 'daily_cap': None}
+        if row is not None:
+            previous = {'enabled': bool(row.finance_autopilot_enabled),
+                        'dry_run': bool(row.finance_autopilot_dry_run),
+                        'max_payment_amount': money(row.finance_autopilot_max_payment_amount),
+                        'daily_cap': money(row.finance_autopilot_daily_cap)}
+        new_values = {'finance_autopilot_enabled': bool(enabled), 'finance_autopilot_dry_run': bool(dry_run),
+                      'finance_autopilot_max_payment_amount': max_payment_amount,
+                      'finance_autopilot_daily_cap': daily_cap, 'updated_at': func.now()}
+        await self.db.execute(
+            pg_insert(OrgSettings).values(id=1, **new_values)
+            .on_conflict_do_update(index_elements=[OrgSettings.id], set_=new_values))
+        await self.db.flush()
+        audit(self.db, self.p, 'finance.autopilot_policy_changed', target='org_settings',
+              details={'from': previous,
+                       'to': {'enabled': bool(enabled), 'dry_run': bool(dry_run),
+                              'max_payment_amount': money(max_payment_amount),
+                              'daily_cap': money(daily_cap)}})
+        return await self.autopilot_status()
+
     async def start(self, batch_id) -> tuple[FinInvoiceBatch, WorkflowRun]:
         """Start (or re-start after corrections) the unified workflow for this batch."""
         from app.workflows.service import WorkflowService
@@ -466,6 +519,20 @@ class FinanceService:
                 'departments': sorted({r[1] for r in rows}), 'currencies': sorted({r[2] for r in rows if r[2]}),
                 'rows': [{'month': r[0], 'department': r[1], 'currency': r[2], 'amount': money(r[3]), 'count': r[4]}
                          for r in rows]}
+
+    async def status_counts(self) -> dict:
+        """Invoice counts by status across the groups the caller may read.
+
+        Step AF (control room): the live "invoices by status" chart. Uses the
+        same `finance.read` filter as `spend()` — a caller with no readable
+        group sees an empty result, never another group's invoices.
+        """
+        groups = await self.readable_groups()
+        if not groups:
+            return {'total': 0, 'by_status': {}}
+        rows = dict((await self.db.execute(select(FinInvoice.status, func.count()).where(
+            FinInvoice.group_id.in_(groups)).group_by(FinInvoice.status))).all())
+        return {'total': sum(rows.values()), 'by_status': rows}
 
     # ------------------------------------------------------------------ finance roles (platform memberships)
 

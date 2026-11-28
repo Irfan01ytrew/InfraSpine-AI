@@ -101,7 +101,7 @@ export function ExpertisePage() {
             />
           </label>
           <div className="expertise-form-footer">
-            <small className="muted">Only people sharing a department with you can find your tags. Avoid sensitive personal information.</small>
+            <small className="muted text-xs">Only people sharing a department with you can find your tags. Avoid sensitive personal information.</small>
             <button className="btn btn-primary" disabled={profileLoading || saving}>
               {saving ? "Saving…" : "Save my skills"}
             </button>
@@ -140,7 +140,7 @@ export function ExpertisePage() {
                   <strong>{match.email}</strong>
                   <div className="chips">{match.tags.map((tag) => <span className="chip" key={tag}>{tag}</span>)}</div>
                 </div>
-                <small className="muted">Shared in {match.shared_departments.join(", ") || "your organization"}</small>
+                <small className="muted text-xs">Shared in {match.shared_departments.join(", ") || "your organization"}</small>
               </article>
             ))}
             {nextCursor && <button type="button" className="btn" disabled={searching} onClick={() => void loadMore()}>Load more</button>}

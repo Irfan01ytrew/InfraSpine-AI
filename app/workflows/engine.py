@@ -489,10 +489,25 @@ async def tick(sessionmaker, cipher, *, now=None):
     except Exception as exc:
         log.warning('Agent Studio mirroring skipped (%s)', type(exc).__name__)
     try:
+        from app.continuity.unified import mirror_pending_continuity_runs
+        await mirror_pending_continuity_runs(sessionmaker, cipher)
+    except Exception as exc:
+        log.warning('Continuity mirroring skipped (%s)', type(exc).__name__)
+    try:
+        from app.founder_voice.unified import mirror_pending_voice_commands
+        await mirror_pending_voice_commands(sessionmaker, cipher)
+    except Exception as exc:
+        log.warning('Founder voice mirroring skipped (%s)', type(exc).__name__)
+    try:
         from app.services.agent_action_runtime import mirror_pending_proposals
         await mirror_pending_proposals(sessionmaker, cipher)
     except Exception as exc:
         log.warning('Agent action mirroring skipped (%s)', type(exc).__name__)
+    try:
+        from app.voice.unified import mirror_pending_voice_proposals
+        await mirror_pending_voice_proposals(sessionmaker, cipher)
+    except Exception as exc:
+        log.warning('Voice proposal mirroring skipped (%s)', type(exc).__name__)
     claim = await claim_next(sessionmaker, cipher, now=now)
     if claim:
         try:

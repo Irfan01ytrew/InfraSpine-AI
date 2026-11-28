@@ -58,7 +58,15 @@ from app.schemas.agent_studio_whatsapp import (
     WhatsAppConnectionOut,
     WhatsAppConnectionResponse,
     WhatsAppConnectionSave,
+    WhatsAppPathResponse,
+    WhatsAppPathSave,
     WhatsAppVerifyResponse,
+)
+from app.integrations.whatsapp_failover import (
+    get_path_setting,
+    live_baileys_session,
+    resolve_primary,
+    set_path_setting,
 )
 from app.services import audit
 from app.services.chat_exports import MEDIA_TYPES, resolve_chat_export
@@ -88,7 +96,47 @@ async def agent_studio_whatsapp_connection(
         str(request.base_url),
         settings.whatsapp_webhook_base_url,
     )
-    return WhatsAppConnectionResponse(connection=WhatsAppConnectionOut.model_validate(result) if result else None)
+    # Step F slice 3: the runtime path setting + which transport a reply
+    # would actually use right now.
+    path_setting = await get_path_setting(db, user.id)
+    cloud_available = connection is not None and connection.enabled
+    sessions = getattr(request.app.state, "baileys_sessions", None) or {}
+    baileys_session = await live_baileys_session(db, sessions, user.id)
+    active_path = resolve_primary(
+        path_setting, own_channel="cloud",
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
+    return WhatsAppConnectionResponse(
+        connection=WhatsAppConnectionOut.model_validate(result) if result else None,
+        path_setting=path_setting, active_path=active_path,
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
+
+
+@router.put("/whatsapp/path", response_model=WhatsAppPathResponse)
+async def set_agent_studio_whatsapp_path(
+    payload: WhatsAppPathSave, request: Request, db: DbSession, user: CurrentUser
+) -> WhatsAppPathResponse:
+    """Step F slice 3: store the owner's WhatsApp transport path setting.
+
+    ``cloud`` / ``baileys`` pick the primary transport; ``auto`` prefers the
+    channel a message arrived on. The setting only picks the primary — a
+    failed primary is still retried once on the other path.
+    """
+    path_setting = await set_path_setting(db, user.id, payload.path)
+    await db.commit()
+    connection = await get_whatsapp_connection(db, user)
+    cloud_available = connection is not None and connection.enabled
+    sessions = getattr(request.app.state, "baileys_sessions", None) or {}
+    baileys_session = await live_baileys_session(db, sessions, user.id)
+    active_path = resolve_primary(
+        path_setting, own_channel="cloud",
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
+    return WhatsAppPathResponse(
+        path_setting=path_setting, active_path=active_path,
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
 
 
 @router.put("/whatsapp", response_model=WhatsAppConnectionResponse)

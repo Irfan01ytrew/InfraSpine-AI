@@ -25,6 +25,14 @@ export interface PaymentApproval {
 }
 export interface SpendRow { month: string; department: string; currency: string; amount: string; count: number }
 export type ConnectorMode = "mock" | "http" | "http+mock";
+export interface AutopilotPolicy {
+  enabled: boolean; dry_run: boolean; max_payment_amount: string | null; daily_cap: string | null;
+}
+export interface AutopilotSweepDecision { batch_id: string; action: string; reason: string }
+export interface AutopilotStatus {
+  policy: AutopilotPolicy;
+  last_sweep: { at: string; actor_email: string | null; decisions: AutopilotSweepDecision[] } | null;
+}
 export interface ConnectorStatus {
   source: string; admin_mode: string | null; environment_mode: string; modes: string[];
   http_configured: boolean; http_host: string | null; http_token_set: boolean;
@@ -71,6 +79,8 @@ export const financeApi = {
   spend: (months = 12, group?: string) => call<Spend>("GET", `/spend?months=${months}${group ? `&group_id=${group}` : ""}`),
   connector: () => call<ConnectorStatus>("GET", "/connector"),
   setConnector: (mode: ConnectorMode | null) => call<ConnectorStatus>("PUT", "/connector", { mode }),
+  autopilotStatus: () => call<AutopilotStatus>("GET", "/autopilot/status"),
+  setAutopilotPolicy: (policy: AutopilotPolicy) => call<AutopilotStatus>("PUT", "/autopilot/policy", policy),
   perform: (group: string, run: string, step: string) =>
     request<unknown>("POST", `/api/workflow-engine/scopes/${group}/runs/${run}/steps/${step}/perform`),
 };

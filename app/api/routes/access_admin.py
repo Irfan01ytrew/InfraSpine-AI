@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 
-from app.api.deps import AdminUser, DbSession, audit_context, require_admin
+from app.api.deps import DbSession, PlatformAdminUser, audit_context, require_platform_admin
 from app.db.models import PermissionGrant
 from app.schemas.access import (
     AddMemberRequest,
@@ -28,10 +28,10 @@ from app.schemas.access import (
 from app.core.permission_catalog import PERMISSION_CATALOG
 from app.services.access_control import AccessAdminService
 
-router = APIRouter(prefix="/api/admin/access", tags=["access"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/api/admin/access", tags=["access"], dependencies=[Depends(require_platform_admin)])
 
 
-def get_access_admin(request: Request, db: DbSession, admin: AdminUser) -> AccessAdminService:
+def get_access_admin(request: Request, db: DbSession, admin: PlatformAdminUser) -> AccessAdminService:
     return AccessAdminService(db, admin, audit_context(request, admin))
 
 

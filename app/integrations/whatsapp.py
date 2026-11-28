@@ -169,8 +169,15 @@ async def send_text(connection, inbound, cipher, text):
     return provider_id
 
 
-async def send_text_once(db, user, connection, inbound, cipher, text, *, key):
-    """Send a WhatsApp Cloud API text exactly once (retries replay the stored provider id)."""
+async def send_text_once(db, user, connection, inbound, cipher, text, *, key, baileys_sessions=None):
+    """Send a WhatsApp Cloud API text exactly once (retries replay the stored provider id).
+
+    Step F slice 3: the send goes through the failover adapter — Cloud first
+    (or the owner's path setting), Baileys once when Cloud fails with an
+    error that confirmed nothing. The adapter runs inside ``dispatch_once``,
+    so the same idempotency key covers both legs and the reply is never
+    sent twice.
+    """
     from app.platform.access import principal_for
     from app.platform.approvals import ActionSpec
     from app.platform.side_effects import dispatch_once, org_scope_id
@@ -181,7 +188,32 @@ async def send_text_once(db, user, connection, inbound, cipher, text, *, key):
                         subject=f"whatsapp:{inbound.id}")
 
     async def dispatch():
-        return await send_text(connection, inbound, cipher, text)
+        from app.integrations.whatsapp_failover import (
+            BaileysTransport,
+            CloudTransport,
+            get_path_setting,
+            live_baileys_session,
+            phone_to_jid,
+            send_with_failover,
+        )
+
+        setting = await get_path_setting(db, inbound.owner_id)
+        cloud = CloudTransport(connection, inbound, cipher)
+        session = await live_baileys_session(db, baileys_sessions, inbound.owner_id)
+        baileys = BaileysTransport(session) if session is not None else None
+
+        async def on_failover(from_path, to_path, reason, failover_key, *, outcome, fallback_code=None):
+            audit.record(db, AuditContext(inbound.owner_id, None, None, None), "integration.whatsapp_failover",
+                         outcome=outcome, target=failover_key,
+                         details={"from_path": from_path, "to_path": to_path, "reason": reason,
+                                  "fallback_code": fallback_code})
+
+        ref, _used = await send_with_failover(
+            setting=setting, own_channel="cloud",
+            to={"cloud": inbound.from_wa_id, "baileys": phone_to_jid(inbound.from_wa_id)},
+            text=text, key=key, cloud=cloud, baileys=baileys, on_failover=on_failover,
+        )
+        return ref
 
     try:
         result = await dispatch_once(db, p, key, action, duty="channel.reply", dispatch=dispatch)
@@ -192,7 +224,7 @@ async def send_text_once(db, user, connection, inbound, cipher, text, *, key):
     return result.external_ref
 
 
-async def process(sessionmaker, identity, settings, cipher, runtime, rag):
+async def process(sessionmaker, identity, settings, cipher, runtime, rag, baileys_sessions=None):
     error = None
     try:
         async with sessionmaker() as db:
@@ -217,6 +249,7 @@ async def process(sessionmaker, identity, settings, cipher, runtime, rag):
                         cipher,
                         "Request received. The agent is working on it; I will send the result here.",
                         key=f"whatsapp:{inbound.id}:progress",
+                        baileys_sessions=baileys_sessions,
                     )
                     inbound, dispatch = await locked(db, identity)
                     if inbound is None: return
@@ -278,7 +311,8 @@ async def process(sessionmaker, identity, settings, cipher, runtime, rag):
             if inbound is None: return
             connection, _, _ = await bound_identity(db, inbound)
             provider_id = await send_text_once(db, user, connection, inbound, cipher, reply,
-                                                key=f"whatsapp:{inbound.id}:final")
+                                                key=f"whatsapp:{inbound.id}:final",
+                                                baileys_sessions=baileys_sessions)
             dispatch.provider_message_id = provider_id; dispatch.phase = "accepted"; dispatch.delivery_status = "accepted"
             dispatch.claim_token = None; inbound.status = "completed"; inbound.claimed_at = None; inbound.last_error = None
             audit.record(db, AuditContext(inbound.owner_id, None, None, None), "integration.whatsapp_accepted", target=str(inbound.id))
@@ -309,12 +343,12 @@ async def process(sessionmaker, identity, settings, cipher, runtime, rag):
             await db.commit()
 
 
-async def run_whatsapp_agent_worker(sessionmaker, settings, cipher, runtime, rag, stop):
+async def run_whatsapp_agent_worker(sessionmaker, settings, cipher, runtime, rag, stop, baileys_sessions=None):
     while not stop.is_set():
         try:
             identity = await claim(sessionmaker)
             if identity:
-                await process(sessionmaker, identity, settings, cipher, runtime, rag)
+                await process(sessionmaker, identity, settings, cipher, runtime, rag, baileys_sessions)
                 continue
         except asyncio.CancelledError: raise
         except Exception: pass  # no raw payloads or credential-bearing exceptions in logs

@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { cn } from "../lib/utils";
-import type { User } from "../types";
+import type { AgentStudioAnalytics, User } from "../types";
 import { Badge, Button, Card, Skeleton } from "./ui";
 import { HomeDashboard, type DashboardData } from "./HomeDashboard";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -28,9 +28,9 @@ type Step = {
 };
 
 async function loadSetup(): Promise<SetupState> {
-  const [providers, groups, users, invites, docs, agents, usage, requests, queue, audit] = await Promise.allSettled([
+  const [providers, groups, users, invites, docs, agents, usage, requests, queue, audit, analytics] = await Promise.allSettled([
     api.providers(), api.adminGroups(), api.adminUsers(), api.invitations(), api.documents(), api.agentProfiles(),
-    api.usageReport(14), api.serviceRequests(), api.governanceQueue(), api.auditLogs(8),
+    api.usageReport(14), api.serviceRequests(), api.governanceQueue(), api.auditLogs(8), api.agentStudioAnalytics(30),
   ]);
   const value = <T,>(r: PromiseSettledResult<T>): T | null => (r.status === "fulfilled" ? r.value : null);
   const active = value(providers)?.providers.find((p) => p.is_active);
@@ -48,6 +48,7 @@ async function loadSetup(): Promise<SetupState> {
     openRequests: value(requests)?.items.filter((r) => !["resolved", "rejected", "cancelled"].includes(r.status)).length ?? null,
     reviewQueue: value(queue)?.items.length ?? null,
     activity: value(audit)?.entries ?? null,
+    moduleAnalytics: value(analytics) as AgentStudioAnalytics | null,
   };
 }
 
@@ -111,7 +112,7 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
     <div className="grid gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="mb-1 text-[11px] font-semibold tracking-wider text-primary uppercase">{brandName}</p>
+          <p className="mb-1 text-xs font-semibold tracking-wider text-primary uppercase">{brandName}</p>
           <h1 className="text-[24px] font-semibold tracking-tight text-foreground">{greeting()}</h1>
           <p className="mt-1 text-[13px] text-muted">Signed in as {user.email}. {setupDone ? `Here is how ${brandName} is doing.` : "Start here: each step opens the page where it is done."}</p>
         </div>
@@ -193,7 +194,7 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
       </section>
 
       <p className="flex items-center gap-2 text-xs text-muted">
-        <BookOpen className="size-3.5" /> Tip: press <kbd className="rounded border border-border bg-surface-2 px-1.5 font-sans text-[10px]">Ctrl K</kbd> anywhere to jump to any page by name.
+        <BookOpen className="size-3.5" /> Tip: press <kbd className="rounded border border-border bg-surface-2 px-1.5 font-sans text-xs">Ctrl K</kbd> anywhere to jump to any page by name.
       </p>
     </div>
   );

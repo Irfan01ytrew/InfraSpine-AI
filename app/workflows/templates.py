@@ -52,6 +52,19 @@ def template_catalog():
         node('end', 'end', 'Purchase recorded', 860, 160),
     ], [edge('start', 'approval'), edge('approval', 'fulfill'), edge('fulfill', 'end')],
         [('buyer_id', 'Procurement owner user ID')], [{'name': 'amount', 'label': 'Amount (USD; change currency in approval policy)', 'type': 'number', 'required': True}])
+    add('invoice-approval', 'Invoice approve karwao', 'Verify an invoice, get payment approval, and record the authorization — one click to a draft.', [
+        node('start', 'start', 'Invoice received', 80, 160),
+        human('verify', 'Verify invoice evidence', 'finance_owner', 340, 160),
+        node('approval', 'approval', 'Approve payment', 600, 160, risk='high',
+             config={'financial_category': 'expense', 'amount_variable': 'input.amount', 'currency': 'USD'}),
+        human('record', 'Record payment authorization', 'finance_owner', 860, 160),
+        node('end', 'end', 'Payment authorized', 1120, 160),
+    ], [edge(a, b) for a, b in zip(['start', 'verify', 'approval', 'record'],
+                                  ['verify', 'approval', 'record', 'end'])],
+        [('finance_owner', 'Finance owner user ID')],
+        [{'name': 'amount', 'label': 'Amount (USD)', 'type': 'number', 'required': True},
+         {'name': 'invoice_number', 'label': 'Invoice number', 'type': 'text', 'required': True},
+         {'name': 'vendor', 'label': 'Vendor', 'type': 'text', 'required': True}])
     for key, name, action in [
         ('offboarding', 'Employee offboarding', 'Verify access, assets and retained records'),
         ('it-incident', 'IT incident resolution', 'Diagnose, remediate and verify incident'),

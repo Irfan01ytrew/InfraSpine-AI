@@ -38,6 +38,7 @@ import { AlertTriangle, ArrowUp, ArrowUpRight, ChevronDown, Download, ExternalLi
 import { cn } from "../lib/utils";
 import { Alert, Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, EmptyState, Field, Input, Select, Skeleton, Tooltip } from "./ui";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { allTags, expiryBadgeText, expiryStatus, matchesLibraryQuery, matchesTag } from "../knowledge/documentMeta.mjs";
 
 const STATUS_LABEL: Record<RagDocument["status"], string> = {
   pending: "Queued",
@@ -359,9 +360,11 @@ export function KnowledgePage({ user }: { user: User }) {
   // ---- library search and filter (client-side over the loaded list)
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const needle = query.trim().toLowerCase();
+  // Step AB slice 5: filter by enrichment tag (derived metadata, app/rag/auto_enrich.py).
+  const [tagFilter, setTagFilter] = useState<string>("all");
   const statusMatch = STATUS_FILTERS.find((f) => f.value === statusFilter)!.matches;
-  const shownDocs = docs?.filter((d) => statusMatch(d) && (!needle || d.filename.toLowerCase().includes(needle))) ?? [];
+  const tags = allTags(docs);
+  const shownDocs = docs?.filter((d) => statusMatch(d) && matchesTag(d, tagFilter) && matchesLibraryQuery(d, query)) ?? [];
 
   // ---- "Ask about this document": the next questions in the open chat search this document only
   const [focusDoc, setFocusDoc] = useState<FocusDocument | null>(null);
@@ -551,7 +554,7 @@ export function KnowledgePage({ user }: { user: User }) {
                   <span className="block text-xs font-medium text-foreground">
                     {uploading ? "Uploading…" : isAdmin ? uploadVisibility === "shared" ? "Upload shared documents" : "Upload a restricted document" : "Upload department documents"}
                   </span>
-                  <span className="block text-[11px] leading-snug text-muted">PDF, Office, text, images, audio, video · up to {maxMb} MB each</span>
+                  <span className="block text-xs leading-snug text-muted">PDF, Office, text, images, audio, video · up to {maxMb} MB each</span>
                 </span>
               </button>
               <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => void onUpload(e.target.files)} />
@@ -610,6 +613,16 @@ export function KnowledgePage({ user }: { user: User }) {
                   onValueChange={(v) => setStatusFilter(v as StatusFilter)}
                   options={STATUS_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
                 />
+                {tags.length > 0 && (
+                  <Select
+                    size="sm"
+                    className="w-[150px] shrink-0"
+                    aria-label="Filter by tag"
+                    value={tagFilter}
+                    onValueChange={(v) => setTagFilter(v)}
+                    options={[{ value: "all", label: "All tags" }, ...tags.map((t) => ({ value: t, label: t }))]}
+                  />
+                )}
               </div>
             )}
 
@@ -625,7 +638,7 @@ export function KnowledgePage({ user }: { user: User }) {
               <EmptyState
                 icon={<Search />}
                 title="No documents match"
-                action={<Button size="sm" variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); }}>Clear filters</Button>}
+                action={<Button size="sm" variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setTagFilter("all"); }}>Clear filters</Button>}
               />
             ) : (
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
@@ -643,7 +656,7 @@ export function KnowledgePage({ user }: { user: User }) {
                             {STATUS_LABEL[doc.status]}
                           </Badge>
                         </div>
-                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted">
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
                           {doc.visibility !== "shared" && (
                             <span className="inline-flex items-center gap-1 text-warning-text" title={`${VISIBILITY[doc.visibility].title}, so other users' chats don't use it`}>
                               <Lock className="size-3" />{VISIBILITY[doc.visibility].label} ·
@@ -656,11 +669,29 @@ export function KnowledgePage({ user }: { user: User }) {
                             timeAgo(doc.updated_at),
                           ].filter(Boolean).join(" · ")}
                         </p>
+                        {doc.summary && (
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-muted">{doc.summary}</p>
+                        )}
+                        {((doc.tags?.length ?? 0) > 0 || doc.expiry_date) && (
+                          <p className="mt-1.5 flex flex-wrap items-center gap-1">
+                            {doc.tags?.map((tag) => (
+                              <Badge key={tag} title={`Show only documents tagged ${tag}`} className="cursor-pointer" onClick={() => setTagFilter(tag)}>{tag}</Badge>
+                            ))}
+                            {doc.expiry_date && (
+                              <Badge
+                                tone={expiryStatus(doc.expiry_date) === "expired" ? "danger" : expiryStatus(doc.expiry_date) === "due_soon" ? "warning" : "neutral"}
+                                title={`Expiry date ${doc.expiry_date}`}
+                              >
+                                {expiryBadgeText(doc.expiry_date)}
+                              </Badge>
+                            )}
+                          </p>
+                        )}
                       </div>
                     </div>
 
                     {doc.error_message && doc.status !== "ready" && (
-                      <p className={cn("mt-2 rounded-md px-2.5 py-1.5 text-[11px] leading-relaxed", doc.status === "failed" ? "bg-danger-soft text-danger-text" : "bg-surface-2 text-foreground-2")}>{doc.error_message}</p>
+                      <p className={cn("mt-2 rounded-md px-2.5 py-1.5 text-xs leading-relaxed", doc.status === "failed" ? "bg-danger-soft text-danger-text" : "bg-surface-2 text-foreground-2")}>{doc.error_message}</p>
                     )}
 
                     {(doc.searchable || doc.can_modify || doc.source_system === "file_server") && (
@@ -830,6 +861,18 @@ export function KnowledgePage({ user }: { user: User }) {
   );
 }
 
+const VOICE_LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  roman_urdu: "Roman Urdu",
+  urdu: "Urdu",
+  mixed: "Mixed",
+  unknown: "Unknown language",
+};
+
+function voiceLanguageLabel(language: string): string {
+  return VOICE_LANGUAGE_LABELS[language] ?? language;
+}
+
 interface DisplayTurn {
   key: string;
   question: string;
@@ -840,6 +883,8 @@ interface DisplayTurn {
   messageId?: number; // the saved assistant message, for feedback
   feedback?: -1 | 1 | null;
   ephemeral?: boolean;
+  /** Language the voice question was spoken in (Step Z slice 6); typed turns leave this unset. */
+  detectedLanguage?: string;
 }
 
 function toTurns(messages: ConversationMessage[]): DisplayTurn[] {
@@ -1053,6 +1098,7 @@ function KnowledgeChat({
           question: result.transcript,
           answer: result.answer,
           ephemeral: true,
+          detectedLanguage: result.detected_language,
         },
       ]);
     } catch (err) {
@@ -1209,7 +1255,7 @@ function KnowledgeChat({
           <div className="mx-auto grid w-full max-w-3xl gap-6 px-5 py-6">
             {turns.map((turn) => (
               <div key={turn.key} className="grid gap-3">
-                {turn.ephemeral && <p className="justify-self-end text-[11px] text-muted" role="note">Temporary voice question · not saved to chat</p>}
+                {turn.ephemeral && <p className="justify-self-end text-xs text-muted" role="note">Temporary voice question · not saved to chat{turn.detectedLanguage ? ` · heard in ${voiceLanguageLabel(turn.detectedLanguage)}` : ""}</p>}
                 <div className="max-w-[85%] justify-self-end rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-xs rtl:rounded-br-2xl rtl:rounded-bl-md">{turn.question}</div>
                 {turn.answer ? (
                   <AnswerBubble
@@ -1314,7 +1360,7 @@ function KnowledgeChat({
               </Button>
             </div>
           </div>
-          <p className="mt-2 text-center text-[11px] text-muted">
+          <p className="mt-2 text-center text-xs text-muted">
             <kbd className="font-sans">Enter</kbd> to send · <kbd className="font-sans">Shift + Enter</kbd> for a new line · Relevant company facts include citations
           </p>
         </div>
@@ -1373,7 +1419,7 @@ function AnswerBubble({
               <button
                 key={key}
                 className={cn(
-                  "mx-0.5 inline-grid h-[18px] min-w-[18px] cursor-pointer place-items-center rounded-md px-1 align-[1px] text-[10.5px] font-semibold transition-colors",
+                  "mx-0.5 inline-grid h-[18px] min-w-[18px] cursor-pointer place-items-center rounded-md px-1 align-[1px] text-xs font-semibold transition-colors",
                   !source.available ? "cursor-not-allowed bg-surface-2 text-muted line-through" : open === tag ? "bg-primary text-primary-foreground" : "bg-primary-soft text-primary hover:bg-primary hover:text-primary-foreground",
                 )}
                 title={source.available ? `${source.filename}, ${citationPlace(source)}` : "No longer available to you"}
@@ -1393,14 +1439,14 @@ function AnswerBubble({
             {answer.page_images.map((img) => (
               <a key={img.page_number} className="group overflow-hidden rounded-lg border border-border bg-surface-2" href={img.url} target="_blank" rel="noopener" title="Open full size">
                 <img className="aspect-[3/4] w-full object-cover object-top transition-transform group-hover:scale-[1.02]" src={`${img.url}?width=480`} alt={`${img.filename}, page ${img.page_number}`} loading="lazy" />
-                <span className="block border-t border-border px-2 py-1 text-[11px] text-muted">Page {img.page_number}</span>
+                <span className="block border-t border-border px-2 py-1 text-xs text-muted">Page {img.page_number}</span>
               </a>
             ))}
           </div>
         )}
         {answer.citations.length > 0 && (
           <div className="mt-3 border-t border-border pt-3">
-            <p className="mb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-muted uppercase">Sources</p>
+            <p className="mb-1.5 text-xs font-semibold tracking-[0.08em] text-muted uppercase">Sources</p>
             <div className="grid gap-1">
               {answer.citations.map((c: Citation) => (
                 <div key={c.source_id} className={cn("rounded-lg border transition-colors", open === c.source_id ? "border-primary/30 bg-primary-soft/40" : "border-transparent")}>
@@ -1410,7 +1456,7 @@ function AnswerBubble({
                     disabled={!c.available}
                     aria-expanded={open === c.source_id}
                   >
-                    <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-md px-1 text-[10.5px] font-semibold", c.available ? "bg-primary-soft text-primary" : "bg-surface-2 text-muted")}>{c.source_id.slice(1)}</span>
+                    <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-md px-1 text-xs font-semibold", c.available ? "bg-primary-soft text-primary" : "bg-surface-2 text-muted")}>{c.source_id.slice(1)}</span>
                     <FileText className="size-3.5 shrink-0 text-muted" />
                     <span className={cn("truncate font-medium", c.available ? "text-foreground" : "text-muted italic")}>{c.filename}</span>
                     <span className="shrink-0 text-muted">· {c.available ? citationPlace(c) : "no longer available"}</span>
@@ -1447,7 +1493,7 @@ function AnswerBubble({
         {(
           <div className="mt-3 flex items-center justify-between gap-3">
             {answer.model ? (
-              <p className="truncate text-[11px] text-muted" title="AI provider and model that produced this answer">
+              <p className="truncate text-xs text-muted" title="AI provider and model that produced this answer">
                 {providerLabel ?? answer.provider} · {answer.model?.replace(/^models\//, "")}
                 {!!answer.memories_applied && (
                   <span title="Your saved preferences and context shaped this answer. They are not sources.">

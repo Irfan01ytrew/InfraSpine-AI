@@ -722,7 +722,7 @@ function AccountRow({
           <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-soft text-xs font-semibold text-primary">{user.email.slice(0, 2).toUpperCase()}</span>
           <div className="min-w-0">
             <p className="truncate font-medium text-foreground">{user.email}</p>
-            {isSelf && <p className="text-[11px] text-muted">This is you</p>}
+            {isSelf && <p className="text-xs text-muted">This is you</p>}
           </div>
         </div>
       </td>

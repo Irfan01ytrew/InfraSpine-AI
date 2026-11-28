@@ -983,10 +983,15 @@ async def spoken_knowledge_question(
         raise InvalidInputError("Choose both a provider and model, or use the organization's default.")
     model_choice = (provider, model) if provider is not None and model is not None else None
     # This helper enforces the route/media limits and deletes the staged audio before returning.
-    transcript, suffix, byte_count = await transcribe_voice_upload(
+    # It also tags the transcript with its detected language (Step Z slice 6),
+    # from the same shared detector typed chat uses.
+    transcribed = await transcribe_voice_upload(
         audio,
         max_bytes=max_bytes,
     )
+    transcript = transcribed.text
+    suffix = transcribed.suffix
+    byte_count = transcribed.byte_count
     try:
         # No trace, history or memory service is attached to this endpoint. Disabling query analysis also
         # prevents its correction cache from retaining transcript-derived text.
@@ -1009,7 +1014,8 @@ async def spoken_knowledge_question(
             db,
             audit_context(request, user),
             "rag.voice_question_answered",
-            details={"audio_suffix": suffix, "audio_bytes": byte_count, "transcript_chars": len(transcript)},
+            details={"audio_suffix": suffix, "audio_bytes": byte_count, "transcript_chars": len(transcript),
+                     "detected_language": transcribed.language},
         )
         await db.commit()
     except BaseException:
@@ -1018,7 +1024,7 @@ async def spoken_knowledge_question(
 
     response.headers["Cache-Control"] = "no-store, max-age=0"
     response.headers["Pragma"] = "no-cache"
-    return RagVoiceQuestionResponse(transcript=transcript, answer=answer)
+    return RagVoiceQuestionResponse(transcript=transcript, detected_language=transcribed.language, answer=answer)
 
 
 @router.post("/research", response_model=ResearchReport)

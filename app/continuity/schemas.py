@@ -1,10 +1,15 @@
 """Bounded continuity inputs. Evidence is data, never an instruction or an executable URL."""
 
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+
+# Platform permission names (``scope.action``). The same pattern is used by
+# app.continuity.handover when it reads a resource's recorded permissions.
+PERMISSION_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 
 
 class Strict(BaseModel):
@@ -52,6 +57,7 @@ class NodeInput(Provenance):
     description: str = Field(default="", max_length=4000)
     skills: list[str] = Field(default_factory=list, max_length=40)
     required_skills: list[str] = Field(default_factory=list, max_length=40)
+    required_permissions: list[str] = Field(default_factory=list, max_length=20)
     available: bool = True
     critical: bool = False
     alternative: str = Field(default="", max_length=2000)
@@ -65,6 +71,8 @@ class NodeInput(Provenance):
             raise ValueError("Only employees may bind a user identity.")
         if any(len(s) > 180 or not s.strip() for s in self.skills + self.required_skills + self.knowledge_refs):
             raise ValueError("Skill and knowledge references must contain 1–180 characters.")
+        if any(not PERMISSION_PATTERN.match(p) or len(p) > 80 for p in self.required_permissions):
+            raise ValueError("Required permissions use the scope.action form, at most 80 characters.")
         return self
 
 
@@ -162,6 +170,25 @@ class Decision(Strict):
     approved: bool
     digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     reason: str = Field(min_length=10, max_length=2000)
+
+
+class HandoverGrantInput(Strict):
+    scenario_id: UUID | None = None
+    plan_id: UUID | None = None
+    resource_id: UUID
+    candidate_node_id: UUID
+    valid_days: int = Field(default=30, ge=1, le=90)
+    reason: str = Field(min_length=10, max_length=1000)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.scenario_id is None) == (self.plan_id is None):
+            raise ValueError("A handover grant references exactly one scenario or plan.")
+        return self
+
+
+class GraphMergeSeedInput(Strict):
+    company_graph_tenant_id: UUID
 
 
 class Activation(Strict):

@@ -379,7 +379,7 @@ function ApprovalTimeline({ item, isRequester, onDecided }: { item: ServiceReque
               {step.status === "approved" ? <Check className="size-3.5" /> : step.status === "rejected" ? <X className="size-3.5" /> : step.status === "pending" ? <CircleDot className="size-3.5" /> : <Circle className="size-3" />}
             </span>
             <span className="min-w-0 flex-1">
-              {startsStage && members > 1 && <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted">Stage {stage} · {step.stage_mode === "any" ? "any one approves" : "all must approve"}</span>}
+              {startsStage && members > 1 && <span className="block text-xs font-semibold uppercase tracking-wide text-muted">Stage {stage} · {step.stage_mode === "any" ? "any one approves" : "all must approve"}</span>}
               <span className="font-medium text-foreground">{step.order}. {step.label}</span>{step.final && <span className="text-xs text-muted"> · final</span>}
               <span className="block text-xs text-muted">
                 {step.status === "approved" || step.status === "rejected"
