@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { FormEvent } from "react";
 import { BadgeCheck, FileUp, Play, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
 import { describeError } from "../api";
@@ -6,7 +6,9 @@ import { useFeedback } from "../components/Feedback";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, SelectInput, Skeleton, Stat, Table, Tabs, Textarea } from "../components/ui";
 import { financeApi } from "./api";
 import type { Batch, BatchSummary, FinanceScope, Invoice, KnowledgeDocument, Payment, PaymentApproval, Spend } from "./api";
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "./financeView.mjs";
+import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendMonthLabel, spendSeries } from "./financeView.mjs";
+import { formatMoneyForLanguage } from "../format";
+import { getLanguage, subscribeLanguage } from "../i18n.mjs";
 
 type Tab = "batches" | "exceptions" | "approvals" | "spend";
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger";
@@ -323,6 +325,7 @@ function ApprovalsTab({ revision, toast }: { revision: number; toast: ToastFn })
 }
 
 function SpendTab({ group, revision }: { group: string; revision: number }) {
+  const language = useSyncExternalStore(subscribeLanguage, getLanguage);
   const [spend, setSpend] = useState<Spend | null>(null);
   const [scopeAll, setScopeAll] = useState(true);
   const [currency, setCurrency] = useState("");
@@ -341,11 +344,11 @@ function SpendTab({ group, revision }: { group: string; revision: number }) {
     <CardBody>
       {!spend || !spend.rows.length ? <EmptyState icon={<Wallet />} title="No verified spend yet" /> : <>
         <div className="flex h-56 items-end gap-2" role="img" aria-label="Monthly spend by department">
-          {chart.series.map((point) => <div key={point.month} className="flex h-full flex-1 flex-col justify-end" title={`${point.month}: ${currency} ${point.total.toLocaleString()}`}>
+          {chart.series.map((point) => <div key={point.month} className="flex h-full flex-1 flex-col justify-end" title={`${spendMonthLabel(point.month, language)}: ${formatMoneyForLanguage(point.total, currency || undefined, language)}`}>
             <div className="flex flex-col-reverse overflow-hidden rounded-t" style={{ height: `${chart.max ? (point.total / chart.max) * 100 : 0}%` }}>
               {point.parts.map((part, index) => <div key={part.department} className={palette[index % palette.length]} style={{ height: `${point.total ? (part.amount / point.total) * 100 : 0}%` }} />)}
             </div>
-            <div className="mt-1 text-center text-[10px] text-muted">{point.month.slice(2)}</div>
+            <div className="mt-1 text-center text-[10px] text-muted">{spendMonthLabel(point.month, language)}</div>
           </div>)}
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-xs">{chart.departments.map((department, index) =>

@@ -510,6 +510,10 @@ class RagVoiceQuestionResponse(BaseModel):
     """A transient transcript and its answer; neither is saved as a conversation."""
 
     transcript: str = Field(..., min_length=1, max_length=4000)
+    # Language the transcript was spoken in (Step Z slice 6), from the same
+    # shared detector typed chat uses. Metadata only — it never changes
+    # authorization or what the asker may read. Defaults for older callers.
+    detected_language: str = "unknown"
     answer: RagChatResponse
 
 

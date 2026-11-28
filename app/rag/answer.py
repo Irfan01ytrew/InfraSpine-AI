@@ -9,6 +9,21 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.language.words import (
+    ROMAN_URDU_COPULA_WORDS,
+    ROMAN_URDU_GENITIVE_WORDS,
+    ROMAN_URDU_KNOWLEDGE_VERBS,
+    ROMAN_URDU_LIVE_WORDS,
+    ROMAN_URDU_LOCATION_WORDS,
+    ROMAN_URDU_SEARCH_STEMS,
+    ROMAN_URDU_SITE_VERBS,
+    ROMAN_URDU_TELL_WORDS,
+    ROMAN_URDU_TODAY_WORDS,
+    ROMAN_URDU_WEB_PREPOSITIONS,
+    URDU_SCRIPT_LIVE_WORDS,
+    stem_alternation,
+    word_alternation,
+)
 from app.rag.retrieval import RetrievedChunk
 from app.rag.sufficiency import (
     is_company_specific,
@@ -363,26 +378,30 @@ _FILE_EXPORT_REQUEST = re.compile(
 
 # Live facts and explicit browse requests are routed to the public web tool before RAG's
 # evidence gate. A URL by itself is also an explicit request to inspect that page.
+# Roman Urdu words in the clauses below live in app/language/words.py; the
+# patterns compile to exactly the strings they replaced (see
+# tests/unit/test_language_consolidation.py).
 _WEB_LOOKUP_REQUEST = re.compile(
-    r"\b(?:search|look\s*up|browse|google|check|find|verify|dhond\w*|dhoond\w*|talash\w*)\b"
+    r"\b(?:search|look\s*up|browse|google|check|find|verify|" + stem_alternation(ROMAN_URDU_SEARCH_STEMS) + r")\b"
     r".{0,80}\b(?:web|internet|online|google|website|site|url|latest|current|today)\b"
-    r"|\b(?:web|internet|online)\b.{0,80}\b(?:search|look\s*up|browse|check|dhond\w*|dhoond\w*|talash\w*)\b"
-    r"|\b(?:internet|web|online)\s+(?:se|sy|par|per|mein|me)\b.{0,100}\b(?:search|look\s*up|browse|check|find|explain|describe|tell|summari[sz]e|batao|btao|batayein|samjhao|dhond\w*|dhoond\w*|talash\w*)\b"
-    r"|\b(?:internet|web|online)\s+(?:se|sy|par|per|mein|me)\b.{0,100}\b(?:maloom|pata|jaankari|jankari|dekho|dekhna|parho|parhna|khol|kholo|jao|visit|open)\w*\b"
-    r"|\b(?:website|web\s*site|site|domain|url)\b.{0,100}\b(?:par|pe|per|ko)\s+(?:jao|kholo|open|visit|check|dekho|dekhna|parho|parhna)\b"
+    r"|\b(?:web|internet|online)\b.{0,80}\b(?:search|look\s*up|browse|check|" + stem_alternation(ROMAN_URDU_SEARCH_STEMS) + r")\b"
+    r"|\b(?:internet|web|online)\s+(?:" + word_alternation(ROMAN_URDU_WEB_PREPOSITIONS) + r")\b.{0,100}\b(?:search|look\s*up|browse|check|find|explain|describe|tell|summari[sz]e|" + word_alternation(ROMAN_URDU_TELL_WORDS) + "|" + stem_alternation(ROMAN_URDU_SEARCH_STEMS) + r")\b"
+    r"|\b(?:internet|web|online)\s+(?:" + word_alternation(ROMAN_URDU_WEB_PREPOSITIONS) + r")\b.{0,100}\b(?:" + word_alternation(ROMAN_URDU_KNOWLEDGE_VERBS) + r"|visit|open)\w*\b"
+    r"|\b(?:website|web\s*site|site|domain|url)\b.{0,100}\b(?:par|pe|per|ko)\s+(?:jao|kholo|open|visit|check|" + word_alternation(ROMAN_URDU_SITE_VERBS) + r")\b"
     r"|\b(?:visit|open|go\s+to|check|read|inspect|summari[sz]e)\b.{0,100}\b(?:website|web\s*site|site|domain|url)\b"
-    r"|\b(?:aaj|aj|abhi|iss\s+waqt)\b.{0,70}\b(?:rate|mausam|weather|news|price|score|latest|current)\b",
+    r"|\b(?:" + word_alternation(ROMAN_URDU_TODAY_WORDS) + r"|iss\s+waqt)\b.{0,70}\b(?:rate|mausam|weather|news|price|score|latest|current)\b",
     re.IGNORECASE,
 )
 _LIVE_FACT_REQUEST = re.compile(
     r"\b(?:latest|current|right\s+now|today|this\s+(?:week|month|year)|as\s+of\s+today|"
     r"real[ -]?time|breaking\s+news|weather|forecast|exchange\s+rate|currency\s+rate|"
     r"stock\s+price|share\s+price|bitcoin\s+price|crypto\s+price|live\s+score)\b"
-    r"|\b(?:aaj|aj)\s+(?:ka|ki)\s+(?:rate|mausam|news)\b",
+    r"|\b(?:" + word_alternation(ROMAN_URDU_TODAY_WORDS[:2]) + r")\s+(?:" + word_alternation(ROMAN_URDU_GENITIVE_WORDS) + r")\s+(?:rate|mausam|news)\b",
     re.IGNORECASE,
 )
 _LIVE_LOCATION_RU = re.compile(
-    r"^\s*(?P<subject>.+?)\s+(?:ki\s+)?(?:kahan|kha|kidhar|kidr)\s+(?:hai|hain|he|h)\s*[?!.]*\s*$",
+    r"^\s*(?P<subject>.+?)\s+(?:ki\s+)?(?:" + word_alternation(ROMAN_URDU_LOCATION_WORDS)
+    + r")\s+(?:" + word_alternation(ROMAN_URDU_COPULA_WORDS) + r")\s*[?!.]*\s*$",
     re.IGNORECASE,
 )
 _LIVE_LOCATION_EN = re.compile(
@@ -429,6 +448,16 @@ def requested_web_urls(question: str) -> list[str]:
     return values
 
 
+_CRICKET_SUBJECT_RE = re.compile(r"\b(?:cricket|match|scorecard)\b|کرکٹ|میچ", re.IGNORECASE)
+_CRICKET_LIVE_RE = re.compile(
+    r"\b(?:is+s?\s+wa[qk]t|ho\s+rah[aeiy]+\s+(?:hain|hen|hai)|"
+    + word_alternation(ROMAN_URDU_LIVE_WORDS)
+    + r"|today|currently|latest|live|score|kon jeeta)\b|"
+    + "|".join(URDU_SCRIPT_LIVE_WORDS),
+    re.IGNORECASE,
+)
+
+
 def is_web_lookup_request(question: str) -> bool:
     """Route explicit web requests and questions whose answer changes with live public data."""
     # "Do you have live web search access?" must not be forced into a live lookup.
@@ -450,8 +479,8 @@ def is_web_lookup_request(question: str) -> bool:
         or (
             not refers_to_uploads(question)
             and not is_company_specific(question)
-            and re.search(r"\b(?:cricket|match|scorecard)\b|کرکٹ|میچ", question, re.I)
-            and re.search(r"\b(?:is+s?\s+wa[qk]t|ho\s+rah[aeiy]+\s+(?:hain|hen|hai)|aaj|aj|abhi|kal|today|currently|latest|live|score|jeeta|jeetae|kon jeeta)\b|آج|اسکور|سکور|جیتا", question, re.I)
+            and _CRICKET_SUBJECT_RE.search(question)
+            and _CRICKET_LIVE_RE.search(question)
         )
     )
 

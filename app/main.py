@@ -61,6 +61,7 @@ from app.api.routes import (
     health,
     knowledge,
     knowledge_interviews,
+    language,
     legacy_browser,
     memory,
     meetings,
@@ -446,6 +447,7 @@ def create_app() -> FastAPI:
     app.include_router(exports.router)
     app.include_router(exports.image_router)
     app.include_router(folder_sync.router)
+    app.include_router(language.router)
     app.include_router(cloud_connectors.router)
     app.include_router(sso.router)
     app.include_router(scim.router)

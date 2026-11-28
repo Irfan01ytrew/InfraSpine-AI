@@ -1,9 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
 import { Menu, Plus, RefreshCw, X } from "lucide-react";
 import { api, describeError } from "../api";
 import { cn } from "../lib/utils";
 import { AppSidebar, buildNav, CommandPalette } from "./AppSidebar";
+import { getLanguage, subscribeLanguage, translateNavGroups } from "../i18n.mjs";
 import { Alert, Button, PageHeader, Skeleton, Tabs } from "./ui";
 import type { AuditEntry, ProviderList, ProviderMetadata, ProviderState, User } from "../types";
 import type { WorkspaceView } from "./ModuleWorkspaces";
@@ -173,7 +174,12 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
   const state = list?.providers.find((p) => p.provider === selected);
   const active = list?.providers.find((p) => p.is_active);
 
-  const navGroups = useMemo(() => buildNav(isAdmin, isManager, canViewReports, canInvite), [isAdmin, isManager, canViewReports, canInvite]);
+  // Navigation labels follow the viewer's language (Step Z slice 4).
+  const language = useSyncExternalStore(subscribeLanguage, getLanguage);
+  const navGroups = useMemo(
+    () => translateNavGroups(buildNav(isAdmin, isManager, canViewReports, canInvite), language),
+    [isAdmin, isManager, canViewReports, canInvite, language],
+  );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const wide = view === "knowledge";
   const currentLabel = navGroups.flatMap((g) => g.items).find((i) => i.view === view)?.label ?? (view === "security" ? "Account security" : "");

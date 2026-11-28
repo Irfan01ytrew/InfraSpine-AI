@@ -830,6 +830,18 @@ export function KnowledgePage({ user }: { user: User }) {
   );
 }
 
+const VOICE_LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  roman_urdu: "Roman Urdu",
+  urdu: "Urdu",
+  mixed: "Mixed",
+  unknown: "Unknown language",
+};
+
+function voiceLanguageLabel(language: string): string {
+  return VOICE_LANGUAGE_LABELS[language] ?? language;
+}
+
 interface DisplayTurn {
   key: string;
   question: string;
@@ -840,6 +852,8 @@ interface DisplayTurn {
   messageId?: number; // the saved assistant message, for feedback
   feedback?: -1 | 1 | null;
   ephemeral?: boolean;
+  /** Language the voice question was spoken in (Step Z slice 6); typed turns leave this unset. */
+  detectedLanguage?: string;
 }
 
 function toTurns(messages: ConversationMessage[]): DisplayTurn[] {
@@ -1053,6 +1067,7 @@ function KnowledgeChat({
           question: result.transcript,
           answer: result.answer,
           ephemeral: true,
+          detectedLanguage: result.detected_language,
         },
       ]);
     } catch (err) {
@@ -1209,7 +1224,7 @@ function KnowledgeChat({
           <div className="mx-auto grid w-full max-w-3xl gap-6 px-5 py-6">
             {turns.map((turn) => (
               <div key={turn.key} className="grid gap-3">
-                {turn.ephemeral && <p className="justify-self-end text-[11px] text-muted" role="note">Temporary voice question · not saved to chat</p>}
+                {turn.ephemeral && <p className="justify-self-end text-[11px] text-muted" role="note">Temporary voice question · not saved to chat{turn.detectedLanguage ? ` · heard in ${voiceLanguageLabel(turn.detectedLanguage)}` : ""}</p>}
                 <div className="max-w-[85%] justify-self-end rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-xs rtl:rounded-br-2xl rtl:rounded-bl-md">{turn.question}</div>
                 {turn.answer ? (
                   <AnswerBubble

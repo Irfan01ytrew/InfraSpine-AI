@@ -17,6 +17,14 @@ import httpx2
 
 from app.core.config import Settings
 from app.core.errors import LLMRateLimitError, LLMTimeoutError, LLMUnavailableError
+from app.language.words import (
+    ROMAN_URDU_FRESH_WORDS,
+    ROMAN_URDU_NEWS_WORDS,
+    ROMAN_URDU_QUERY_NOISE_WORDS,
+    ROMAN_URDU_QUERY_STOPWORDS,
+    ROMAN_URDU_TODAY_WORDS,
+    word_alternation,
+)
 from app.providers.endpoint_security import (
     UnsafeEndpointError,
     guarded_http_client,
@@ -51,15 +59,7 @@ _QUERY_STOP_WORDS = frozenset({
     # Output-format and instruction words do not identify the subject being searched.
     "and", "what", "check", "write", "create", "compare", "include", "three", "points", "point",
     "publication", "date", "source", "sources", "link", "links",
-    # Common Roman Urdu/Hindi request words. Removing these improves recall while
-    # retaining the subject terms users actually want searched.
-    "acha", "achha", "aj", "aaj", "batao", "btao", "batayein", "btaein", "batana",
-    "chahiye", "chahye", "dekho", "dekhna", "dhoondo", "dhondo", "dhundho", "dhoondho",
-    "hai", "hain", "he", "h", "ka", "ke", "ki", "karo", "kro", "karna", "krna",
-    "kya", "kia", "konsi", "konse", "konsa", "konsay", "koun", "kounsa", "kounsi",
-    "mujhe", "mujhay", "mujai", "meri", "mere", "mera", "mein", "mai", "me", "par", "pe",
-    "please", "se", "sy", "to", "ye", "yeh", "iss", "is", "kiya", "jao", "jayein",
-})
+}) | ROMAN_URDU_QUERY_STOPWORDS  # Roman Urdu/Hindi request words: app/language/words.py
 _DATE_WORDS = frozenset({
     "january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
     "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
@@ -73,14 +73,16 @@ _SEARCH_QUERY_NOISE = frozenset({
     # not the subject; leaving them in a public search query can return dictionary pages or no results.
     "website", "websites", "only", "facts", "fact", "explicitly", "stated", "its", "clickable",
     "actual", "directly", "exactly", "each", "every", "bullet", "bullets", "published",
-    "acha", "achha", "batao", "btao", "batayein", "dekho", "dhoondo", "dhondo", "hai", "hain",
-    "ka", "ke", "ki", "karo", "kro", "kya", "kia", "mein", "mai", "par", "pe", "se", "sy",
-})
+}) | ROMAN_URDU_QUERY_NOISE_WORDS  # Roman Urdu words: app/language/words.py
+_NEWS_FRESHNESS = "latest|newest|most\\s+recent|recent|breaking|today|right\\s+now|currently"
+_NEWS_SUBJECTS = "news|headline|headlines|story|stories"
 _CURRENT_NEWS_REQUEST = re.compile(
-    r"\b(?:latest|newest|most\s+recent|recent|breaking|today|right\s+now|currently|"
-    r"aaj|aj|abhi|taaza|taza)\b.{0,80}\b(?:news|headline|headlines|story|stories|khabar|khabrain)\b"
-    r"|\b(?:news|headline|headlines|story|stories|khabar|khabrain)\b.{0,80}"
-    r"\b(?:latest|newest|most\s+recent|recent|breaking|today|right\s+now|currently|aaj|aj|abhi|taaza|taza)\b",
+    r"\b(?:" + _NEWS_FRESHNESS + "|" + word_alternation(ROMAN_URDU_TODAY_WORDS)
+    + "|" + word_alternation(ROMAN_URDU_FRESH_WORDS)
+    + r")\b.{0,80}\b(?:" + _NEWS_SUBJECTS + "|" + word_alternation(ROMAN_URDU_NEWS_WORDS) + r")\b"
+    r"|\b(?:" + _NEWS_SUBJECTS + "|" + word_alternation(ROMAN_URDU_NEWS_WORDS)
+    + r")\b.{0,80}\b(?:" + _NEWS_FRESHNESS + "|" + word_alternation(ROMAN_URDU_TODAY_WORDS)
+    + "|" + word_alternation(ROMAN_URDU_FRESH_WORDS) + r")\b",
     re.IGNORECASE,
 )
 _NEWS_HUB_PATHS = frozenset({

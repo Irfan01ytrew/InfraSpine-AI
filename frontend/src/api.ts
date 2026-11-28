@@ -402,6 +402,11 @@ export const api = {
   disableMfa: (password: string, code: string) =>
     request<void>("POST", "/api/auth/mfa/disable", { password, code }),
   logout: () => request<void>("POST", "/api/auth/logout"),
+  // Per-user language preference (Step Z slice 4): GET returns the stored choice
+  // (or the default with explicit:false); PUT stores the caller's own row only.
+  languagePreference: () => request<{ language: string; explicit: boolean }>("GET", "/api/language/preference"),
+  setLanguagePreference: (language: string) =>
+    request<{ language: string; explicit: boolean }>("PUT", "/api/language/preference", { language }),
   acceptInvitation: (token: string, password: string) =>
     request<{ email: string; role: string; message: string }>("POST", "/api/onboarding/accept", { token, password }),
   partnerMe: () => request<PartnerIdentity>("GET", "/api/partner/auth/me"),
@@ -606,7 +611,7 @@ export const api = {
       form.append("provider", choice.provider);
       form.append("model", choice.model);
     }
-    return request<{ transcript: string; answer: RagAnswer }>("POST", "/api/rag/voice-question", form);
+    return request<{ transcript: string; detected_language: string; answer: RagAnswer }>("POST", "/api/rag/voice-question", form);
   },
   researchDocuments: (question: string, documentIds?: string[]) =>
     request<ResearchReport>("POST", "/api/rag/research", {

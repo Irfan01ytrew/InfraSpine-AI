@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "../src/finance/financeView.mjs";
+import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendMonthLabel, spendSeries } from "../src/finance/financeView.mjs";
 
 test("headline reads like the founder scenario", () => {
   assert.equal(headline({ verified: 32, total: 50 }), "32 of 50 verified");
@@ -48,4 +48,15 @@ test("only the step the person may perform is offered", () => {
   assert.equal(actionableStep(run, ["funds.transfer"]), null);
   assert.equal(actionableStep({ ...run, status: "paused" }, ["invoice.verify"]), null);
   assert.equal(shortHash("a".repeat(64)), "aaaaaa…aaaaaa");
+});
+
+test("spend month labels are locale-aware (Step Z slice 5)", () => {
+  assert.equal(spendMonthLabel("2026-10", "en"), "Oct 26");
+  assert.equal(spendMonthLabel("2026-10", "roman_urdu"), "Aktobar 26");
+  assert.equal(spendMonthLabel("2026-10", "urdu"), "اکتوبر ۲۶");
+  assert.equal(spendMonthLabel("2026-01", "roman_urdu"), "Janvari 26");
+  assert.equal(spendMonthLabel("2026-01", undefined), "Jan 26");
+  assert.equal(spendMonthLabel("not-a-month", "en"), "not-a-month");
+  assert.equal(spendMonthLabel("2026-13", "en"), "2026-13");
+  assert.equal(spendMonthLabel(null, "en"), "");
 });
