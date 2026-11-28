@@ -56,6 +56,7 @@ from app.api.routes import (
     sso,
     scim,
     collaboration,
+    digital_twin,
     governance,
     handoffs,
     health,
@@ -386,6 +387,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     from app.api.routes import company_graph
     app.include_router(company_graph.router)
+    app.include_router(digital_twin.router)
     app.include_router(workflow_engine.router)
     app.include_router(finance.router)
     app.include_router(approval_routes.router)

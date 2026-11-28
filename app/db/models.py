@@ -2477,3 +2477,7 @@ from app.db.agent_studio_whatsapp_models import (  # noqa: E402,F401
     AgentStudioWhatsAppInbound,
 )
 from app.db.agent_studio_baileys_models import BaileysConnection, BaileysMessage  # noqa: E402,F401
+from app.db.twin_snapshot_models import TwinSnapshotVersion  # noqa: E402,F401
+from app.db.twin_health_models import TwinHealthAlert  # noqa: E402,F401
+from app.db.twin_reconciliation_models import TwinReconciliationFinding  # noqa: E402,F401
+from app.db.twin_proposal_models import TwinProposal  # noqa: E402,F401

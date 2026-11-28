@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { RunsPanel } from "../workflows/RunsPanel";
 import { Activity, ArrowRight, Boxes, Check, CircleAlert, Clock3, Database, Gauge, Layers3, Network, RefreshCw, ShieldCheck, Sparkles, Workflow } from "lucide-react";
-import { describeError, request } from "../api";
+import { ApiError, describeError, request } from "../api";
 import { graphApi } from "../company-graph/api";
 import { GraphMap } from "../company-graph/GraphMap";
 import type { Graph, GraphRecord, Quality, Tenant } from "../company-graph/types";
+import { twinApi } from "../digital-twin/api";
+import type { TwinFinding, TwinHealth, TwinHealthAlert, TwinProposal, TwinTrust, TwinVersion } from "../digital-twin/types";
+import { findingTone, gaugeSegments, inboxRows, proposalStatusTone, queueSummary, shortFingerprint, timelineRows } from "../digital-twin/twinDashboard.mjs";
 import { workflowApi } from "../workflows/api";
 import type { Dashboard as WorkflowDashboard, Scope, Spec, Template, Workflow as WorkflowRow } from "../workflows/types";
 import { bc } from "../continuity/api";
 import type { Dashboard as ContinuityDashboard, Workspace } from "../continuity/types";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Input, PageHeader, Skeleton, Stat, Textarea } from "./ui";
 
-export type WorkspaceView = "company-graph" | "workflow-engine" | "governance" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality";
+export type WorkspaceView = "company-graph" | "workflow-engine" | "governance" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "digital-twin";
 type Navigate = (view: string) => void;
 
 export function ModuleWorkspacesPage({ view, onNavigate }: { view: WorkspaceView; onNavigate: Navigate }) {
@@ -24,6 +27,7 @@ export function ModuleWorkspacesPage({ view, onNavigate }: { view: WorkspaceView
     case "integrations": return <IntegrationsWorkspace />;
     case "infrastructure": return <InfrastructureWorkspace />;
     case "quality": return <QualityWorkspace />;
+    case "digital-twin": return <TwinWorkspace />;
   }
   return <EmptyModule title="Module workspace unavailable" description="This module has no configured workspace route." />;
 }
@@ -289,6 +293,137 @@ export function GovernanceWorkspace({ onNavigate }: { onNavigate: Navigate }) {
   </div>;
 }
 
+async function optional<T>(promise: Promise<T>): Promise<T | null> {
+  // Health and trust return 404 when a tenant has no recorded
+  // versions yet — an empty state, not an error.
+  try { return await promise; }
+  catch (err) { if (err instanceof ApiError && err.status === 404) return null; throw err; }
+}
+
+export function TwinWorkspace() {
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenantId, setTenantId] = useState("");
+  const [versions, setVersions] = useState<TwinVersion[]>([]);
+  const [health, setHealth] = useState<TwinHealth | null>(null);
+  const [trust, setTrust] = useState<TwinTrust | null>(null);
+  const [findings, setFindings] = useState<TwinFinding[]>([]);
+  const [findingCounts, setFindingCounts] = useState<Record<string, number> | null>(null);
+  const [proposals, setProposals] = useState<TwinProposal[]>([]);
+  const [proposalCounts, setProposalCounts] = useState<Record<string, number> | null>(null);
+  const [alerts, setAlerts] = useState<TwinHealthAlert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let live = true;
+    graphApi.tenants().then(({ items }) => { if (!live) return; setTenants(items); setTenantId(current => current || items[0]?.id || ""); })
+      .catch(err => { if (live) setError(describeError(err)); }).finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, []);
+  useEffect(() => {
+    if (!tenantId) return;
+    let live = true;
+    setLoading(true); setError("");
+    (async () => {
+      try {
+        const [versionResult, healthResult, trustResult, findingResult, findingCountResult, proposalResult, proposalCountResult, alertResult] = await Promise.all([
+          twinApi.versions(tenantId),
+          optional(twinApi.health(tenantId)),
+          optional(twinApi.trust(tenantId)),
+          twinApi.findings(tenantId),
+          twinApi.findingCounts(tenantId),
+          twinApi.proposals(tenantId),
+          twinApi.proposalCounts(tenantId),
+          twinApi.healthAlerts(tenantId),
+        ]);
+        if (!live) return;
+        setVersions(versionResult.versions);
+        setHealth(healthResult?.health ?? null);
+        setTrust(trustResult?.trust ?? null);
+        setFindings(findingResult.findings);
+        setFindingCounts(findingCountResult.counts);
+        setProposals(proposalResult.proposals);
+        setProposalCounts(proposalCountResult.counts);
+        setAlerts(alertResult.alerts);
+      } catch (err) {
+        if (live) setError(describeError(err));
+      } finally {
+        if (live) setLoading(false);
+      }
+    })();
+    return () => { live = false; };
+  }, [tenantId, revision]);
+  async function decide(proposal: TwinProposal, decision: "approve" | "reject") {
+    setBusy(`${proposal.id}:${decision}`); setError("");
+    try { await twinApi.decideProposal(tenantId, proposal.id, decision, proposal.action_hash); setRevision(value => value + 1); }
+    catch (err) { setError(describeError(err)); }
+    finally { setBusy(""); }
+  }
+  async function execute(proposal: TwinProposal) {
+    setBusy(`${proposal.id}:execute`); setError("");
+    try { await twinApi.executeProposal(tenantId, proposal.id); setRevision(value => value + 1); }
+    catch (err) { setError(describeError(err)); }
+    finally { setBusy(""); }
+  }
+  async function acknowledge(finding: TwinFinding) {
+    setBusy(`${finding.id}:ack`); setError("");
+    try { await twinApi.acknowledgeFinding(tenantId, finding.id); setRevision(value => value + 1); }
+    catch (err) { setError(describeError(err)); }
+    finally { setBusy(""); }
+  }
+  const rows = timelineRows(versions);
+  const inbox = inboxRows(proposals);
+  const gaugeFill: Record<string, string> = { critical: "var(--color-danger)", degraded: "var(--color-warning)", healthy: "var(--color-success)" };
+  return <div className="grid gap-5 pb-8">
+    <ModulePageHeader module="K" eyebrow="STEP K · DIGITAL TWIN" title="Digital twin" description="Drift, health, versions and the proposal inbox for this graph tenant. The twin only proposes — nothing here executes until a human approves it." actions={<Button variant="secondary" onClick={() => setRevision(value => value + 1)} disabled={loading}><RefreshCw className={loading ? "animate-spin" : ""} /> Refresh</Button>} />
+    {error && <ErrorAlert error={error} />}
+    {loading && !versions.length && !tenants.length && <Skeleton className="h-56 w-full" />}
+    {!loading && !tenants.length && !error && <EmptyModule title="No graph tenant is available" description="Twin data is tenant-scoped. Create or grant a company graph tenant before drift, health or proposals can appear." />}
+    {!!tenants.length && <>
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-4 shadow-xs">
+        <label className="grid min-w-60 gap-1 text-xs font-semibold text-foreground-2">Digital twin tenant<select className="h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-foreground" value={tenantId} onChange={event => setTenantId(event.target.value)}>{tenants.map(item => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select></label>
+        <Badge tone="success" dot>Tenant scope enforced</Badge>
+      </section>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat label="Health score" value={health ? health.health_score : "—"} hint={health ? `Band ${health.band}` : "No versions recorded yet"} icon={<Gauge />} />
+        <Stat label="Trust score" value={trust?.score ?? "—"} hint={trust ? `Band ${trust.band} · coverage ${Math.round(trust.coverage * 100)}%` : "No versions recorded yet"} icon={<ShieldCheck />} />
+        <Stat label="Versions" value={versions.length} hint="Recorded twin snapshots" icon={<Layers3 />} />
+        <Stat label="Actionable proposals" value={proposalCounts?.actionable ?? "—"} hint={`${proposalCounts?.pending_approval ?? 0} pending approval`} icon={<Clock3 />} />
+      </div>
+      {health && <Card><CardHeader title="Health gauge" description={`Latest version ${shortFingerprint(health.fingerprint)} · as of ${health.as_of ? new Date(health.as_of).toLocaleString() : "—"}`} icon={<Gauge />} /><CardBody className="grid gap-3">
+        <div className="flex items-center gap-3"><span className="text-3xl font-semibold">{health.health_score}</span><Badge tone={health.band === "healthy" ? "success" : health.band === "degraded" ? "warning" : "danger"}>{health.band}</Badge><span className="text-sm text-muted">Drift {health.drift_score ?? "—"} · trust {health.trust ?? "—"}</span></div>
+        <div className="flex h-3 w-full overflow-hidden rounded-full border border-border bg-surface" role="img" aria-label={`Health ${health.health_score} out of 100, ${health.band}`}>
+          {gaugeSegments(health.health_score).map(segment => <div key={segment.band} className="relative h-full" style={{ width: `${segment.to - segment.from}%` }}><div className="h-full" style={{ width: `${(segment.filled / (segment.to - segment.from)) * 100}%`, background: gaugeFill[segment.band] }} /></div>)}
+        </div>
+        <p className="text-sm text-muted">Deductions — drift {health.components.drift} · money {health.components.money} · stale sources {health.components.freshness}{health.stale_sources.length ? ` · stale: ${health.stale_sources.join(", ")}` : ""}</p>
+      </CardBody></Card>}
+      {trust && <Card><CardHeader title="Multi-source trust" description={`Coverage ${Math.round(trust.coverage * 100)}% of source weight · band ${trust.band}`} icon={<ShieldCheck />} /><CardBody className="grid gap-2">{trust.sources.map(source => <div key={source.source} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"><span className="min-w-0 truncate text-sm">{source.source.replaceAll("_", " ")}{source.known_source ? "" : " (unlisted)"}</span><div className="flex items-center gap-2"><span className="text-xs text-muted">weight {source.weight}</span><Badge tone={source.status === "fresh" ? "success" : source.status === "stale" ? "danger" : "neutral"}>{source.status}</Badge><span className="text-sm font-semibold">{source.score ?? "—"}</span></div></div>)}</CardBody></Card>}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card><CardHeader title="Drift timeline" description="Newest first — one row per recorded twin version." icon={<Activity />} /><CardBody className="grid gap-2">{rows.length ? rows.slice(0, 10).map(row => <div key={row.fingerprint} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{row.label}</p><p className="text-xs text-muted">{new Date(row.asOf).toLocaleString()} · {shortFingerprint(row.fingerprint)}</p></div><div className="flex items-center gap-2">{row.trust && <Badge tone={row.trust === "trustworthy" ? "success" : row.trust === "review" ? "warning" : "danger"}>{row.trust}</Badge>}{row.staleSources.length > 0 && <Badge tone="warning">stale: {row.staleSources.join(", ")}</Badge>}</div></div>) : <p className="text-sm text-muted">No twin versions are recorded for this tenant yet.</p>}</CardBody></Card>
+        <Card><CardHeader title="Version history" description="Recorded snapshots — summaries only, never the full snapshot." icon={<Layers3 />} /><CardBody className="grid gap-2">{versions.length ? versions.slice(0, 10).map(version => <div key={version.fingerprint} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">Version {version.seq} · {shortFingerprint(version.fingerprint)}</p><p className="text-xs text-muted">{new Date(version.as_of).toLocaleString()} · {version.entity_count ?? "—"} entities · {version.relationship_count ?? "—"} relationships</p></div><Badge tone={version.drift_score == null ? "neutral" : version.drift_score <= 25 ? "success" : version.drift_score <= 60 ? "warning" : "danger"}>{version.is_first_version ? "first" : `drift ${version.drift_score}`}</Badge></div>) : <p className="text-sm text-muted">No twin versions are recorded for this tenant yet.</p>}</CardBody></Card>
+      </div>
+      <Card><CardHeader title="Proposal inbox" description="Read-only until approval — decide the exact action shown, then execute. The twin never applies anything itself." icon={<Clock3 />} /><CardBody className="grid gap-2">
+        {inbox.length ? inbox.map(row => <div key={row.id} className="grid gap-2 rounded-lg border border-border p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{row.actionType.replaceAll("_", " ")} · {row.code.replaceAll("_", " ")}</p><p className="text-xs text-muted">Approver: {row.approverClass} · {row.requiredPermission}</p></div><Badge tone={proposalStatusTone(row.status)}>{row.status.replaceAll("_", " ")}</Badge></div>
+          <p className="text-sm text-muted">{row.detail}</p>
+          {row.moneyRedacted && <p className="text-xs text-muted">Money amounts hidden — owner only.</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="primary" onClick={() => void decide(proposals.find(item => item.id === row.id)!, "approve")} loading={busy === `${row.id}:approve`} disabled={!row.canDecide || Boolean(busy)}>Approve</Button>
+            <Button size="sm" variant="secondary" onClick={() => void decide(proposals.find(item => item.id === row.id)!, "reject")} loading={busy === `${row.id}:reject`} disabled={!row.canDecide || Boolean(busy)}>Reject</Button>
+            <Button size="sm" variant="secondary" onClick={() => void execute(proposals.find(item => item.id === row.id)!)} loading={busy === `${row.id}:execute`} disabled={!row.canExecute || Boolean(busy)}>Execute</Button>
+          </div>
+        </div>) : <p className="text-sm text-muted">No twin proposals for this tenant yet.</p>}
+      </CardBody></Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card><CardHeader title="Review queue" description={queueSummary(findingCounts)} icon={<CircleAlert />} /><CardBody className="grid gap-2">{findings.length ? findings.slice(0, 8).map(finding => <div key={finding.id} className="grid gap-2 rounded-lg border border-border p-3"><div className="flex flex-wrap items-center justify-between gap-3"><span className="min-w-0 truncate text-sm font-semibold">{finding.code.replaceAll("_", " ")}</span><Badge tone={findingTone(finding.severity)}>{finding.severity}</Badge></div><p className="text-sm text-muted">{finding.detail}</p><div className="flex flex-wrap items-center gap-2"><Badge tone={finding.acknowledged ? "success" : "neutral"}>{finding.acknowledged ? "Acknowledged" : "Unacknowledged"}</Badge>{!finding.acknowledged && <Button size="sm" variant="secondary" onClick={() => void acknowledge(finding)} loading={busy === `${finding.id}:ack`} disabled={Boolean(busy)}>Acknowledge</Button>}</div></div>) : <p className="text-sm text-muted">No reconciliation findings for this tenant yet.</p>}</CardBody></Card>
+        <Card><CardHeader title="Health alerts" description="Watch alerts from the latest health evaluation." icon={<Gauge />} /><CardBody className="grid gap-2">{alerts.length ? alerts.slice(0, 8).map(alert => <div key={alert.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{alert.message}</p><p className="text-xs text-muted">Rule {alert.rule_id} · {new Date(alert.evaluated_at).toLocaleString()}</p></div><Badge tone={alert.severity === "critical" ? "danger" : "warning"}>{alert.severity}</Badge></div>) : <p className="text-sm text-muted">No health alerts for this tenant yet.</p>}</CardBody></Card>
+      </div>
+      <Alert title="The twin proposes, humans decide">Feed changes, findings and proposals are suggestions only. Applying one needs an approved platform action bound to that exact change, and the twin never writes the graph, grants access, restores data, switches a supplier or pays anything.</Alert>
+    </>}
+  </div>;
+}
+
 export function FrontendUxWorkspace({ onNavigate }: { onNavigate: Navigate }) {
   const modules = useMemo(() => [
     { label: "Knowledge & AI Brain", detail: "Documents, citations and conversation workbench", view: "knowledge" },
@@ -297,6 +432,7 @@ export function FrontendUxWorkspace({ onNavigate }: { onNavigate: Navigate }) {
     { label: "Operations and workflows", detail: "Process discovery and workflow runs", view: "process-intelligence" },
     { label: "Quality evidence", detail: "Reviewed tests and release blockers", view: "quality" },
     { label: "Platform health", detail: "Read-only infrastructure telemetry", view: "infrastructure" },
+    { label: "Digital twin", detail: "Drift, health, versions, proposals", view: "digital-twin" },
   ], []);
   return <div className="grid gap-5 pb-8">
     <ModulePageHeader module="M09" eyebrow="MODULE 09 · PRODUCT EXPERIENCE" title="Frontend & UX workspace" description="A direct index into InfraSpine's daily work surfaces, with the shared pine and sage visual system." />

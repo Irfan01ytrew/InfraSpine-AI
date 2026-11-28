@@ -41,9 +41,22 @@ class ModuleSpec:
 MODULES: dict[str, ModuleSpec] = {
     "company_graph": ModuleSpec("company_graph", "company_graph_tenants", "company_graph_members",
                                 ("owner", "approver", "editor", "viewer"),
-                                {"owner": frozenset({"connector.write", "connector.read"}),
+                                {"owner": frozenset({"connector.write", "connector.read",
+                                                     # Step K v2 slice 6: the graph owner may
+                                                     # execute approved twin proposals of either
+                                                     # class (owner + coverage duties) and may
+                                                     # approve coverage-class proposals too —
+                                                     # the owner role is a superset of approver,
+                                                     # the same way it already holds the
+                                                     # approver's connector.read.
+                                                     "twin.apply", "twin.apply.coverage",
+                                                     "company_graph.role.approver"}),
                                  "editor": frozenset({"connector.write", "connector.read"}),
-                                 "approver": frozenset({"connector.read"}), "viewer": frozenset({"connector.read"})}),
+                                 "approver": frozenset({"connector.read",
+                                                        # Step K v2 slice 6: a graph approver may
+                                                        # execute approved coverage-class proposals.
+                                                        "twin.apply.coverage"}),
+                                 "viewer": frozenset({"connector.read"})}),
     "governance": ModuleSpec("governance", "security_tenants", "security_members", ("member",)),
     "continuity": ModuleSpec("continuity", "bc_tenants", "bc_members", ("owner", "approver", "planner", "executor", "viewer")),
     "process_intelligence": ModuleSpec("process_intelligence", "pi_tenants", "pi_memberships", ("viewer", "analyst", "steward")),

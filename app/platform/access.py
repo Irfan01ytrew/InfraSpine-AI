@@ -33,7 +33,15 @@ BASELINE_SOURCE = "legacy:users"
 # funds.transfer, ...) are never implied by the legacy admin role.
 ADMIN_BRIDGE_PERMISSIONS = frozenset({"identity.revoke", "org.settings.manage", "platform.manage"})
 # Exercising these permissions needs an approval of the given permission first.
-APPROVAL_REQUIRED = {"funds.transfer": "payment.approve"}
+APPROVAL_REQUIRED = {
+    "funds.transfer": "payment.approve",
+    # Twin proposal actions (Step K v2 slice 6): dispatching a twin
+    # proposal needs the same approver permission the proposal's
+    # approval was requested with — the graph owner for owner-class
+    # actions, a graph approver for coverage-class actions.
+    "twin.apply": "company_graph.role.owner",
+    "twin.apply.coverage": "company_graph.role.approver",
+}
 # Separation of duties: one person may perform at most one of these duties on the same subject (e.g. one invoice).
 SEPARATED_DUTIES = frozenset({"invoice.verify", "payment.approve", "funds.transfer"})
 
