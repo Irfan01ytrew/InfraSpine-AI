@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 from app.core.security import hash_session_token
+from app.db.agent_controls_models import AgentControlRecord
 from app.db.agent_studio_models import AgentStudioAgent
 from app.db.models import ROLE_ADMIN, User, UserSession
 from app.platform.models import (
@@ -120,6 +121,16 @@ async def resolve_principal(
         if row is None or not row[1].enabled or row[1].paused:
             raise PermissionDeniedError("This agent is not available to act.")
         user, agent = row
+        # Step AK: a control record in a non-active status refuses the agent
+        # everywhere at once. Agents without a record keep previous behaviour.
+        control_status = await db.scalar(select(AgentControlRecord.status).where(
+            AgentControlRecord.agent_id == agent.id))
+        if control_status == "killed":
+            raise PermissionDeniedError("This agent was killed by an administrator and cannot act.")
+        if control_status == "disabled":
+            raise PermissionDeniedError("This agent is disabled by its controls.")
+        if control_status == "paused":
+            raise PermissionDeniedError("This agent is paused by its controls.")
         return Principal(user.id, user.email, "agent", "agent", user.auth_version, trace, agent_id=agent.id)
     if not channel or not external_id:
         raise InvalidInputError("Both the channel and the external identity are required.")
@@ -217,6 +228,16 @@ async def _principal_current(db: AsyncSession, p: Principal) -> tuple[User | Non
         agent = await db.get(AgentStudioAgent, p.agent_id, populate_existing=True)
         if agent is None or not agent.enabled or agent.paused:
             return None, "agent_unavailable"
+        # Step AK re-check: a principal resolved earlier is refused again here
+        # when its control record has since stopped it.
+        control_status = await db.scalar(select(AgentControlRecord.status).where(
+            AgentControlRecord.agent_id == p.agent_id))
+        if control_status == "killed":
+            return None, "agent_killed"
+        if control_status == "disabled":
+            return None, "agent_disabled"
+        if control_status == "paused":
+            return None, "agent_paused"
     return user, None
 
 

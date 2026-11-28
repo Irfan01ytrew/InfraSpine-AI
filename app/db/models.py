@@ -2471,6 +2471,11 @@ from app.db.agent_studio_models import (  # noqa: E402,F401
     AgentStudioRun,
     AgentStudioThread,
 )
+from app.db.agent_controls_models import (  # noqa: E402,F401
+    AgentControlEvent,
+    AgentControlRecord,
+    AgentSpendLedger,
+)
 from app.db.agent_studio_whatsapp_models import (  # noqa: E402,F401
     AgentStudioWhatsAppConnection,
     AgentStudioWhatsAppContact,

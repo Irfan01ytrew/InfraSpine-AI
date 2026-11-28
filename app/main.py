@@ -32,6 +32,7 @@ from app.api.routes import (
     access_admin,
     agent_catalog,
     agent_actions,
+    agent_controls,
     agents,
     automation,
     admin_embeddings,
@@ -405,6 +406,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_catalog.router)
     app.include_router(agents.router)
     app.include_router(agent_actions.router)
+    app.include_router(agent_controls.router)
     app.include_router(automation.router)
     app.include_router(personal_tasks.router)
     app.include_router(partner_admin.router)

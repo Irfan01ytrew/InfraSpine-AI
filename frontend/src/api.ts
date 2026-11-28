@@ -68,6 +68,9 @@ import type {
   User,
   AgentStudioAgent,
   AgentStudioAgentInput,
+  AgentControl,
+  AgentControlEvent,
+  AgentControlSpend,
   AgentStudioMemory,
   AgentStudioWhatsAppConnection,
   AgentStudioWhatsAppInput,
@@ -914,6 +917,16 @@ export const api = {
   revokeAgentCatalogTemplate: (id: string, rationale: string) =>
     request<AgentCatalogRevocation>("POST", `/api/agent-catalog/templates/${encodeURIComponent(id)}/revoke`, { rationale }),
   agentCatalogGrants: () => request<{ items: AgentCatalogGrant[] }>("GET", "/api/agent-catalog/grants"),
+  agentControls: () => request<{ controls: AgentControl[] }>("GET", "/api/agents/controls"),
+  agentControl: (id: string) => request<AgentControl>("GET", `/api/agents/controls/${encodeURIComponent(id)}`),
+  patchAgentControl: (id: string, input: { reason: string; status?: "active" | "paused" | "disabled"; spend_limit_usd?: string | null }) =>
+    request<AgentControl>("PATCH", `/api/agents/controls/${encodeURIComponent(id)}`, input),
+  killAgentControl: (id: string, reason: string) =>
+    request<AgentControl & { cancelled_work: Record<string, number> }>("POST", `/api/agents/controls/${encodeURIComponent(id)}/kill`, { reason }),
+  agentControlEvents: (id: string) =>
+    request<{ events: AgentControlEvent[] }>("GET", `/api/agents/controls/${encodeURIComponent(id)}/events`),
+  agentControlSpend: (id: string) =>
+    request<AgentControlSpend>("GET", `/api/agents/controls/${encodeURIComponent(id)}/spend`),
   createAgentCatalogGrant: (email: string, permission: "publish" | "review") =>
     request<AgentCatalogGrant>("POST", "/api/agent-catalog/grants", { email, permission }),
   revokeAgentCatalogGrant: (id: string) =>

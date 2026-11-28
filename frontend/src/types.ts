@@ -1213,6 +1213,59 @@ export interface AgentStudioAgent {
 
 export type AgentStudioAgentInput = Omit<AgentStudioAgent, "id" | "version" | "enabled" | "paused" | "created_at" | "updated_at">;
 
+/** Step AK: one per-agent control record (GET /api/agents/controls). Money is a 4dp decimal string, never a float. */
+export interface AgentControl {
+  agent_id: string;
+  agent_kind: string;
+  owner_id: string | null;
+  scope_id: string | null;
+  status: "active" | "paused" | "disabled" | "killed";
+  data_scopes: string[];
+  permissions: string[];
+  allowed_actions: string[];
+  spend_limit_usd: string | null;
+  spend_used_usd: string | null;
+  spend_state: "ok" | "near_limit" | "at_limit" | "over_limit";
+  alert_threshold: string | null;
+  max_steps: number;
+  delegate_to: string[];
+  max_delegation_depth: number;
+  killed_at: string | null;
+  killed_by: string | null;
+  kill_reason: string | null;
+  version: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AgentControlEvent {
+  id: number;
+  event: string;
+  actor_id: string | null;
+  reason: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export interface AgentSpendEntry {
+  id: string;
+  provider: string;
+  model: string;
+  tokens: number;
+  cost_usd: string;
+  idempotency_key: string;
+  recorded_at: string | null;
+}
+
+export interface AgentControlSpend {
+  agent_id: string;
+  spend_used_usd: string;
+  spend_limit_usd: string | null;
+  spend_state: "ok" | "near_limit" | "at_limit" | "over_limit";
+  recent: AgentSpendEntry[];
+}
+
 export interface AgentStudioThread {
   id: string;
   agent_id: string;

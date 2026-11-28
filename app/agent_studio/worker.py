@@ -8,10 +8,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_studio.service import AgentStudioService, decode_run_state, _encode_state, _AgentRunClaimLost
+from app.db.agent_controls_models import AgentControlRecord
 from app.db.agent_studio_models import AgentStudioAgent, AgentStudioRun
 from app.db.models import User
 from app.core.crypto import CredentialCipher
@@ -106,12 +107,18 @@ async def claim_agent_studio_run(
                 AgentStudioAgent.enabled.is_(True),
                 AgentStudioAgent.paused.is_(False),
                 User.is_active.is_(True),
+                # Step AK: never claim a run whose agent has a non-active
+                # control record (killed / disabled / paused). Agents without
+                # a record are unaffected.
+                ~exists().where(
+                    AgentControlRecord.agent_id == AgentStudioRun.agent_id,
+                    AgentControlRecord.status != "active"),
             )
         )
         if run_id is not None:
             query = query.where(AgentStudioRun.id == run_id)
         if exclude_unified:
-            from sqlalchemy import String, exists
+            from sqlalchemy import String
             from app.db.workflow_engine_models import WorkflowRun
             query = query.where(~exists().where(WorkflowRun.origin == "studio",
                                                 WorkflowRun.origin_ref == AgentStudioRun.id.cast(String)))

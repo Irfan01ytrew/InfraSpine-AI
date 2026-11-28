@@ -86,6 +86,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "connectors", label: "Cloud connectors", icon: Cloud },
         { view: "webhooks", label: "Webhooks", icon: Webhook },
         { view: "providers", label: "AI providers", icon: Cpu, keywords: "model llm" },
+        { view: "agent-controls", label: "Agent controls", icon: ShieldCheck, keywords: "kill switch spend limit agent controls" },
         { view: "settings", label: "Settings", icon: Settings2, keywords: "ocr parser vector embedding" },
         { view: "deployment", label: "Company setup", icon: Building2, keywords: "brand license" },
         { view: "reports", label: "Usage reports", icon: BarChart3 },
