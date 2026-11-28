@@ -120,22 +120,19 @@ async def schedule_due_workflows(
     return created
 
 
-async def _claim_next(
-    sessionmaker: async_sessionmaker[AsyncSession], now: datetime, run_id: uuid.UUID | None = None
-) -> _RunClaim | None:
+async def _claim_next(sessionmaker: async_sessionmaker[AsyncSession], now: datetime) -> _RunClaim | None:
     async with sessionmaker() as db:
-        query = select(AutomationRun).where(
-            or_(
-                (AutomationRun.status == "queued") & (AutomationRun.available_at <= now),
-                (AutomationRun.status == "processing")
-                & or_(AutomationRun.locked_until.is_(None), AutomationRun.locked_until < now),
-            )
-        )
-        if run_id is not None:
-            query = query.where(AutomationRun.id == run_id)
         run = (
             await db.execute(
-                query.order_by(AutomationRun.available_at, AutomationRun.created_at, AutomationRun.id)
+                select(AutomationRun)
+                .where(
+                    or_(
+                        (AutomationRun.status == "queued") & (AutomationRun.available_at <= now),
+                        (AutomationRun.status == "processing")
+                        & or_(AutomationRun.locked_until.is_(None), AutomationRun.locked_until < now),
+                    )
+                )
+                .order_by(AutomationRun.available_at, AutomationRun.created_at, AutomationRun.id)
                 .limit(1)
                 .with_for_update(skip_locked=True)
             )
@@ -362,21 +359,6 @@ async def _record_failure(
             run.status = "queued"
             run.available_at = now + timedelta(seconds=min(900, 15 * (2 ** (run.attempts - 1))))
         await db.commit()
-
-
-async def process_workflow_run(sessionmaker: async_sessionmaker[AsyncSession], run_id: uuid.UUID) -> bool:
-    """Claim and execute one specific approved run (used by the unified workflow runtime's
-    `automation.run` adapter). Same claim, lease, idempotency and failure rules as the worker."""
-    claim = await _claim_next(sessionmaker, datetime.now(UTC), run_id)
-    if claim is None:
-        return False
-    try:
-        await _execute(sessionmaker, claim)
-    except WorkflowExecutionError as exc:
-        await _record_failure(sessionmaker, claim, exc.code)
-    except Exception:
-        await _record_failure(sessionmaker, claim, "worker_error")
-    return True
 
 
 async def process_next_workflow_run(sessionmaker: async_sessionmaker[AsyncSession]) -> bool:

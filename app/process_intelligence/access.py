@@ -5,7 +5,6 @@ from sqlalchemy import exists, or_, select
 
 from app.core.errors import NotFoundError, PermissionDeniedError
 from app.db.models import Document, User
-from app.platform.modules import module_gate
 from app.rag.access import readable_by
 from .models import Membership, Process, Source, SourceGrant
 
@@ -13,14 +12,10 @@ ROLES = {"viewer": 0, "analyst": 1, "steward": 2}
 
 
 async def membership(db, user: User, tenant_id: UUID, minimum="viewer") -> Membership:
-    from sqlalchemy import inspect as sa_inspect
-    user_id = sa_inspect(user).identity[0] if sa_inspect(user).identity else user.id
-    active = await db.scalar(select(User.is_active).where(User.id == user_id))
-    if not active:
+    if not user.is_active:
         raise PermissionDeniedError()
-    member = await db.get(Membership, (tenant_id, user_id))
-    gate = await module_gate(db, "process_intelligence", tenant_id, user, legacy_allowed=member is not None)
-    if member is None or not gate.allowed:
+    member = await db.get(Membership, (tenant_id, user.id))
+    if member is None:
         raise NotFoundError()
     if ROLES[member.role] < ROLES[minimum]:
         raise PermissionDeniedError()

@@ -31,10 +31,6 @@ class _Db:
         self.calls += 1
         return _Result(self.row)
 
-    async def run_sync(self, _fn):
-        # Session-only hook used by get_current_user to reconcile org membership; not under test here.
-        return None
-
 
 def _request(path: str) -> Request:
     return Request(

@@ -28,19 +28,12 @@ class OrgSettings(Base):
     """One row (id = 1) per installation. Times are stored in UTC; business days use `time_zone`."""
 
     __tablename__ = "org_settings"
-    __table_args__ = (
-        CheckConstraint("id = 1", name="single_row"),
-        CheckConstraint("finance_payment_connector IS NULL OR finance_payment_connector IN ('mock','http','http+mock')",
-                        name="finance_connector_valid"),
-    )
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     name: Mapped[str | None] = mapped_column(String(200))
     time_zone: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text(f"'{DEFAULT_TIME_ZONE}'"))
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'PKR'"))
-    # Admin choice of payment connector (step E). NULL = use FINANCE_PAYMENT_CONNECTOR / FINANCE_PAYMENT_FALLBACK.
-    # Bank URL and token stay in the environment (secrets are never stored here).
-    finance_payment_connector: Mapped[str | None] = mapped_column(String(16))
     updated_at: Mapped[datetime] = _now()
 
 
@@ -100,10 +93,6 @@ class PlatformMembership(Base):
     granted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     granted_at: Mapped[datetime] = _now()
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Where the grant comes from: 'platform' (granted here) or 'legacy:<table>' (mirrored from a module's member
-    # table). revoke_reason 'platform:*' blocks re-mirroring; 'legacy:*' (the module removed it) does not.
-    source: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("'platform'"))
-    revoke_reason: Mapped[str | None] = mapped_column(String(120))
 
 
 class PlatformChannelIdentity(Base):
@@ -192,8 +181,6 @@ class PlatformOutbox(Base):
     __tablename__ = "platform_outbox"
     __table_args__ = (
         Index("ix_platform_outbox_pending", "id", postgresql_where=text("dispatched_at IS NULL")),
-        Index("ix_platform_outbox_due", "next_attempt_at", "id",
-              postgresql_where=text("dispatched_at IS NULL AND dead_at IS NULL")),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -205,7 +192,3 @@ class PlatformOutbox(Base):
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text)
-    # Retry with backoff: a failed delivery waits until next_attempt_at; after the last attempt it is dead-lettered
-    # (kept for an operator to inspect and requeue, never silently dropped).
-    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    dead_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

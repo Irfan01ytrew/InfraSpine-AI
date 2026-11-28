@@ -1,12 +1,12 @@
 # Platform core (`app/platform/`)
 
 Step C of the architecture plan. One shared core for identity, scope, permission, approval,
-exactly-once execution, events and the organisation's clock. Step D has moved the existing modules onto this core. Each module still computes its legacy
-member/role decision and combines it with `authorize()` (`PLATFORM_ACCESS_MODE=enforce` by default:
-both must allow; `shadow` keeps the legacy decision and only logs differences). Organisation
-"today" (delegation, decision authority, budget dates) uses `org_today()` (default `Asia/Karachi`).
+exactly-once execution, events and the organisation's clock. It is wired in **additively**:
+existing modules keep their own checks until step D moves them onto this core one by one.
+The only behaviour already switched over is "today": delegation, decision authority and
+budget dates now use `org_today()` (organisation time zone, default `Asia/Karachi`).
 
-## Tables (migrations `0097_platform_core`, `0098_org_settings`, `0099_platform_outbox_retry`, `0100_platform_membership_backfill`)
+## Tables (migrations `0097_platform_core`, `0098_org_settings`)
 
 | Table | Purpose |
 |---|---|
@@ -17,7 +17,7 @@ both must allow; `shadow` keeps the legacy decision and only logs differences). 
 | `platform_channel_identities` | verified WhatsApp/API identity → user. Unverified or revoked ones never resolve. |
 | `platform_approval_requests` | one request per exact action: canonical JSONB action, SHA-256 `action_hash`, required permission, expiry, single use. |
 | `platform_action_executions` | idempotency ledger (`idempotency_key` unique): claimed → dispatched → verified/failed. |
-| `platform_outbox` | transactional outbox of domain events, drained with `SKIP LOCKED`, retry/backoff and dead-letter (`next_attempt_at`, `dead_at`). |
+| `platform_outbox` | transactional outbox of domain events, drained with `SKIP LOCKED`. |
 | `users.auth_version` | bumped by `revoke_user_access`; any Principal holding an older value is dead. |
 
 ## Interfaces (`from app import platform`)
@@ -51,39 +51,22 @@ both must allow; `shadow` keeps the legacy decision and only logs differences). 
 Design notes: approval actions are stored as canonical JSONB (not encrypted) — never put
 secrets in `ActionSpec.params`; floats are rejected (use `Decimal`/strings for money).
 
-## Step D adoption (done)
+## Step D adoption path
 
-1. Migration `0100` backfills `platform_scopes` / `platform_memberships` from users, access groups
-   and the five module tenant/member tables (idempotent, reversible). The ORM also mirrors later
-   changes, and access-time `reconcile_*` covers rows written without the ORM. A membership revoked
-   by the platform (`revoke_reason` `platform:*`) is never re-mirrored implicitly.
-2. Modules 03–08, 12, Agent Studio, RAG and WhatsApp/connectors call `module_gate` / `org_gate` /
-   `group_gate` (or `readable_by`'s live `documents.read` check). Default mode is `enforce`.
-3. Payments (workflow adapter dispatch), WhatsApp sends (Cloud API and Baileys), connector writes
-   and recovery commands go through `execute_once`.
-4. WhatsApp senders resolve through `resolve_principal` (`app.platform.channels`). Unmapped numbers
-   get no data. Allow-list numbers are mirrored to the connection owner as
-   `legacy:allowed_senders` until the step F verification flow; an explicit identity for a different
-   user always wins.
-5. The outbox worker (`run_outbox_worker`, also `python -m app.platform.outbox`) delivers events
-   with retry, jittered backoff and dead-letter. `document.acl_changed` / `document.deleted` clear
-   derived caches; retrieval and saved answers are authorised live in SQL, so a permission change is
-   visible on the next request and cached answers are withheld.
-
-Set `PLATFORM_ACCESS_MODE=shadow` only as a rollback switch if a platform defect ever blocks
-legitimate work. Dropping the legacy member tables is step P10 (after a release with zero legacy reads).
+1. Backfill `platform_scopes` from departments/workspaces (`legacy_table`, `legacy_id`) and
+   memberships from existing role/department assignments.
+2. Per module, replace its local permission check with `require()` and its list queries with
+   `visible_scopes().sql(...)`, keeping the old check in shadow mode first (log mismatches).
+3. Route external side effects (payments, WhatsApp sends, connector writes) through
+   `execute_once`, and payment-type approvals through `request/decide/consume_approval`.
+4. Point WhatsApp/API callers at `resolve_principal(channel=…)`.
+5. Remove the legacy checks once shadow mismatches are zero.
 
 ## Tests and benchmark
 
-- `tests/test_platform_core.py` — core acceptance tests (scope inheritance, 404/403, time-limited
+- `tests/test_platform_core.py` — acceptance tests (scope inheritance, 404/403, time-limited
   membership, principals, approval hash/expiry/single use/SoD, concurrent `execute_once`,
   crash-after-dispatch recovery, revoke, delegation active at 00:30 PKT).
-- `tests/test_platform_outbox.py` — dispatcher retry/backoff, dead-letter, SKIP LOCKED, worker loop.
-- `tests/test_platform_step_d.py` — backfill, one revoke cuts every module and RAG, document ACL
-  change withholds cached answers, untrusted text cannot grant permissions, WhatsApp identity.
 - `scripts/benchmark_platform_retrieval.py` — synthetic scoped corpus; FAISS (default) or an
   isolated Qdrant (`QDRANT_TEST_URL`) with a `scope_id` payload filter; reports ingestion rate,
   p50/p95/p99, throughput, ACL leaks and hardware. Smoke test: `tests/test_benchmark_platform_retrieval.py`.
-
-Step E builds the unified workflow runtime and the invoice/payment flow on this core; see
-[`unified-workflows-finance.md`](unified-workflows-finance.md) (migrations `0101`, `0102`).

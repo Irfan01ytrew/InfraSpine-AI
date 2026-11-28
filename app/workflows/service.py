@@ -133,10 +133,6 @@ class WorkflowService:
                         raise InvalidInputError('Node risk is below the adapter approval policy.')
                     if publishing:
                         await adapter.authorize(self.db, self.actor, scope_id, node.config.resource_id, node.config.values)
-                if node.type == 'action':
-                    from app.workflows.actions import get_handler
-                    if get_handler(node.config.handler) is None:
-                        raise InvalidInputError('Action handler is not installed.')
                 if node.config.compensation_adapter and node.config.compensation_adapter not in ADAPTERS:
                     raise InvalidInputError('Compensation adapter is not installed.')
             except (InvalidInputError, PermissionDeniedError, NotFoundError) as exc:
@@ -226,7 +222,7 @@ class WorkflowService:
         return version
 
     async def trigger(self, scope_id, workflow_id, inputs, key, *, simulation=False, version_id=None,
-                      parent_run_id=None, priority=0, source='manual', origin=None, origin_ref=None):
+                      parent_run_id=None, priority=0, source='manual'):
         workflow = await self.workflow(scope_id, workflow_id, lock=True)
         if version_id:
             version = await self.version(scope_id, version_id)
@@ -264,13 +260,10 @@ class WorkflowService:
                 depth += 1
                 ancestor = await self.db.get(WorkflowRun, ancestor.parent_run_id) if ancestor.parent_run_id else None
         now, run_id = datetime.now(UTC), uuid4()
-        plan = build_plan(spec)
         run = WorkflowRun(id=run_id, scope_id=scope_id, workflow_id=workflow.id, version_id=version.id,
             requester_id=self.actor.id, parent_run_id=parent_run_id, idempotency_key=key,
             input_digest=input_hash, payload=seal(self.cipher, scope_id, 'run', run_id, inputs),
-            status='queued', simulation=simulation, priority=priority, event_sequence=0, event_hash='0' * 64, wake_at=now,
-            phase='plan', plan=plan, origin=origin or workflow.origin, origin_ref=origin_ref,
-            deadline_at=now + timedelta(seconds=spec.run_timeout_seconds) if spec.run_timeout_seconds else None)
+            status='queued', simulation=simulation, priority=priority, event_sequence=0, event_hash='0' * 64, wake_at=now)
         self.db.add(run)
         await self.db.flush()
         for node in spec.nodes:
@@ -278,8 +271,6 @@ class WorkflowService:
                 status='ready' if node.type == 'start' else 'blocked', assignee_id=node.config.assignee_id,
                 available_at=now, attempts=0, iteration=0))
         event(self.db, run, 'run.created', actor_id=self.actor.id, detail={'version': version.number, 'simulation': simulation, 'source': source})
-        event(self.db, run, 'run.planned', actor_id=self.actor.id, detail={'steps': len(plan), 'phase': 'plan',
-              'plan_digest': digest(plan)})
         record(self.db, self.ctx, 'workflow.run_requested', target=str(run.id), details={'scope_id': str(scope_id), 'version_id': str(version.id)})
         await self.db.flush()
         return run
@@ -335,44 +326,6 @@ class WorkflowService:
         run.wake_at = datetime.now(UTC)
         return step
 
-    async def perform_action(self, scope_id, run_id, step_id):
-        """Take a permissioned `action` step: the caller must hold the node's platform permission on the
-        department's platform scope (404 without membership, 403 without the permission). The step then runs as
-        this person; their access is re-checked before every item."""
-        from app.platform.access import principal_for, require
-        from app.workflows.action_runtime import platform_scope_for
-        group = await self.db.get(AccessGroup, scope_id)
-        if group is None or group.kind != 'department':
-            raise NotFoundError('Workflow scope not found.')
-        run = await self.db.scalar(select(WorkflowRun).where(WorkflowRun.scope_id == scope_id,
-            WorkflowRun.id == run_id).with_for_update())
-        if run is None: raise NotFoundError('Execution not found in this scope.')
-        step = await self.db.scalar(select(WorkflowStep).where(WorkflowStep.scope_id == scope_id,
-            WorkflowStep.run_id == run.id, WorkflowStep.id == step_id).with_for_update())
-        if step is None: raise NotFoundError('Task not found in this execution.')
-        version = await self.version(scope_id, run.version_id)
-        node = next(n for n in Definition.model_validate(version.spec).nodes if n.id == step.node_id)
-        if node.type != 'action' or node.config.auto or not node.config.permission:
-            raise ConflictError('This step is not performed by a person.')
-        platform_scope = await platform_scope_for(self.db, scope_id)
-        if platform_scope is None: raise NotFoundError('Workflow scope not found.')
-        await require(self.db, principal_for(self.actor), node.config.permission, platform_scope)
-        if run.status not in {'running', 'queued'}:
-            raise ConflictError('Execution is not running (paused, stopped or finished).')
-        if step.status == 'action' or (step.status in {'ready', 'waiting', 'blocked'} and step.acting_user_id in {None, self.actor.id}):
-            step.acting_user_id, step.acting_auth_version = self.actor.id, self.actor.auth_version
-            if step.status in {'action', 'waiting'}:
-                step.status, step.available_at = 'ready', datetime.now(UTC)
-            run.wake_at, run.blocked_reason = datetime.now(UTC), None
-            event(self.db, run, 'action.actor_assigned', node_id=step.node_id, actor_id=self.actor.id,
-                  detail={'permission': node.config.permission})
-            record(self.db, self.ctx, 'workflow.action_taken', target=str(step.id),
-                   details={'run_id': str(run.id), 'node_id': step.node_id, 'permission': node.config.permission})
-            return run, step
-        if step.acting_user_id == self.actor.id:
-            return run, step
-        raise ConflictError('Another person is performing this step.')
-
     async def reassign(self, scope_id, run_id, step_id, assignee_id, note):
         run, step, _, _ = await self.step_subject(scope_id, run_id, step_id)
         if run.status != 'running' or step.status != 'human': raise ConflictError('Only an active human task can be reassigned.')
@@ -392,41 +345,19 @@ class WorkflowService:
         dispatches = (await self.db.scalars(select(WorkflowDispatch).where(
             WorkflowDispatch.scope_id == scope_id, WorkflowDispatch.step_id.in_([s.id for s in steps])))).all()
         now = datetime.now(UTC)
-        if command == 'stop':
-            command = 'cancel'  # "stop" is the operator word for a cancel at the next step boundary
         if command == 'pause' and run.status in {'queued', 'running'}:
             run.status = 'paused'
         elif command == 'resume' and run.status == 'paused':
             run.status = 'queued' if run.started_at is None else 'running'
-        elif command == 'resume' and run.status == 'failed':
-            # Resume from the last verified step: verified/completed steps are kept, failed ones are re-planned.
-            if any(d.status == 'unknown' for d in dispatches):
-                raise ConflictError('Ambiguous external actions require a verified receipt; blind retry is forbidden.')
-            if run.failure_code in {'approval_rejected', 'approval_expired'}:
-                raise ConflictError('Rejected or expired actions require a new run and new approvals.')
-            for step in steps:
-                if step.status == 'failed':
-                    step.status, step.failure_code, step.attempts, step.recoveries = 'ready', None, 0, 0
-                    step.claim_token, step.lease_until, step.available_at, step.phase = None, None, now, 'recover'
-            for dispatch in dispatches:
-                if dispatch.status == 'failed':
-                    dispatch.status, dispatch.attempts, dispatch.available_at = 'pending', 0, now
-            run.status = 'running' if run.started_at else 'queued'
-            run.failure_code, run.finished_at, run.phase, run.blocked_reason = None, None, 'recover', None
-            event(self.db, run, 'run.resumed_from_checkpoint', actor_id=self.actor.id,
-                  detail={'last_verified_node': run.last_verified_node})
         elif command == 'cancel' and run.status in ACTIVE_RUNS:
             if any(d.status in {'running', 'unknown'} for d in dispatches):
                 raise ConflictError('Reconcile in-flight or ambiguous external actions before cancellation.')
-            run.status, run.finished_at, run.phase = 'cancelled', now, 'done'
+            run.status, run.finished_at = 'cancelled', now
             for step in steps:
                 if step.status not in {'completed', 'skipped', 'compensated'}:
                     step.status, step.claim_token, step.lease_until = 'cancelled', None, None
             for dispatch in dispatches:
                 if dispatch.status == 'pending': dispatch.status = 'cancelled'
-            if run.origin == 'studio':
-                from app.agent_studio.unified import on_workflow_cancelled
-                await on_workflow_cancelled(self.db, self.cipher, run)
         elif command == 'retry' and run.status == 'failed':
             if any(d.status == 'unknown' for d in dispatches):
                 raise ConflictError('Ambiguous external actions require a verified receipt; blind retry is forbidden.')
@@ -439,7 +370,7 @@ class WorkflowService:
             for dispatch in dispatches:
                 if dispatch.status == 'failed':
                     dispatch.status, dispatch.attempts, dispatch.available_at = 'pending', 0, now
-            run.status, run.failure_code, run.finished_at, run.phase = 'queued', None, None, 'recover'
+            run.status, run.failure_code, run.finished_at = 'queued', None, None
         elif command == 'compensate' and run.status in {'failed', 'cancelled', 'completed'}:
             await require_scope(self.db, self.actor, scope_id, manage=True)
             if any(d.status in {'running', 'unknown'} for d in dispatches):
@@ -487,35 +418,10 @@ class WorkflowService:
         decisions = (await self.db.scalars(select(WorkflowDecision).where(WorkflowDecision.scope_id == scope_id,
             WorkflowDecision.step_id.in_([s.id for s in steps])).order_by(WorkflowDecision.created_at))).all()
         return {'run': row_dict(run, exclude={'payload'}), 'spec': version.spec, 'inputs': context['input'],
-                'steps': [row_dict(s, exclude={'output', 'claim_token', 'checkpoint'}) | {
-                    'output': context['steps'].get(s.node_id),
-                    'checkpoint': unseal(self.cipher, scope_id, 'checkpoint', s.id, s.checkpoint) if s.checkpoint else None,
-                } for s in steps],
+                'steps': [row_dict(s, exclude={'output', 'claim_token'}) | {'output': context['steps'].get(s.node_id)} for s in steps],
                 'events': [row_dict(e) for e in events], 'audit_verified': verify_chain(events) and
                     len(events) == run.event_sequence and (events[-1].hash if events else '0' * 64) == run.event_hash,
                 'decisions': [row_dict(d, exclude={'evidence'}) | {'evidence': unseal(self.cipher, scope_id, 'decision', d.id, d.evidence)} for d in decisions]}
-
-
-def build_plan(spec):
-    """The recorded plan: nodes in a dependency order with what each will do and who may do it."""
-    nodes = {n.id: n for n in spec.nodes}
-    incoming = {n.id: 0 for n in spec.nodes}
-    for e in spec.edges:
-        incoming[e.target] += 1
-    ready = sorted(k for k, v in incoming.items() if v == 0)
-    order = []
-    while ready:
-        key = ready.pop(0)
-        order.append(key)
-        for e in spec.edges:
-            if e.source == key:
-                incoming[e.target] -= 1
-                if incoming[e.target] == 0:
-                    ready.append(e.target)
-    return [{'node_id': k, 'type': nodes[k].type, 'label': nodes[k].label, 'risk': nodes[k].risk,
-             'handler': nodes[k].config.handler or nodes[k].config.adapter, 'permission': nodes[k].config.permission,
-             'auto': nodes[k].config.auto, 'max_attempts': nodes[k].max_attempts,
-             'timeout_seconds': nodes[k].timeout_seconds} for k in order]
 
 
 def row_dict(row, *, exclude=frozenset()):

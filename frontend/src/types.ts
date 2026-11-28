@@ -850,8 +850,7 @@ export interface RagAnswer {
     | "web_image_search"
     | "identity"
     | "library_inventory"
-    | "upload_capability"
-    | "web_capability";
+    | "upload_capability";
   page_images: PageImage[];
   chart: Chart | null;
   model: string | null;

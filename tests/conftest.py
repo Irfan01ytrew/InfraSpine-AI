@@ -178,10 +178,6 @@ def clean_tables(migrated_database):
             await conn.execute(
                 User.__table__.insert().values(email=email, role=role, password_hash=_PASSWORD_HASH)
             )
-        # Raw inserts do not fire the ORM mirror; keep platform memberships in step with the seed users
-        # so document retrieval's live `documents.read` gate matches a migrated installation.
-        from app.platform.sync import backfill_all
-        await conn.run_sync(backfill_all)
 
     run_db(_seed)
     shutil.rmtree(RAG_TEST_DIR, ignore_errors=True)  # uploads + vector index start empty per test

@@ -33,14 +33,11 @@ export interface WorkflowDetail { workflow: Workflow; versions: Version[]; revie
 export interface Run {
   id: string; workflow_id: string; version_id: string; requester_id: string; status: string; simulation: boolean;
   created_at: string; started_at: string | null; finished_at: string | null; failure_code: string | null;
-  phase?: string; origin?: string | null; origin_ref?: string | null; blocked_reason?: string | null;
-  last_verified_node?: string | null; deadline_at?: string | null; plan?: Array<{ node_id: string; type: string; label?: string | null; handler?: string | null; permission?: string | null }> | null;
 }
 export interface Step {
   id: string; run_id: string; node_id: string; status: string; assignee_id: string | null; attempts: number;
   deadline_at: string | null; started_at: string | null; finished_at: string | null; failure_code: string | null;
   output?: Record<string, unknown> | null; escalated_at: string | null;
-  phase?: string; acting_user_id?: string | null; verified_at?: string | null; recoveries?: number;
 }
 export interface Event { id: string; sequence: number; kind: string; node_id: string | null; created_at: string; detail: Record<string,unknown>; hash: string }
 export interface RunDetail { run: Run; spec: Spec; inputs: Record<string,unknown>; steps: Step[]; events: Event[]; audit_verified: boolean; decisions: Array<{id:string;actor_id:string;approved:boolean;evidence:Record<string,unknown>}> }

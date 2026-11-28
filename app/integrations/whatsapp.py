@@ -12,7 +12,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.agent_studio.service import AgentStudioService, create_thread
-from app.core.errors import InvalidInputError, NotFoundError, PermissionDeniedError
+from app.core.errors import InvalidInputError
 from app.db.agent_studio_models import AgentStudioAgent
 from app.db.agent_studio_whatsapp_models import AgentStudioWhatsAppConnection as Connection, AgentStudioWhatsAppContact as Contact, AgentStudioWhatsAppInbound as Inbound
 from app.db.models import User
@@ -125,20 +125,8 @@ async def locked(db, identity):
 async def bound_identity(db, inbound):
     connection = await db.scalar(select(Connection).where(Connection.id == inbound.connection_id,
         Connection.owner_id == inbound.owner_id, Connection.enabled.is_(True)).with_for_update())
-    if connection is None:
-        raise TransportError("identity_revoked")
-    from app.platform.channels import resolve_whatsapp_sender, sync_allowed_senders
-    await sync_allowed_senders(db, owner_id=connection.owner_id, channel="whatsapp_cloud",
-                               allowed=list(connection.allowed_senders or []))
-    try:
-        principal = await resolve_whatsapp_sender(
-            db, channel="whatsapp_cloud", sender=inbound.from_wa_id,
-            allowed=list(connection.allowed_senders or []), owner_id=connection.owner_id,
-        )
-    except PermissionDeniedError:
-        raise TransportError("identity_revoked") from None
-    user = await db.scalar(select(User).where(User.id == principal.user_id, User.is_active.is_(True)).with_for_update())
-    if user is None:
+    user = await db.scalar(select(User).where(User.id == inbound.owner_id, User.is_active.is_(True)).with_for_update())
+    if connection is None or user is None or inbound.from_wa_id not in connection.allowed_senders:
         raise TransportError("identity_revoked")
     agent = await db.scalar(select(AgentStudioAgent).where(AgentStudioAgent.id == connection.agent_id,
         AgentStudioAgent.owner_id == inbound.owner_id, AgentStudioAgent.enabled.is_(True)))
@@ -169,29 +157,6 @@ async def send_text(connection, inbound, cipher, text):
     return provider_id
 
 
-async def send_text_once(db, user, connection, inbound, cipher, text, *, key):
-    """Send a WhatsApp Cloud API text exactly once (retries replay the stored provider id)."""
-    from app.platform.access import principal_for
-    from app.platform.approvals import ActionSpec
-    from app.platform.side_effects import dispatch_once, org_scope_id
-
-    p = principal_for(user, channel="whatsapp_cloud")
-    scope_id = await org_scope_id(db)
-    action = ActionSpec("whatsapp.send", scope_id, {"to": inbound.from_wa_id, "inbound_id": str(inbound.id), "key": key},
-                        subject=f"whatsapp:{inbound.id}")
-
-    async def dispatch():
-        return await send_text(connection, inbound, cipher, text)
-
-    try:
-        result = await dispatch_once(db, p, key, action, duty="channel.reply", dispatch=dispatch)
-    except (NotFoundError, PermissionDeniedError) as exc:
-        raise TransportError("identity_revoked") from exc
-    if result.status == "failed" or not result.external_ref:
-        raise TransportError("missing_message_identifier", ambiguous=True)
-    return result.external_ref
-
-
 async def process(sessionmaker, identity, settings, cipher, runtime, rag):
     error = None
     try:
@@ -209,14 +174,11 @@ async def process(sessionmaker, identity, settings, cipher, runtime, rag):
                 if dispatch.progress_message_id is None:
                     dispatch.phase = "progress_sending"
                     await db.commit()
-                    progress_id = await send_text_once(
-                        db,
-                        user,
+                    progress_id = await send_text(
                         connection,
                         inbound,
                         cipher,
                         "Request received. The agent is working on it; I will send the result here.",
-                        key=f"whatsapp:{inbound.id}:progress",
                     )
                     inbound, dispatch = await locked(db, identity)
                     if inbound is None: return
@@ -277,8 +239,7 @@ async def process(sessionmaker, identity, settings, cipher, runtime, rag):
             inbound, dispatch = await locked(db, identity)
             if inbound is None: return
             connection, _, _ = await bound_identity(db, inbound)
-            provider_id = await send_text_once(db, user, connection, inbound, cipher, reply,
-                                                key=f"whatsapp:{inbound.id}:final")
+            provider_id = await send_text(connection, inbound, cipher, reply)
             dispatch.provider_message_id = provider_id; dispatch.phase = "accepted"; dispatch.delivery_status = "accepted"
             dispatch.claim_token = None; inbound.status = "completed"; inbound.claimed_at = None; inbound.last_error = None
             audit.record(db, AuditContext(inbound.owner_id, None, None, None), "integration.whatsapp_accepted", target=str(inbound.id))

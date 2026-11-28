@@ -302,36 +302,6 @@ def is_upload_capability_question(question: str) -> bool:
     return bool(_UPLOAD_CAPABILITY.search(question))
 
 
-# Questions about whether this assistant can search the live web, not a request to look up a topic.
-_WEB_CAPABILITY = re.compile(
-    r"\b(?:do\s+you(?:\s+have)?|have\s+you(?:\s+got)?|can\s+you|could\s+you|"
-    r"are\s+you\s+able\s+to|do\s+u(?:\s+have)?)\b.{0,80}\b(?:(?:live\s+)?"
-    r"(?:web|internet|online)(?:\s+search)?(?:\s+access)?|(?:google\s+)?search(?:\s+access)?|"
-    r"browse(?:\s+the\s+web)?)\b"
-    r"|\b(?:live\s+)?(?:web|internet|online)\s+search\b.{0,60}\b(?:access|ac+ess|available|enabled|working|work)\b"
-    r"|\b(?:access|ac+ess|available|enabled)\b.{0,60}\b(?:live\s+)?(?:web|internet|online)\s+search\b"
-    r"|\b(?:live\s+)?(?:web|internet|online)\s+search\s+ki\s+ac+ess\b"
-    r"|\b(?:kya|kia)\s+(?:tum|tm|aap|ap|tumhein|tumhin|tmhin)\b.{0,80}\b(?:live\s+)?(?:web|internet|online)\s+search\b"
-    r"|\b(?:tum|tm|aap|ap)\s+(?:ke\s+pas|pas)\b.{0,40}\b(?:live\s+)?(?:web|internet|online)\s+search\b"
-    r"|\b(?:web|internet|online)\s+search.{0,40}\b(?:kar\s+sakt[eiy]|ho\s+sakti|chalti)\b",
-    re.IGNORECASE,
-)
-# "can you search the web for Artemis" is a lookup, not a capability question.
-_WEB_CAPABILITY_TOPIC = re.compile(
-    r"\b(?:search|browse|look\s*up|find|google)\b.{0,50}\b(?:for|about|on|regarding)\b\s+\S",
-    re.IGNORECASE,
-)
-
-
-def is_web_capability_question(question: str) -> bool:
-    """True when the user is asking whether live web search is available, not requesting a lookup."""
-    if not question or requested_web_urls(question):
-        return False
-    if _WEB_CAPABILITY_TOPIC.search(question):
-        return False
-    return bool(_WEB_CAPABILITY.search(question))
-
-
 def asks_library_inventory(question: str) -> bool:
     return bool(
         _LIBRARY_INVENTORY.search(question)
@@ -431,9 +401,6 @@ def requested_web_urls(question: str) -> list[str]:
 
 def is_web_lookup_request(question: str) -> bool:
     """Route explicit web requests and questions whose answer changes with live public data."""
-    # "Do you have live web search access?" must not be forced into a live lookup.
-    if is_web_capability_question(question):
-        return False
     live_location = bool(_LIVE_LOCATION_RU.search(question) or _LIVE_LOCATION_EN.search(question))
     # "Where is my file?" is an internal library question; keep it on permission-filtered RAG.
     if live_location and (_INTERNAL_LOCATION_REFERENCE.search(question) or refers_to_uploads(question)):

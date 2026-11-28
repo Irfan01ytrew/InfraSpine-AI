@@ -275,8 +275,7 @@ def test_current_search_query_drops_output_instructions_and_focuses_on_subject()
         "Summarize it in three points and include the publication date and source link."
     )
     assert queries[0] == "nasa latest artemis"
-    assert "nasa latest official artemis" in queries
-    assert queries[-1] == "nasa latest artemis official website"
+    assert queries[-1] == "nasa latest official artemis"
 
 
 def test_public_search_query_removes_evidence_and_link_format_instructions():
@@ -558,74 +557,3 @@ def test_news_and_live_score_request_together_does_not_crash_and_keeps_both_quer
 def test_recency_word_without_news_noun_does_not_add_a_news_query():
     queries = _public_search_queries("CURRENT QUESTION: taaza AI agents ka comparison batao")
     assert not any(" news " in query for query in queries)
-
-
-def test_web_capability_questions_do_not_enter_live_lookup():
-    from app.rag.answer import is_web_capability_question
-
-    questions = (
-        "live web search ki acess h tmhin",
-        "live web search ki access hai tumhin?",
-        "Do you have live web search access?",
-        "can you search the live web?",
-        "kya tum web search kar sakte ho?",
-        "web search access available hai?",
-    )
-    for question in questions:
-        assert is_web_capability_question(question), question
-        assert not is_web_lookup_request(question), question
-
-
-def test_actual_search_requests_are_not_capability_questions():
-    from app.rag.answer import is_web_capability_question
-
-    questions = (
-        "Search the official NASA website for the latest Artemis program update",
-        "Search the live web for today's cricket scores",
-        "internet se AI agents ka latest comparison search karo",
-        "can you search the web for the latest Artemis news",
-        "What are the latest monsoon rains in Karachi today?",
-    )
-    for question in questions:
-        assert not is_web_capability_question(question), question
-        assert is_web_lookup_request(question), question
-
-
-def test_official_website_query_is_added_for_authority_lookups():
-    queries = _public_search_queries(
-        "CURRENT QUESTION: Search the official NASA website for the latest Artemis program update."
-    )
-    assert queries[0] == "nasa latest artemis"
-    assert any(query.endswith("official website") and "nasa" in query and "artemis" in query for query in queries)
-
-
-def test_relaxed_fallback_keeps_subject_pages_when_official_host_is_not_required():
-    from app.services.public_web import _candidate_matches, _candidate_matches_relaxed, _requires_official_source
-
-    query = "What is the latest Artemis program update?"
-    third_party = {
-        "title": "NASA Artemis II mission update",
-        "url": "https://www.bbc.com/news/science-artemis-ii",
-        "snippet": "NASA announced a new Artemis program update.",
-        "content": "NASA Artemis program latest mission update from the space agency.",
-    }
-    assert not _requires_official_source(query)
-    assert _candidate_matches_relaxed(query, third_party)
-    # Strict official-host rule does not apply, and the page names both subjects.
-    assert _candidate_matches(query, third_party) or _candidate_matches_relaxed(query, third_party)
-
-
-def test_relaxed_fallback_does_not_override_official_website_requirement():
-    from app.services.public_web import _candidate_matches, _candidate_matches_relaxed, _requires_official_source
-
-    query = "Search the official NASA website for the latest Artemis program update."
-    third_party = {
-        "title": "NASA Artemis latest update",
-        "url": "https://example.com/nasa-artemis-update",
-        "snippet": "NASA announced the latest Artemis program update.",
-        "content": "NASA announced the latest Artemis program update.",
-    }
-    assert _requires_official_source(query)
-    assert not _candidate_matches(query, third_party)
-    # Relaxed matching may see the entity names, but the search loop must not use it for official requests.
-    assert _candidate_matches_relaxed(query, third_party)

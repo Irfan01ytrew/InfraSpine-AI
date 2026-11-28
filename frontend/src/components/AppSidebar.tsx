@@ -63,7 +63,6 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
     {
       id: "operations", label: "Operations", items: [
         { view: "approvals", label: "Approvals", icon: ClipboardCheck },
-        { view: "finance", label: "Invoices & payments", icon: Receipt, keywords: "finance invoice verification payment spend vendor" },
         { view: "claims", label: "Claims", icon: Receipt },
         { view: "process-intelligence", label: "Process intelligence", icon: Workflow },
         { view: "automation", label: "Workflows & tasks", icon: Workflow },

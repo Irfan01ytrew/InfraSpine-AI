@@ -40,7 +40,6 @@ from app.rag.answer import (
     is_audio_content_question,
     is_video_content_question,
     is_upload_capability_question,
-    is_web_capability_question,
     is_web_lookup_request,
     is_image_generation_request,
     is_image_edit_request,
@@ -868,20 +867,6 @@ async def run_chat(
             )
         return ChatResult(GroundedAnswer(answer, False, [], None, None, general=True), [], "upload_capability")
 
-    if is_web_capability_question(question):
-        if settings.rag_external_research_enabled:
-            answer = (
-                "Ji, mere paas live web search access hai. Main current public sources Google Search grounding se "
-                "dekh sakta hoon; agar woh na chale to DuckDuckGo, Bing aur Yahoo ke public search par fallback karta hoon, "
-                "aur jawab ke sath sources dikhata hoon. Jo masla aap ko live web se check karna ho, seedha woh sawal poochhein."
-            )
-        else:
-            answer = (
-                "Is installation par live web lookup band hai. "
-                "Administrator se public web research enable karne ko kahein."
-            )
-        return ChatResult(GroundedAnswer(answer, False, [], None, None, general=True), [], "web_capability")
-
     if web_requested:
         if not settings.rag_external_research_enabled:
             return ChatResult(
@@ -950,7 +935,7 @@ async def run_chat(
                     try:
                         # Public search extracts bounded, SSRF-safe passages before synthesis.
                         web_result = await public_web_research(await get_llm(), settings, web_prompt, urls=urls)
-                    except (LLMUnavailableError, LLMTimeoutError, LLMRateLimitError, Exception) as fallback_exc:
+                    except (LLMUnavailableError, LLMTimeoutError, LLMRateLimitError) as fallback_exc:
                         logger.info(
                             "Public web fallback unavailable native_error=%s fallback_error=%s",
                             type(native_error).__name__, type(fallback_exc).__name__,

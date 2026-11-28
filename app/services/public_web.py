@@ -289,12 +289,6 @@ def _public_search_queries(prompt: str) -> list[str]:
     queries.append(primary)
     if len(compact_terms) >= 2 and full != primary:
         queries.append(full)
-    if re.search(r"\bofficial\b", extracted, re.IGNORECASE):
-        # Third-party news often outranks the authority's own site. Add a query that surfaces the official website.
-        entity_terms = [term for group in _named_entity_groups(extracted) for term in group]
-        official_site_query = " ".join(dict.fromkeys([*compact_terms[:6], *entity_terms, "official", "website"]))[:1000]
-        if official_site_query:
-            queries.append(official_site_query)
     return list(dict.fromkeys(queries))
 
 
@@ -370,25 +364,6 @@ def public_sources_relevant(question: str, sources: list[dict]) -> bool:
 def _candidate_matches(query: str, candidate: dict[str, str]) -> bool:
     """Reject clearly off-topic search results before spending time fetching their pages."""
     return _public_source_matches(query, candidate)
-
-
-def _requires_official_source(question: str) -> bool:
-    """True when the user asked for an official/authority page, so third-party hits must not be substituted."""
-    subject = _search_subject(question)
-    return bool(re.search(r"\bofficial\b", subject, re.IGNORECASE) and _named_entity_groups(subject))
-
-
-def _candidate_matches_relaxed(query: str, candidate: dict[str, str]) -> bool:
-    """Keep pages that mention the subject when the official-host rule does not apply and strict matching is empty."""
-    subject = _search_subject(query)
-    terms = _query_terms(subject)
-    if not terms:
-        return False
-    source_terms = _public_source_terms(candidate)
-    groups = _named_entity_groups(subject)
-    if groups and not any(group.issubset(source_terms) for group in groups):
-        return False
-    return len(terms.intersection(source_terms)) >= 1
 
 
 async def _extract_sources(
@@ -1247,11 +1222,7 @@ async def public_web_research(
         candidates = [{"title": urlsplit(url).hostname or "Public page", "url": url, "snippet": ""} for url in urls]
         sources, fetched_page_count = await _extract_sources(settings, candidates, prompt, urls_provided=True)
     else:
-        try:
-            search_queries = _public_search_queries(prompt)
-        except Exception as exc:
-            logger.warning("Public search query construction failed (%s)", type(exc).__name__)
-            raise LLMUnavailableError("The public search query could not be constructed.") from exc
+        search_queries = _public_search_queries(prompt)
         provider_map = {
             "bing_news": ("Bing News RSS", _search_bing_news),
             "duckduckgo": ("DuckDuckGo", _search_duckduckgo),
@@ -1278,13 +1249,6 @@ async def public_web_research(
                     "Public web search provider=%s returned=%d topical=%d",
                     provider_name, len(results), len(matching),
                 )
-                if not matching and results and not _requires_official_source(prompt):
-                    matching = [item for item in results if _candidate_matches_relaxed(prompt, item)]
-                    if matching:
-                        logger.info(
-                            "Public web search provider=%s using subject-overlap fallback topical=%d",
-                            provider_name, len(matching),
-                        )
                 if not matching:
                     continue
                 candidate_sources, pages_read = await _extract_sources(

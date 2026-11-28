@@ -86,8 +86,7 @@ async def scopes(request: Request, db: DbSession, user: CurrentUser):
 
 @router.get('/templates')
 async def templates(user: CurrentUser):
-    from app.workflows.actions import catalog as action_catalog
-    return {'templates': template_catalog(), 'adapters': catalog(), 'actions': action_catalog()}
+    return {'templates': template_catalog(), 'adapters': catalog()}
 
 
 @router.get('/scopes/{scope_id}/members')
@@ -242,20 +241,11 @@ async def run_detail(scope_id: UUID, run_id: UUID, request: Request, db: DbSessi
 
 
 @router.post('/scopes/{scope_id}/runs/{run_id}/control/{command}')
-async def control(scope_id: UUID, run_id: UUID, command: Literal['pause','resume','retry','cancel','stop','compensate'],
+async def control(scope_id: UUID, run_id: UUID, command: Literal['pause','resume','retry','cancel','compensate'],
                   request: Request, db: DbSession, user: CurrentUser):
     run = await service(request, db, user).control(scope_id, run_id, command)
     await db.commit()
     return row_dict(run, exclude={'payload'})
-
-
-@router.post('/scopes/{scope_id}/runs/{run_id}/steps/{step_id}/perform')
-async def perform(scope_id: UUID, run_id: UUID, step_id: UUID, request: Request, db: DbSession, user: CurrentUser):
-    """Take a permissioned action step (e.g. verify invoices, transfer funds). The step then runs as you; your
-    permission is re-checked before every item, and revoking it stops the next item."""
-    _, step = await service(request, db, user).perform_action(scope_id, run_id, step_id)
-    await db.commit()
-    return row_dict(step, exclude={'output', 'claim_token', 'checkpoint'})
 
 
 @router.post('/scopes/{scope_id}/runs/{run_id}/steps/{step_id}/complete')

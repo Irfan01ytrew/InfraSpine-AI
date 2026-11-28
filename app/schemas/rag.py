@@ -488,7 +488,6 @@ class RagChatResponse(BaseModel):
         "identity",
         "library_inventory",
         "upload_capability",
-        "web_capability",
     ]
     chart: ChartOut | None = None
     page_images: list[PageImageOut] = Field(default_factory=list)

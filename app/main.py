@@ -18,8 +18,6 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__
 from app.api.routes import (
     workflow_engine,
-    finance,
-    approvals as approval_routes,
     integrations,
     infrastructure,
     quality,
@@ -177,12 +175,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             run_process_intelligence(app.state.sessionmaker, stop_worker), name="process-intelligence-worker"
         ))
     # These workers can dispatch approved business actions or contact connected services.
-    # Keep them opt-in so registering the modules never starts external effects by itself. Exception (step E):
-    # the unified workflow runtime now carries automation runs and the invoice flow, so it runs by default
-    # outside tests (every action it dispatches is already approved / permission-checked per step).
-    # WORKFLOW_ENGINE_WORKER_ENABLED=false (environment or .env) turns it off. The document worker process
-    # (`python -m app.worker`) runs it too; claims are leased, so two engines never run the same step twice.
-    if owner and settings.workflow_engine_on:
+    # Keep them opt-in so registering the modules never starts external effects by itself.
+    if owner and os.environ.get("WORKFLOW_ENGINE_WORKER_ENABLED", "false").lower() == "true":
         from app.workflows.engine import run_worker as run_workflow_engine
         worker_tasks.append(asyncio.create_task(
             run_workflow_engine(app.state.sessionmaker, app.state.cipher, stop_worker), name="workflow-engine-worker"
@@ -197,13 +191,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.integrations.worker import run_worker as run_integration_worker
         worker_tasks.append(asyncio.create_task(
             run_integration_worker(app.state.sessionmaker, app.state.cipher, stop_worker), name="integration-worker"
-        ))
-    outbox_enabled = settings.platform_outbox_worker_enabled and os.environ.get("APP_ENV") != "testing"
-    if owner and outbox_enabled:
-        from app.platform.outbox import run_outbox_worker
-        worker_tasks.append(asyncio.create_task(
-            run_outbox_worker(app.state.sessionmaker, stop_worker, interval_seconds=settings.platform_outbox_poll_seconds),
-            name="platform-outbox-worker",
         ))
     if settings.rag_embedding_warmup:
         worker_tasks.append(asyncio.create_task(_warm_embedder(app.state.rag.embedder), name="embedding-warmup"))
@@ -224,14 +211,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ))
     if settings.agent_studio_worker_enabled and owner:
         from app.agent_studio.worker import run_agent_studio_worker
-        from app.agent_studio.unified import StudioHost, configure_host
-
-        # This process owns the LLM runtime and the knowledge index, so the unified runtime executes Agent Studio
-        # runs here; the legacy loop then only runs tasks the runtime does not carry.
-        unified_studio = settings.workflow_engine_on
-        if unified_studio:
-            configure_host(StudioHost(app.state.sessionmaker, settings, app.state.cipher, app.state.llm_runtime,
-                                      app.state.rag))
 
         app.state.agent_studio_worker_task = asyncio.create_task(
             run_agent_studio_worker(
@@ -241,7 +220,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.llm_runtime,
                 app.state.rag,
                 stop_worker,
-                exclude_unified=unified_studio,
             ),
             name="agent-studio-task-worker",
         )
@@ -303,8 +281,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         stop_worker.set()
-        from app.agent_studio.unified import configure_host as _configure_studio_host
-        _configure_studio_host(None)
         for task in worker_tasks:
             with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
                 await asyncio.wait_for(task, timeout=settings.rag_worker_shutdown_grace_seconds + 15)
@@ -387,8 +363,6 @@ def create_app() -> FastAPI:
     from app.api.routes import company_graph
     app.include_router(company_graph.router)
     app.include_router(workflow_engine.router)
-    app.include_router(finance.router)
-    app.include_router(approval_routes.router)
     app.include_router(recovery_router)
     app.include_router(continuity_router)
     app.include_router(integrations.router)

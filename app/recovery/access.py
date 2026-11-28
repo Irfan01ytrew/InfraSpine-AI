@@ -5,7 +5,6 @@ from sqlalchemy import select
 
 from app.core.errors import NotFoundError, PermissionDeniedError
 from app.db.models import User
-from app.platform.modules import module_gate
 from app.recovery.models import Member
 
 
@@ -27,11 +26,7 @@ class Scope:
 async def scope_for(db, tenant_id, user_id):
     row = await db.scalar(select(Member).join(User, User.id == Member.user_id).where(
         Member.tenant_id == tenant_id, Member.user_id == user_id, Member.active.is_(True), User.is_active.is_(True)))
-    user = await db.get(User, user_id)
-    if user is None:
-        raise NotFoundError("Recovery workspace not found.")
-    gate = await module_gate(db, "recovery", tenant_id, user, legacy_allowed=row is not None)
-    if row is None or not gate.allowed:
+    if row is None:
         raise NotFoundError("Recovery workspace not found.")
     return Scope(tenant_id, user_id, row.role)
 

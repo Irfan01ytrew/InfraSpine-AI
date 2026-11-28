@@ -38,7 +38,6 @@ from app.db.models import (
     User,
 )
 from app.rag import access
-from app.platform.events import publish
 from app.rag.ingestion import IndexSynchronizer
 from app.rag.parsers.base import Inspection, ParseError
 from app.rag.parsers.registry import SUPPORTED_EXTENSIONS, inspect_document, limits_from_settings
@@ -288,12 +287,6 @@ class DocumentService:
         await self.db.refresh(doc)
         return doc
 
-
-    async def _publish_access_event(self, event_type: str, document_id, **payload) -> None:
-        from app.platform.side_effects import org_scope_id
-        scope_id = await org_scope_id(self.db)
-        await publish(self.db, event_type, scope_id, {"document_id": str(document_id), **payload}, uuid.uuid4())
-
     async def set_access(
         self, document_id: uuid.UUID, visibility: str, user_emails: Sequence[str], group_ids: Sequence[uuid.UUID]
     ) -> Document:
@@ -349,9 +342,6 @@ class DocumentService:
             self.db, self.ctx, "document.access_changed", target=str(doc.id),
             details={"visibility": visibility, "users": len(user_ids), "groups": len(groups)},
         )
-        await self._publish_access_event(
-            "document.acl_changed", doc.id, visibility=visibility, users=len(user_ids), groups=len(groups),
-        )
         await self.db.commit()
         await self.db.refresh(doc)
         return doc
@@ -381,7 +371,6 @@ class DocumentService:
             self.db, self.ctx, "document.deleted", target=str(document_id),
             details={"filename": filename, "chunks": len(chunk_ids)},
         )
-        await self._publish_access_event("document.deleted", document_id, chunks=len(chunk_ids))
         await self.db.commit()
         # The database is authoritative: retrieval can no longer return these chunks even if the
         # index update below fails (the worker then reconciles the index).

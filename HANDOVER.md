@@ -13,7 +13,7 @@ Users: administrators, department managers, employees (custom roles supported), 
 Deploy: on-premises Windows/Linux server or VM, Docker (compose files in repo), any host with PostgreSQL 16+.
 
 ## 2. Architecture & dependencies
-- Backend: Python 3.12, FastAPI, async SQLAlchemy, PostgreSQL (asyncpg), Alembic migrations (`migrations/versions`, head `0102_finance_invoices`; check with `alembic heads`).
+- Backend: Python 3.12, FastAPI, async SQLAlchemy, PostgreSQL (asyncpg), Alembic migrations (`migrations/versions`, head `0098_org_settings`; check with `alembic heads`).
 - Frontend: React 19 + Vite + TypeScript + Tailwind v4 + Radix (`frontend/`), light/dark themes.
 - RAG: local embeddings, FAISS index, RapidOCR (incl. Urdu), local Whisper media, LLM providers (DeepSeek/Gemini/OpenAI-compatible) with local Ollama fallback (`app/services/llm_fallback.py`).
 - Worker (`app/worker.py`): document ingestion, SLA escalation, approval reminders/escalation/email, attachment cleanup, webhook delivery, training/personal reminders, folder sync, automation.

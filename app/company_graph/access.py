@@ -11,7 +11,6 @@ from sqlalchemy.orm import aliased
 from app.company_graph.models import GraphMember, GraphRecord
 from app.core.errors import NotFoundError, PermissionDeniedError
 from app.db.models import User
-from app.platform.modules import module_gate
 
 
 @dataclass(frozen=True)
@@ -32,8 +31,7 @@ async def scope_for(db: AsyncSession, tenant_id: UUID, user: User) -> Scope:
         GraphMember.tenant_id == tenant_id, GraphMember.user_id == user.id,
         GraphMember.active.is_(True), User.is_active.is_(True),
     ).execution_options(populate_existing=True))
-    gate = await module_gate(db, "company_graph", tenant_id, user, legacy_allowed=member is not None)
-    if not gate.allowed:
+    if member is None:
         raise NotFoundError("Company graph not found.")
     return Scope(tenant_id, user.id, member.role, tuple(member.departments), member.all_departments)
 

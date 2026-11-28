@@ -19,7 +19,6 @@ from app.recovery import models as recovery_models  # noqa: F401
 from app.continuity import models as continuity_models  # noqa: F401
 from app.integrations import models as integrations_models  # noqa: F401
 from app.db import workflow_engine_models as workflow_models  # noqa: F401
-from app.db import finance_models  # noqa: F401
 from app.qa import models as quality_models  # noqa: F401
 from app.platform import models as platform_models  # noqa: F401
 from app.db.session import test_engine_options

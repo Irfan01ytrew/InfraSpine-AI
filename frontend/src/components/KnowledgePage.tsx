@@ -1349,7 +1349,6 @@ function AnswerBubble({
     identity: "Account context",
     library_inventory: "Library inventory",
     upload_capability: "Library access",
-    web_capability: "Live web access",
   };
   const modeLabel = answerModeLabel[answer.strategy];
 

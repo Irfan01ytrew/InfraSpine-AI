@@ -15,7 +15,7 @@ from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.core.security import hash_session_token
 from app.db.agent_studio_models import AgentStudioAgent
 from app.db.models import User, UserSession
-from app.db.session import test_engine_options as _test_engine_options
+from app.db.session import test_engine_options
 from app.platform import ActionSpec, VerifiedResult
 from app.platform import timezone as org_time
 from app.platform.models import (
@@ -31,7 +31,7 @@ EXTRA = ("treasury@example.com", "auditor@example.com")
 
 def run(fn):
     async def go():
-        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, **_test_engine_options())
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, **test_engine_options())
         try:
             return await fn(async_sessionmaker(engine, expire_on_commit=False))
         finally:
@@ -89,8 +89,7 @@ def test_scope_inheritance_404_vs_403_visible_scopes_and_effective_permissions()
                 await platform.require(db, officer, "invoice.verify", s["hr"])
             visible = await platform.visible_scopes(db, officer, "invoice.verify")
             assert visible.scope_ids == {s["finance"], s["payables"]}
-            perms = await platform.effective_permissions(db, s["ids"][USER_EMAIL], s["payables"])
-            assert {"invoice.verify", "finance.read"} <= perms  # plus inherited org.member permissions
+            assert await platform.effective_permissions(db, s["ids"][USER_EMAIL], s["payables"]) == {"invoice.verify", "finance.read"}
             admin = await principal(db, ADMIN_EMAIL)
             # the legacy admin role keeps platform administration but never business duties
             assert (await platform.authorize(db, admin, "platform.manage", s["hr"])).allowed
@@ -347,26 +346,18 @@ def test_revoke_user_access_stops_sessions_channels_principals_memberships_and_r
             pending_id = (await platform.request_approval(db, held, payment(s["finance"]),
                                                           required_permission="payment.approve")).id
             officer = await principal(db, USER2_EMAIL)
-            with pytest.raises(PermissionDeniedError):  # org is visible; identity.revoke is not granted
+            with pytest.raises(NotFoundError):  # a non-admin cannot revoke (org scope not revealed)
                 await platform.revoke_user_access(db, officer, user_id, "test")
             await db.rollback()
             admin = await principal(db, ADMIN_EMAIL)
             counts = await platform.revoke_user_access(db, admin, user_id, "left the company")
-            assert {k: counts[k] for k in ("sessions", "channel_identities", "pending_approvals")} == {
-                "sessions": 1, "channel_identities": 1, "pending_approvals": 1}
-            assert counts["memberships"] >= 1
-            assert (await platform.authorize(db, held, "invoice.verify", s["finance"])).reason in {"principal_revoked", "user_inactive"}
+            assert counts == {"memberships": 1, "sessions": 1, "channel_identities": 1, "pending_approvals": 1}
+            assert (await platform.authorize(db, held, "invoice.verify", s["finance"])).reason == "principal_revoked"
             with pytest.raises(PermissionDeniedError):
                 await platform.resolve_principal(db, session_token="tok-r")
             with pytest.raises(PermissionDeniedError):
                 await platform.resolve_principal(db, channel="whatsapp_baileys", external_id="923001111111")
             assert (await db.get(PlatformApprovalRequest, pending_id, populate_existing=True)).status == "cancelled"
-            fresh = await principal(db, USER_EMAIL)
-            # The account is deactivated by the revoke; an administrator reactivating it does not bring back the
-            # revoked memberships (they are platform-revoked, never re-mirrored implicitly).
-            assert (await platform.authorize(db, fresh, "invoice.verify", s["finance"])).reason == "user_inactive"
-            (await db.get(User, user_id)).is_active = True
-            await db.commit()
             fresh = await principal(db, USER_EMAIL)
             assert (await platform.authorize(db, fresh, "invoice.verify", s["finance"])).reason == "not_a_member"
             events = list(await db.scalars(select(PlatformOutbox.event_type).order_by(PlatformOutbox.id)))

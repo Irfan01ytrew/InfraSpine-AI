@@ -168,43 +168,6 @@ async def finish(sessionmaker, registry, cipher, claimed, result, error):
         return True
 
 
-async def _execute_once(sessionmaker, claimed, dispatch):
-    """Dispatch a recovery command through the platform ledger so a retry never re-runs a completed action."""
-    from app.db.models import User
-    from app.platform.access import principal_for
-    from app.platform.approvals import ActionSpec
-    from app.platform.execution import VerifiedResult
-    from app.platform.side_effects import dispatch_once, module_scope_id
-
-    held = {}
-
-    async def _dispatch():
-        held["result"] = await asyncio.wait_for(dispatch(), timeout=claimed["timeout"])
-        return str(claimed["id"])
-
-    async def _verify(ref):
-        return VerifiedResult(ok=True, details={"external_ref": ref, "replayed": "result" not in held})
-
-    async with sessionmaker() as db:
-        owner = await db.get(User, claimed["context"].owner_id)
-        if owner is None or not owner.is_active:
-            raise RuntimeError("authorization_rejected")
-        scope_id = await module_scope_id(db, "recovery", claimed["context"].tenant_id)
-        if scope_id is None:
-            raise RuntimeError("authorization_rejected")
-        execution = await dispatch_once(
-            db, principal_for(owner, channel="worker"), f"recovery:{claimed['id']}",
-            ActionSpec("recovery.command", scope_id, {"command_id": str(claimed["id"]), "action": claimed["action"]},
-                       subject=f"recovery:{claimed['id']}"),
-            duty="recovery.access", dispatch=_dispatch, verify=_verify,
-        )
-        if execution.replayed and "result" not in held:
-            return execution.verified_result
-        if execution.status == "failed" and "result" not in held:
-            raise RuntimeError("adapter_failed")
-        return held.get("result")
-
-
 async def process_once(sessionmaker, registry, cipher):
     claimed = await claim(sessionmaker, registry, cipher)
     if claimed is None:
@@ -219,10 +182,7 @@ async def process_once(sessionmaker, registry, cipher):
             if claimed["phase"] == "verify":
                 return await adapter.observe(claimed["context"])
             return await adapter.execute(claimed["context"], claimed["action"])
-        if claimed["phase"] == "execute":
-            result = await _execute_once(sessionmaker, claimed, dispatch)
-        else:
-            result = await asyncio.wait_for(dispatch(), timeout=claimed["timeout"])
+        result = await asyncio.wait_for(dispatch(), timeout=claimed["timeout"])
     except TimeoutError:
         error = "adapter_timeout"
     except Exception:
