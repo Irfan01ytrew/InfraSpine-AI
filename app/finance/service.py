@@ -9,14 +9,16 @@ import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, nulls_last, select, update
 
 from app.core.errors import ConflictError, InvalidInputError, NotFoundError
-from app.db.finance_models import (FinGoodsReceipt, FinInvoice, FinInvoiceBatch, FinPayment, FinPurchaseOrder,
-                                   FinVendor)
+from app.db.finance_models import (FinAnomalySettings, FinGoodsReceipt, FinInvoice, FinInvoiceBatch, FinPayment,
+                                   FinPurchaseOrder, FinVendor)
 from app.db.models import AccessGroup, User
 from app.db.workflow_engine_models import WorkflowRun, WorkflowStep
 from app.finance import extraction
+from app.finance.anomaly import (ANOMALY_CODES, SETTING_FIELDS, config_from_settings, config_out,
+                                 mask_account, validate_config_patch)
 from app.finance.verification import name_key
 from app.finance.workflow import TEMPLATE_DESCRIPTION, TEMPLATE_NAME, TEMPLATE_REF, invoice_spec
 from app.platform.access import (effective_permissions, ensure_role, grant_membership, principal_for, require,
@@ -365,10 +367,13 @@ class FinanceService:
         row = await self.db.scalar(select(FinInvoice).where(FinInvoice.id == invoice_id).with_for_update())
         if row is None:
             raise NotFoundError('Invoice not found.')
-        # Correcting data is an ingestion duty; rejecting an invoice is a verification decision.
+        # Correcting data is an ingestion duty; rejecting an invoice, or accepting an
+        # anomaly-flagged invoice as-is, is a verification decision.
         await self.require(row.group_id, 'invoice.ingest' if action == 'correct' else 'invoice.verify')
         if row.status != 'exception':
             raise ConflictError('Only invoices in the exceptions queue can be resolved.')
+        codes = [(r or {}).get('code') for r in (row.reasons or [])]
+        anomaly_codes = [c for c in codes if c in ANOMALY_CODES]
         if action == 'reject':
             row.status = 'rejected'
         elif action == 'correct':
@@ -381,13 +386,77 @@ class FinanceService:
                 setattr(row, key, value)
             row.status, row.reasons, row.revision, row.payment_id = 'pending', [], row.revision + 1, None
             row.verified_at, row.verified_by = None, None
+        elif action == 'approve':
+            # Step Y slice 4: the owner reviewed the advisory flags and accepts the
+            # invoice as-is. Allowed only when every reason is an anomaly flag (the
+            # payee-verification hold marker counts as one): a deterministic reason
+            # means the data is wrong and must be corrected instead. Accepting clears
+            # the reasons — including any payee-verification hold code — so the payment
+            # grouping no longer refuses the invoice; the decision itself is preserved
+            # in the audit event below, with the flag codes that were reviewed.
+            deterministic = [c for c in codes if c not in ANOMALY_CODES and c != 'payee_verification_hold']
+            if not codes or deterministic:
+                raise ConflictError('Only invoices flagged by anomaly detection can be approved as-is. '
+                                    'Correct the data first.')
+            row.status, row.reasons = 'verified', []
+            row.verified_by, row.verified_at = self.user.id, datetime.now(UTC)
         else:
-            raise InvalidInputError('Resolve with correct or reject.')
+            raise InvalidInputError('Resolve with correct, reject or approve.')
         row.resolution_note = note.strip()[:500] or None
         row.updated_at = datetime.now(UTC)
-        audit(self.db, self.p, f'finance.invoice_{"corrected" if action == "correct" else "rejected"}', target=str(row.id),
-              details={'batch_id': str(row.batch_id), 'revision': row.revision})
+        event = {'correct': 'finance.invoice_corrected', 'reject': 'finance.invoice_rejected',
+                 'approve': 'finance.invoice_anomaly_approved'}[action]
+        audit(self.db, self.p, event, target=str(row.id),
+              details={'batch_id': str(row.batch_id), 'revision': row.revision,
+                       'anomaly_flags': anomaly_codes})
         return row
+
+    async def vendor_history(self, group_id, vendor_id, *, limit: int = 100) -> tuple[FinVendor, list[FinInvoice]]:
+        """Step Y slice 4: the vendor's prior invoices in this department, newest first.
+
+        Read-only; the bank account on each invoice is masked to its last 4
+        characters — the full account never leaves the server in this view.
+        """
+        await self.require(group_id, 'finance.read')
+        vendor = await self.db.scalar(select(FinVendor).where(
+            FinVendor.id == vendor_id, FinVendor.group_id == group_id))
+        if vendor is None:
+            raise NotFoundError('Vendor not found.')
+        rows = list((await self.db.scalars(select(FinInvoice).where(
+            FinInvoice.group_id == group_id, FinInvoice.vendor_id == vendor_id)
+            .order_by(nulls_last(FinInvoice.invoice_date.desc()), FinInvoice.id.desc()).limit(limit))).all())
+        return vendor, rows
+
+    # ------------------------------------------------------------------ anomaly settings (Step Y slice 5)
+
+    async def anomaly_settings(self, group_id) -> dict:
+        """The department's effective anomaly thresholds: stored overrides merged
+        over the slice-1 defaults, plus which fields are customised. Read-only."""
+        await self.require(group_id, 'finance.read')
+        row = await self.db.scalar(select(FinAnomalySettings).where(
+            FinAnomalySettings.group_id == group_id))
+        return _anomaly_settings_out(group_id, dict(row.thresholds or {}) if row is not None else {})
+
+    async def set_anomaly_settings(self, group_id, patch: dict) -> dict:
+        """Change the department's anomaly thresholds (finance.manage). A change is
+        a settings change only: it never rewrites already-verified invoices and
+        only affects verifications that run after it. Every change is audited."""
+        await self.require(group_id, 'finance.manage')
+        try:
+            cleaned = validate_config_patch(patch)
+        except ValueError as exc:
+            raise InvalidInputError(str(exc))
+        row = await self.db.scalar(select(FinAnomalySettings).where(
+            FinAnomalySettings.group_id == group_id).with_for_update())
+        before = dict(row.thresholds or {}) if row is not None else {}
+        if row is None:
+            row = FinAnomalySettings(group_id=group_id, thresholds={})
+            self.db.add(row)
+        row.thresholds = {**before, **cleaned}
+        row.updated_by, row.updated_at = self.user.id, datetime.now(UTC)
+        audit(self.db, self.p, 'finance.anomaly_thresholds_changed', target=str(group_id),
+              details={'group_id': str(group_id), 'changed': cleaned, 'thresholds': row.thresholds})
+        return _anomaly_settings_out(group_id, row.thresholds)
 
     # ------------------------------------------------------------------ approvals and payments
 
@@ -508,6 +577,13 @@ class FinanceService:
         return row
 
 
+def _anomaly_settings_out(group_id, stored: dict) -> dict:
+    """Step Y slice 5: effective thresholds for the API — stored overrides merged
+    over the slice-1 defaults, plus which fields the department customised."""
+    return {'group_id': str(group_id), 'thresholds': config_out(config_from_settings(stored)),
+            'customized': sorted(set(stored) & set(SETTING_FIELDS))}
+
+
 def invoice_out(row: FinInvoice) -> dict:
     return {'id': str(row.id), 'batch_id': str(row.batch_id), 'group_id': str(row.group_id), 'seq': row.seq,
             'revision': row.revision, 'invoice_number': row.invoice_number, 'vendor_name': row.vendor_name,
@@ -519,6 +595,15 @@ def invoice_out(row: FinInvoice) -> dict:
             'verified_at': row.verified_at.isoformat() if row.verified_at else None,
             'resolution_note': row.resolution_note,
             'extraction_status': (row.extraction or {}).get('status')}
+
+
+def vendor_history_out(row: FinInvoice) -> dict:
+    """Step Y slice 4: one prior invoice for the per-vendor history view. The bank
+    account is masked to its last 4 characters; the full account never leaves the server."""
+    out = invoice_out(row)
+    out['bank_account_masked'] = (mask_account(row.bank_account_on_invoice)
+                                  if row.bank_account_on_invoice else None)
+    return out
 
 
 def payment_out(row: FinPayment, vendor_name: str | None = None) -> dict:

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "../src/finance/financeView.mjs";
+import { actionableStep, anomalyFlags, canApproveAnomaly, flagDetailLines, headline, isAnomalyFlagged, reasonCounts, shortHash, skippedSummary, spendSeries } from "../src/finance/financeView.mjs";
 
 test("headline reads like the founder scenario", () => {
   assert.equal(headline({ verified: 32, total: 50 }), "32 of 50 verified");
@@ -48,4 +48,27 @@ test("only the step the person may perform is offered", () => {
   assert.equal(actionableStep(run, ["funds.transfer"]), null);
   assert.equal(actionableStep({ ...run, status: "paused" }, ["invoice.verify"]), null);
   assert.equal(shortHash("a".repeat(64)), "aaaaaa…aaaaaa");
+});
+
+test("anomaly queue helpers separate advisory flags from deterministic reasons", () => {
+  const flagged = { reasons: [
+    { code: "near_duplicate", message: "Same vendor, amount and date", details: { amount: "40000.00", prior_id: "x" } },
+    { code: "first_time_payee", message: "No previous invoice", details: {} },
+  ] };
+  const mixed = { reasons: [{ code: "near_duplicate", message: "dup", details: {} }, { code: "po_missing", message: "No PO", details: {} }] };
+  const held = { reasons: [{ code: "bank_account_changed", message: "changed", details: { previous_account: "********0001" } }, { code: "payee_verification_hold", message: "held", details: {} }] };
+  const deterministic = { reasons: [{ code: "po_missing", message: "No PO", details: {} }] };
+  assert.deepEqual(anomalyFlags(flagged).map((f) => f.code), ["near_duplicate", "first_time_payee"]);
+  assert.equal(isAnomalyFlagged(flagged), true);
+  assert.equal(isAnomalyFlagged(deterministic), false);
+  assert.equal(isAnomalyFlagged({ reasons: [] }), false);
+  assert.equal(isAnomalyFlagged(null), false);
+  assert.equal(canApproveAnomaly(flagged), true);
+  assert.equal(canApproveAnomaly(held), true);
+  assert.equal(canApproveAnomaly(mixed), false);
+  assert.equal(canApproveAnomaly(deterministic), false);
+  assert.equal(canApproveAnomaly({ reasons: [] }), false);
+  assert.deepEqual(flagDetailLines(flagged.reasons[0]), ["amount: 40000.00", "prior_id: x"]);
+  assert.deepEqual(flagDetailLines(flagged.reasons[1]), []);
+  assert.deepEqual(flagDetailLines(null), []);
 });

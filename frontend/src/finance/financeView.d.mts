@@ -1,4 +1,4 @@
-export interface Reason { code: string; message?: string }
+export interface Reason { code: string; message?: string; details?: Record<string, string | number | null> }
 export interface InvoiceLike { reasons?: Reason[] }
 export interface SpendRow { month: string; department: string; currency: string; amount: string; count: number }
 export interface Spend { months: string[]; rows: SpendRow[] }
@@ -7,6 +7,11 @@ export interface RunLike { status: string; steps: StepLike[] }
 
 export function headline(summary: { verified: number; total: number } | null | undefined): string;
 export function reasonCounts(invoices: readonly InvoiceLike[]): { code: string; count: number }[];
+export const ANOMALY_CODES: ReadonlySet<string>;
+export function anomalyFlags(invoice: InvoiceLike | null | undefined): Reason[];
+export function isAnomalyFlagged(invoice: InvoiceLike | null | undefined): boolean;
+export function canApproveAnomaly(invoice: InvoiceLike | null | undefined): boolean;
+export function flagDetailLines(flag: Reason | null | undefined): string[];
 export function spendSeries(spend: Spend | null | undefined, currency?: string): {
   months: string[]; departments: string[]; max: number;
   series: { month: string; total: number; parts: { department: string; amount: number }[] }[];

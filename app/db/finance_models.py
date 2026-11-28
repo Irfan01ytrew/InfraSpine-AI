@@ -79,6 +79,21 @@ class FinGoodsReceipt(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class FinAnomalySettings(Base):
+    """Step Y slice 5: per-department anomaly detection threshold overrides.
+
+    One row per department (group_id). ``thresholds`` is a JSON object keyed by
+    AnomalyConfig field name; absent keys fall back to the slice-1 defaults, and
+    no row at all means the defaults apply. A change never rewrites history.
+    """
+    __tablename__ = 'fin_anomaly_settings'
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('access_groups.id', ondelete='RESTRICT'),
+                                                primary_key=True)
+    thresholds: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'))
+    updated_at: Mapped[datetime] = _ts()
+
+
 class FinInvoiceBatch(Base):
     __tablename__ = 'fin_invoice_batches'
     __table_args__ = (

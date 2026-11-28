@@ -18,8 +18,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import AppSettings, CurrentUser, DbSession
 from app.core.errors import InvalidInputError
 from app.finance import extraction
+from app.finance.anomaly import mask_account
 from app.finance.connectors import resolve_connector
-from app.finance.service import FinanceService, batch_out, invoice_out, money, payment_out
+from app.finance.service import (FinanceService, batch_out, invoice_out, money, payment_out,
+                                 vendor_history_out)
 from app.finance.verification import REASONS
 
 router = APIRouter(prefix='/api/finance', tags=['finance'])
@@ -78,7 +80,7 @@ class InvoicesIn(Strict):
 
 
 class ResolveIn(Strict):
-    action: Literal['correct', 'reject']
+    action: Literal['correct', 'reject', 'approve']
     fields: InvoiceRow | None = None
     note: str = Field(default='', max_length=500)
 
@@ -105,6 +107,12 @@ class ConnectorIn(Strict):
     mode: Literal['mock', 'http', 'http+mock'] | None = None
 
 
+class AnomalySettingsIn(Strict):
+    # Threshold overrides keyed by AnomalyConfig field name; validated strictly
+    # in the service (unknown keys and out-of-range values are rejected).
+    thresholds: dict = Field(default_factory=dict)
+
+
 def svc(request: Request, db, user, settings) -> FinanceService:
     return FinanceService(db, user, settings, request.app.state.cipher)
 
@@ -122,6 +130,35 @@ async def scopes(request: Request, db: DbSession, user: CurrentUser, settings: A
     except Exception:
         connector = 'unavailable'
     return {'scopes': await service.scopes(), 'reasons': REASONS, 'connector': connector}
+
+
+@router.get('/scopes/{group_id}/vendors/{vendor_id}/history')
+async def vendor_history(group_id: UUID, vendor_id: UUID, request: Request, db: DbSession, user: CurrentUser,
+                         settings: AppSettings):
+    """Step Y slice 4: per-vendor history for the anomaly queue (read-only).
+    The vendor's bank account is masked here too — the full account never
+    leaves the server in this view (the vendor-master endpoints keep their
+    own contract)."""
+    vendor, rows = await svc(request, db, user, settings).vendor_history(group_id, vendor_id)
+    vendor_view = vendor_out(vendor)
+    vendor_view['bank_account'] = mask_account(vendor.bank_account)
+    return {'vendor': vendor_view, 'invoices': [vendor_history_out(r) for r in rows]}
+
+
+@router.get('/scopes/{group_id}/anomaly-settings')
+async def anomaly_settings(group_id: UUID, request: Request, db: DbSession, user: CurrentUser,
+                           settings: AppSettings):
+    """Step Y slice 5: the department's effective anomaly thresholds."""
+    return await svc(request, db, user, settings).anomaly_settings(group_id)
+
+
+@router.put('/scopes/{group_id}/anomaly-settings')
+async def set_anomaly_settings(group_id: UUID, body: AnomalySettingsIn, request: Request, db: DbSession,
+                               user: CurrentUser, settings: AppSettings):
+    """Step Y slice 5: change the department's anomaly thresholds (finance.manage)."""
+    out = await svc(request, db, user, settings).set_anomaly_settings(group_id, body.thresholds)
+    await db.commit()
+    return out
 
 
 @router.get('/scopes/{group_id}/vendors')

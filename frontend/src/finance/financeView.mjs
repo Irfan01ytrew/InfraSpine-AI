@@ -44,6 +44,40 @@ export function skippedSummary(skipped) {
   return rows.map((row) => `${row.filename}: ${row.reason}`).join("; ");
 }
 
+/** Anomaly flag codes (Step Y, `app/finance/anomaly.py`): advisory flags that block
+    straight-through approval but never reject, pay or change anything on their own. */
+export const ANOMALY_CODES = new Set([
+  "exact_duplicate", "near_duplicate", "amount_outlier",
+  "first_time_payee", "rapid_repeat_payments", "bank_account_changed",
+]);
+
+/** Advisory anomaly flags on an invoice's reasons, with their detail payloads. */
+export function anomalyFlags(invoice) {
+  return (invoice?.reasons ?? []).filter((r) => ANOMALY_CODES.has(r.code));
+}
+
+/** True when the invoice carries at least one anomaly flag. */
+export function isAnomalyFlagged(invoice) {
+  return anomalyFlags(invoice).length > 0;
+}
+
+/** True when the owner may approve the invoice as-is: it is flagged, and no
+    deterministic reason remains (the `payee_verification_hold` marker counts as
+    an anomaly-side reason). A deterministic reason means the data is wrong and
+    must be corrected instead. */
+export function canApproveAnomaly(invoice) {
+  const reasons = invoice?.reasons ?? [];
+  return reasons.length > 0
+    && anomalyFlags(invoice).length > 0
+    && reasons.every((r) => ANOMALY_CODES.has(r.code) || r.code === "payee_verification_hold");
+}
+
+/** One flag's details payload as "key: value" lines for the queue view. Account
+    numbers arrive masked from the server and are shown as received. */
+export function flagDetailLines(flag) {
+  return Object.entries(flag?.details ?? {}).map(([key, value]) => `${key}: ${value ?? "—"}`);
+}
+
 /** Which workflow step the current person can take now, given their finance permissions. */
 export function actionableStep(run, permissions) {
   if (!run || !Array.isArray(run.steps) || !["running", "queued"].includes(run.status)) return null;

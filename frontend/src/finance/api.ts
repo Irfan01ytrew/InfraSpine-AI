@@ -1,7 +1,7 @@
 import { request } from "../api";
 
 export interface FinanceScope { id: string; name: string; permissions: string[] }
-export interface Reason { code: string; message: string; fields?: string[] }
+export interface Reason { code: string; message: string; fields?: string[]; details?: Record<string, string | number | null> }
 export interface Invoice {
   id: string; batch_id: string; group_id: string; seq: number; revision: number; invoice_number: string | null;
   vendor_name: string | null; vendor_id: string | null; po_number: string | null; department: string | null;
@@ -34,6 +34,13 @@ export interface ConnectorStatus {
 }
 export interface Spend { months: string[]; from: string; departments: string[]; currencies: string[]; rows: SpendRow[] }
 export interface Vendor { id: string; name: string; bank_account: string; currency: string; tax_id: string | null; status: string }
+export interface VendorHistoryInvoice extends Invoice { bank_account_masked: string | null }
+export interface VendorHistory { vendor: Vendor; invoices: VendorHistoryInvoice[] }
+export interface AnomalySettings {
+  group_id: string;
+  thresholds: { min_history: number; outlier_mad_multiplier: string; outlier_ratio_when_flat: string; near_duplicate_days: number; velocity_window_days: number; velocity_max_prior: number };
+  customized: string[];
+}
 export interface KnowledgeDocument { id: string; filename: string; folder: string | null; indexed: boolean; updated_at: string | null }
 export interface SkippedDocument { document_id: string; filename: string; reason: string }
 export interface InvoiceInput {
@@ -63,7 +70,12 @@ export const financeApi = {
     call<{ invoices: Invoice[]; skipped: SkippedDocument[] }>("POST", `/batches/${id}/invoices/from-documents`, { document_ids: documentIds, folder: folder ?? null }),
   start: (id: string) => call<{ batch: Batch; run_id: string }>("POST", `/batches/${id}/start`),
   exceptions: (group?: string) => call<{ invoices: Invoice[] }>("GET", `/exceptions${group ? `?group_id=${group}` : ""}`),
-  resolve: (id: string, action: "correct" | "reject", fields: InvoiceInput | null, note: string) =>
+  vendorHistory: (group: string, vendorId: string) =>
+    call<VendorHistory>("GET", `/scopes/${group}/vendors/${vendorId}/history`),
+  anomalySettings: (group: string) => call<AnomalySettings>("GET", `/scopes/${group}/anomaly-settings`),
+  setAnomalySettings: (group: string, thresholds: Record<string, number>) =>
+    call<AnomalySettings>("PUT", `/scopes/${group}/anomaly-settings`, { thresholds }),
+  resolve: (id: string, action: "correct" | "reject" | "approve", fields: InvoiceInput | null, note: string) =>
     call<Invoice>("POST", `/invoices/${id}/resolve`, { action, fields, note }),
   approvals: () => call<{ approvals: PaymentApproval[] }>("GET", "/approvals"),
   decide: (id: string, decision: "approve" | "reject", presented_hash: string, note = "") =>
