@@ -124,11 +124,11 @@ export function AgentStudioWhatsAppPanel({ agents, onCreateAgent, onConfigureAge
     <Card>
       <CardHeader title="How the WhatsApp connection works" description="This uses the official Meta WhatsApp Business Cloud API. Your regular personal WhatsApp account cannot be connected directly." icon={<MessageCircle />} />
       <CardBody className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-border bg-surface-2/40 p-3"><p className="text-xs font-semibold text-primary">1 · Prepare Meta</p><p className="mt-1 text-xs leading-relaxed text-muted">Create a Meta Business app, add WhatsApp, and use a business phone number with its Phone Number ID and WABA ID.</p></div>
-        <div className="rounded-lg border border-border bg-surface-2/40 p-3"><p className="text-xs font-semibold text-primary">2 · Save securely here</p><p className="mt-1 text-xs leading-relaxed text-muted">Choose an enabled agent, add the Meta IDs, permanent token, App Secret and approved sender numbers. Secrets are encrypted before storage.</p></div>
-        <div className="rounded-lg border border-border bg-surface-2/40 p-3"><p className="text-xs font-semibold text-primary">3 · Register the webhook</p><p className="mt-1 text-xs leading-relaxed text-muted">After saving, copy the callback URL and verify token into Meta Webhooks, subscribe to <strong>messages</strong>, then verify the connection here.</p></div>
-        <p className="text-xs leading-relaxed text-muted sm:col-span-3">Roman Urdu: WhatsApp connect karne ke liye Meta Business app aur business number zaroori hai. Personal WhatsApp seedha connect nahi hota. Meta token aur App Secret sirf is dashboard mein dain—chat mein share na karein.</p>
-        <a className="inline-flex items-center gap-1 text-xs text-primary underline sm:col-span-3" href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer">Open Meta for Developers <ExternalLink className="size-3" /></a>
+        <div className="rounded-lg border border-border bg-surface-2/40 p-3"><p className="text-[13px] font-semibold text-primary">1 · Prepare Meta</p><p className="mt-1 text-sm leading-relaxed text-muted">Create a Meta Business app, add WhatsApp, and use a business phone number with its Phone Number ID and WABA ID.</p></div>
+        <div className="rounded-lg border border-border bg-surface-2/40 p-3"><p className="text-[13px] font-semibold text-primary">2 · Save securely here</p><p className="mt-1 text-sm leading-relaxed text-muted">Choose an enabled agent, add the Meta IDs, permanent token, App Secret and approved sender numbers. Secrets are encrypted before storage.</p></div>
+        <div className="rounded-lg border border-border bg-surface-2/40 p-3"><p className="text-[13px] font-semibold text-primary">3 · Register the webhook</p><p className="mt-1 text-sm leading-relaxed text-muted">After saving, copy the callback URL and verify token into Meta Webhooks, subscribe to <strong>messages</strong>, then verify the connection here.</p></div>
+        <p className="text-sm leading-relaxed text-muted sm:col-span-3">Roman Urdu: WhatsApp connect karne ke liye Meta Business app aur business number zaroori hai. Personal WhatsApp seedha connect nahi hota. Meta token aur App Secret sirf is dashboard mein dain—chat mein share na karein.</p>
+        <a className="inline-flex items-center gap-1 text-[13px] text-primary underline sm:col-span-3" href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer">Open Meta for Developers <ExternalLink className="size-3" /></a>
       </CardBody>
     </Card>
     <Card>
@@ -190,7 +190,7 @@ export function AgentStudioWhatsAppPanel({ agents, onCreateAgent, onConfigureAge
           <li>Save the connection here, then click <strong>Verify & subscribe</strong>. Send a text message to your WhatsApp Business number to start an agent task.</li>
         </ol>
         <p className="text-xs text-muted">Current agent: {connection.agent_name}. Allowed senders: {connection.allowed_senders.join(", ")}. {connection.last_verified_at ? `Last checked ${formatDate(connection.last_verified_at)}.` : "Not verified yet."}</p>
-        <a className="inline-flex items-center gap-1 text-xs text-primary underline" href="https://developers.facebook.com/documentation/business-messaging/whatsapp/overview" target="_blank" rel="noreferrer">WhatsApp Cloud API guide <ExternalLink className="size-3" /></a>
+        <a className="inline-flex items-center gap-1 text-[13px] text-primary underline" href="https://developers.facebook.com/documentation/business-messaging/whatsapp/overview" target="_blank" rel="noreferrer">WhatsApp Cloud API guide <ExternalLink className="size-3" /></a>
       </CardBody>
     </Card>}
     </>}

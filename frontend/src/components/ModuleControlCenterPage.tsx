@@ -428,7 +428,7 @@ export function ModuleControlCenterPage() {
               <div className="flex items-start gap-3">
                 <span className={`grid size-10 shrink-0 place-items-center rounded-xl ${isSelected ? "bg-primary text-primary-foreground" : "bg-surface-2 text-foreground-2"}`}><Icon className="size-[18px]" /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[11px] font-semibold tracking-wide text-muted">MODULE {row.module.number}</span><Badge tone={statusTone} dot>{row.state}</Badge></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-semibold tracking-wide text-muted">MODULE {row.module.number}</span><Badge tone={statusTone} dot>{row.state}</Badge></div>
                   <h3 className="mt-1 text-sm font-semibold leading-snug text-foreground">{row.module.title}</h3>
                   <p className="mt-1 line-clamp-2 min-h-9 text-xs leading-relaxed text-muted">{row.module.focus}</p>
                 </div>
@@ -439,7 +439,7 @@ export function ModuleControlCenterPage() {
                 <MiniMetric label="Success · 30d" value={loading || !analytics ? "—" : row.completionRate === null ? "—" : `${row.completionRate}%`} />
               </div>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2"><div className={`h-full rounded-full ${row.completionRate === null ? "bg-border-strong" : row.completionRate >= 80 ? "bg-success" : row.completionRate >= 50 ? "bg-warning" : "bg-danger"}`} style={{ width: `${row.completionRate ?? 0}%` }} /></div>
-              <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted"><span>{row.agent ? row.agent.enabled ? "Assistant enabled" : "Assistant paused" : "Specialist not configured"}</span><span>{row.latestRun ? timeAgo(row.latestRun.created_at) : "No runs yet"}</span></div>
+              <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted"><span>{row.agent ? row.agent.enabled ? "Assistant enabled" : "Assistant paused" : "Specialist not configured"}</span><span>{row.latestRun ? timeAgo(row.latestRun.created_at) : "No runs yet"}</span></div>
             </button>;
           })}
           {!filteredModules.length && <EmptyState className="sm:col-span-2 xl:col-span-3" icon={<Search />} title="No matching modules" description="Change the search or status filter to see more module specialists." />}
@@ -475,7 +475,7 @@ export function ModuleControlCenterPage() {
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold text-foreground">{selectedAgent.name}</h3><Badge tone={selectedAgent.enabled ? "success" : "neutral"} dot>{selectedAgent.enabled ? "Enabled" : "Paused"}</Badge>{providerReady === false && <Badge tone="warning">AI provider needed</Badge>}</div>
                 <p className="mt-1 text-xs leading-relaxed text-muted">{selectedAgent.description}</p>
-                <div className="mt-2 flex flex-wrap gap-1.5">{selectedModule.roots.map((path) => <span key={path} className="rounded-md border border-border bg-surface px-2 py-1 font-mono text-[10px] text-foreground-2">{path}</span>)}</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">{selectedModule.roots.map((path) => <span key={path} className="rounded-md border border-border bg-surface px-2 py-1 font-mono text-xs text-foreground-2">{path}</span>)}</div>
               </div>
               <div className="flex flex-wrap gap-2 text-xs">
                 <Badge tone="neutral"><Wrench /> {selectedAgent.tool_permissions.length} permitted tools</Badge>
@@ -485,10 +485,10 @@ export function ModuleControlCenterPage() {
 
             <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.42fr)]">
               <div className="min-w-0 border-b border-border xl:border-r xl:border-b-0">
-                <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3"><div><h3 className="text-xs font-semibold text-foreground">Instructions & responses</h3><p className="mt-0.5 text-[11px] text-muted">The specialist's answer appears here after it runs.</p></div>{threadLoading && <LoaderCircle className="size-4 animate-spin text-muted" />}</div>
+                <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3"><div><h3 className="text-xs font-semibold text-foreground">Instructions & responses</h3><p className="mt-0.5 text-xs text-muted">The specialist's answer appears here after it runs.</p></div>{threadLoading && <LoaderCircle className="size-4 animate-spin text-muted" />}</div>
                 <div className="grid max-h-[620px] min-h-64 content-start gap-3 overflow-y-auto p-4 sm:p-5">
                   {threadRuns.length ? threadRuns.map((run) => <article key={run.id} className="rounded-xl border border-border bg-surface p-4 shadow-xs">
-                    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><p className="whitespace-pre-wrap text-[13px] font-medium leading-relaxed text-foreground">{run.prompt}</p><p className="mt-1 text-[10px] text-muted" title={formatDate(run.created_at)}>{formatDate(run.created_at)}</p></div><RunStatus run={run} /></div>
+                    <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><p className="whitespace-pre-wrap text-[13px] font-medium leading-relaxed text-foreground">{run.prompt}</p><p className="mt-1 text-xs text-muted" title={formatDate(run.created_at)}>{formatDate(run.created_at)}</p></div><RunStatus run={run} /></div>
                     {(run.status === "running" || run.status === "queued") && <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2 text-xs text-primary"><LoaderCircle className="size-4 animate-spin" /> {run.status === "queued" ? "Task is saved and waiting for the execution worker." : "Module is working. This conversation will refresh automatically."}</div>}
                     {run.answer && <div className="research-answer mt-3 border-t border-border pt-3"><Markdown text={run.answer} /></div>}
                     {run.failure_code && <Alert className="mt-3" tone="danger" title="Run failed">Failure code: {run.failure_code}. The specialist can try again after you adjust the instruction or configuration.</Alert>}
@@ -504,34 +504,34 @@ export function ModuleControlCenterPage() {
                   {!selectedAgent.enabled && <Alert className="py-2" tone="warning" title="This specialist is paused">Enable the module before sending an instruction.</Alert>}
                   {providerReady === false && <Alert className="py-2" tone="warning" title="No active AI provider">Configure an active provider in Agent Studio before running module instructions.</Alert>}
                   <Textarea aria-label={`Instruction for module ${selectedModule.number}`} value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} maxLength={6000} placeholder={`Write a direct instruction for ${selectedModule.title}…`} disabled={!selectedAgent.enabled || providerReady === false || busyAction !== null} />
-                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[11px] text-muted">Source changes pause for your approval. {prompt.length.toLocaleString()} / 6,000</span><Button type="submit" variant="primary" disabled={!selectedAgent.enabled || providerReady === false || !prompt.trim() || busyAction !== null}><Send /> {busyAction === "run" ? "Sending…" : "Send instruction"}</Button></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted">Source changes pause for your approval. {prompt.length.toLocaleString()} / 6,000</span><Button type="submit" variant="primary" disabled={!selectedAgent.enabled || providerReady === false || !prompt.trim() || busyAction !== null}><Send /> {busyAction === "run" ? "Sending…" : "Send instruction"}</Button></div>
                 </form>
               </div>
 
               <aside className="grid content-start gap-4 p-4 sm:p-5">
-                <div><div className="mb-2 flex items-center gap-2"><Activity className="size-4 text-primary" /><h3 className="text-xs font-semibold text-foreground">Module performance</h3></div><p className="text-[11px] leading-relaxed text-muted">Database totals for the last 30 days. Run details below are the latest 50.</p></div>
+                <div><div className="mb-2 flex items-center gap-2"><Activity className="size-4 text-primary" /><h3 className="text-xs font-semibold text-foreground">Module performance</h3></div><p className="text-xs leading-relaxed text-muted">Database totals for the last 30 days. Run details below are the latest 50.</p></div>
                 <div className="grid grid-cols-2 gap-2"><MetricBox label="Completed · 30d" value={analytics ? String(selectedRow.completed) : "—"} tone="success" /><MetricBox label="Failed · 30d" value={analytics ? String(selectedRow.failed) : "—"} tone={selectedRow.failed ? "danger" : "neutral"} /><MetricBox label="Queued + running" value={String(selectedRow.queued + selectedRow.running)} tone="primary" /><MetricBox label="Awaiting approval" value={String(selectedRow.awaiting)} tone={selectedRow.awaiting ? "warning" : "neutral"} /></div>
-                <div className="rounded-lg border border-border bg-surface-2/45 p-3"><div className="flex items-center justify-between gap-2 text-xs"><span className="font-medium text-foreground-2">Success rate · 30d</span><strong className="text-foreground">{!analytics ? "Unavailable" : selectedRow.completionRate === null ? "No terminal runs" : `${selectedRow.completionRate}%`}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-surface"><div className={`h-full rounded-full ${selectedRow.completionRate === null ? "bg-border-strong" : selectedRow.completionRate >= 80 ? "bg-success" : selectedRow.completionRate >= 50 ? "bg-warning" : "bg-danger"}`} style={{ width: `${selectedRow.completionRate ?? 0}%` }} /></div><p className="mt-2 text-[10px] text-muted">Completed ÷ (completed + failed)</p></div>
-                <div className="rounded-lg border border-border p-3"><div className="flex items-center gap-2 text-xs font-medium text-foreground-2"><Clock3 className="size-3.5" /> Latest activity</div>{selectedRow.latestRun ? <div className="mt-2 flex items-center justify-between gap-2"><RunStatus run={selectedRow.latestRun} /><span className="truncate text-[10px] text-muted" title={formatDate(selectedRow.latestRun.created_at)}>{timeAgo(selectedRow.latestRun.created_at)}</span></div> : <p className="mt-2 text-xs text-muted">No recorded instruction runs yet.</p>}</div>
-                <div><h3 className="mb-2 text-xs font-semibold text-foreground">Available tool capabilities</h3><div className="flex flex-wrap gap-1.5">{selectedAgent.tool_permissions.map((tool) => <Badge key={tool} tone={availableTools.has(tool) ? "neutral" : "warning"}>{tool.replaceAll("_", " ")}</Badge>)}</div>{selectedAgent.approval_tools.length > 0 && <p className="mt-2 text-[11px] text-muted">Approval configured for: {selectedAgent.approval_tools.map((tool) => tool.replaceAll("_", " ")).join(", ")}. Source writes also pause for owner approval.</p>}</div>
-                <div className="rounded-lg border border-primary/15 bg-primary-soft/40 p-3"><div className="flex items-center gap-2 text-xs font-semibold text-foreground"><ShieldCheck className="size-4 text-primary" /> Owner-scoped control</div><p className="mt-1.5 text-[11px] leading-relaxed text-muted">This module specialist uses your signed-in account's Agent Studio authorization and conversation history. It does not send messages into the separate Codex module chats.</p></div>
+                <div className="rounded-lg border border-border bg-surface-2/45 p-3"><div className="flex items-center justify-between gap-2 text-xs"><span className="font-medium text-foreground-2">Success rate · 30d</span><strong className="text-foreground">{!analytics ? "Unavailable" : selectedRow.completionRate === null ? "No terminal runs" : `${selectedRow.completionRate}%`}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-surface"><div className={`h-full rounded-full ${selectedRow.completionRate === null ? "bg-border-strong" : selectedRow.completionRate >= 80 ? "bg-success" : selectedRow.completionRate >= 50 ? "bg-warning" : "bg-danger"}`} style={{ width: `${selectedRow.completionRate ?? 0}%` }} /></div><p className="mt-2 text-xs text-muted">Completed ÷ (completed + failed)</p></div>
+                <div className="rounded-lg border border-border p-3"><div className="flex items-center gap-2 text-xs font-medium text-foreground-2"><Clock3 className="size-3.5" /> Latest activity</div>{selectedRow.latestRun ? <div className="mt-2 flex items-center justify-between gap-2"><RunStatus run={selectedRow.latestRun} /><span className="truncate text-xs text-muted" title={formatDate(selectedRow.latestRun.created_at)}>{timeAgo(selectedRow.latestRun.created_at)}</span></div> : <p className="mt-2 text-xs text-muted">No recorded instruction runs yet.</p>}</div>
+                <div><h3 className="mb-2 text-xs font-semibold text-foreground">Available tool capabilities</h3><div className="flex flex-wrap gap-1.5">{selectedAgent.tool_permissions.map((tool) => <Badge key={tool} tone={availableTools.has(tool) ? "neutral" : "warning"}>{tool.replaceAll("_", " ")}</Badge>)}</div>{selectedAgent.approval_tools.length > 0 && <p className="mt-2 text-xs text-muted">Approval configured for: {selectedAgent.approval_tools.map((tool) => tool.replaceAll("_", " ")).join(", ")}. Source writes also pause for owner approval.</p>}</div>
+                <div className="rounded-lg border border-primary/15 bg-primary-soft/40 p-3"><div className="flex items-center gap-2 text-xs font-semibold text-foreground"><ShieldCheck className="size-4 text-primary" /> Owner-scoped control</div><p className="mt-1.5 text-xs leading-relaxed text-muted">This module specialist uses your signed-in account's Agent Studio authorization and conversation history. It does not send messages into the separate Codex module chats.</p></div>
               </aside>
             </div>
           </>
         )}
       </Card>
-      <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted"><Clock3 className="mt-0.5 size-3.5 shrink-0" /> Run history is refreshed when this page opens, after an instruction, and every 30 seconds. API history shows up to the latest 50 runs for each module.</p>
+      <p className="flex items-start gap-2 px-1 text-xs leading-relaxed text-muted"><Clock3 className="mt-0.5 size-3.5 shrink-0" /> Run history is refreshed when this page opens, after an instruction, and every 30 seconds. API history shows up to the latest 50 runs for each module.</p>
     </div>
   );
 }
 
 function StatTile({ icon, label, value, note, tone = "primary" }: { icon: ReactNode; label: string; value: string; note: string; tone?: "primary" | "warning" | "success" }) {
   const iconTone = tone === "warning" ? "bg-warning-soft text-warning-text" : tone === "success" ? "bg-success-soft text-success-text" : "bg-primary-soft text-primary";
-  return <Card className="flex min-w-0 items-start gap-3 p-4"><span className={`grid size-9 shrink-0 place-items-center rounded-lg [&_svg]:size-[18px] ${iconTone}`}>{icon}</span><div className="min-w-0"><p className="text-xs font-medium text-muted">{label}</p><p className="mt-0.5 truncate text-xl font-semibold tracking-tight text-foreground">{value}</p><p className="mt-0.5 truncate text-[11px] text-muted">{note}</p></div></Card>;
+  return <Card className="flex min-w-0 items-start gap-3 p-4"><span className={`grid size-9 shrink-0 place-items-center rounded-lg [&_svg]:size-[18px] ${iconTone}`}>{icon}</span><div className="min-w-0"><p className="text-xs font-medium text-muted">{label}</p><p className="mt-0.5 truncate text-xl font-semibold tracking-tight text-foreground">{value}</p><p className="mt-0.5 truncate text-xs text-muted">{note}</p></div></Card>;
 }
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0"><p className="truncate text-[10px] text-muted">{label}</p><p className="mt-0.5 truncate text-xs font-semibold tabular-nums text-foreground">{value}</p></div>;
+  return <div className="min-w-0"><p className="truncate text-xs text-muted">{label}</p><p className="mt-0.5 truncate text-xs font-semibold tabular-nums text-foreground">{value}</p></div>;
 }
 
 function MetricBox({ label, value, tone }: { label: string; value: string; tone: "success" | "danger" | "primary" | "warning" | "neutral" }) {
@@ -542,5 +542,5 @@ function MetricBox({ label, value, tone }: { label: string; value: string; tone:
     warning: "border-warning/25 bg-warning-soft/40 text-warning-text",
     neutral: "border-border bg-surface-2/50 text-foreground",
   };
-  return <div className={`rounded-lg border p-3 ${colors[tone]}`}><p className="text-[10px] leading-tight opacity-80">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{value}</p></div>;
+  return <div className={`rounded-lg border p-3 ${colors[tone]}`}><p className="text-xs leading-tight opacity-80">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{value}</p></div>;
 }

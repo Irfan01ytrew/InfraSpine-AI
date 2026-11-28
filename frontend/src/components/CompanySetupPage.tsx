@@ -41,7 +41,7 @@ export function CompanySetupPage({ onProfileSaved }: { onProfileSaved?: () => vo
   const [companyName, setCompanyName] = useState("");
   const [industry, setIndustry] = useState("General");
   const [brandName, setBrandName] = useState("InfraSpine AI");
-  const [primaryColor, setPrimaryColor] = useState("#146B61");
+  const [primaryColor, setPrimaryColor] = useState("#126b4e");
   const [currency, setCurrency] = useState("");
   const [timeZone, setTimeZone] = useState("");
   const [locale, setLocale] = useState("");
@@ -199,7 +199,7 @@ export function CompanySetupPage({ onProfileSaved }: { onProfileSaved?: () => vo
                 >
                   <span className="flex items-start justify-between gap-2">
                     <span className="text-[14px] font-semibold text-foreground">{template.name}</span>
-                    {selected ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : <span className="text-[11px] text-muted">v{template.version}</span>}
+                    {selected ? <CheckCircle2 className="size-5 shrink-0 text-primary" /> : <span className="text-xs text-muted">v{template.version}</span>}
                   </span>
                   <span className="text-xs leading-relaxed text-muted">{template.description}</span>
                   <span className="flex flex-wrap gap-1">{template.default_departments.map((name) => <Badge key={name}>{name}</Badge>)}</span>
@@ -235,7 +235,7 @@ export function CompanySetupPage({ onProfileSaved }: { onProfileSaved?: () => vo
               ...(license?.seat_limit ? [["Seats", license.seat_limit.toLocaleString()]] : []),
               ...(license?.features.length ? [["Features", license.features.join(", ")]] : []),
             ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-lg border border-border p-3"><dt className="text-[11px] font-semibold tracking-wide text-muted uppercase">{label}</dt><dd className="mt-1 text-[13px] text-foreground">{value}</dd></div>
+              <div key={String(label)} className="rounded-lg border border-border p-3"><dt className="text-xs font-semibold tracking-wide text-muted uppercase">{label}</dt><dd className="mt-1 text-[13px] text-foreground">{value}</dd></div>
             ))}
           </dl>
         )}

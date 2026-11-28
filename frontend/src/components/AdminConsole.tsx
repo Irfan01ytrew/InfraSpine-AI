@@ -201,11 +201,11 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
       <main className={cn("relative min-h-0 min-w-0 flex-1", // Phones stack the Knowledge columns, so the page scrolls; desktops keep each column scrolling on its own.
         wide ? "flex flex-col scrollbar-thin max-lg:overflow-y-auto lg:overflow-hidden" : "scrollbar-thin overflow-x-hidden overflow-y-auto")}>
         <Suspense fallback={wide ? <Skeleton className="h-[34rem] w-full" /> : (
-          <div className="page-container mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="page-container mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
             <Skeleton className="h-[34rem] w-full" />
           </div>
         )}>
-        <div className={wide ? "contents" : "page-container mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"}>
+        <div className={wide ? "contents" : "page-container mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"}>
         {view === "module-control-center" ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><ModuleControlCenterPage /></Suspense>
         ) : ["company-graph", "workflow-engine", "governance", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view) ? (

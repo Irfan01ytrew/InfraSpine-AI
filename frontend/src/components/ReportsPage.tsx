@@ -115,7 +115,7 @@ export function ReportsPage() {
             icon={<BarChart3 />}
             title="Daily activity"
             description="Questions per day, with the share that ended in a service error."
-            actions={<div className="flex items-center gap-3 text-[11px] text-muted"><span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary/70" />Questions</span><span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-danger" />Errors</span></div>}
+            actions={<div className="flex items-center gap-3 text-xs text-muted"><span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary/70" />Questions</span><span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-danger" />Errors</span></div>}
           />
           {report.daily.length === 0 ? <EmptyState icon={<BarChart3 />} title="No activity in this period" description="Pick a longer period, or check back after people start asking questions." /> : (
             <div className="grid max-h-[420px] gap-1.5 overflow-y-auto px-5 py-4">

@@ -127,7 +127,7 @@ export function RequestFormsPage() {
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => edit(form)}>
                   <span className="block truncate text-[13px] font-medium text-foreground">{form.name}</span>
                   <span className="block text-xs text-muted">{CATEGORIES.find((c) => c.value === form.category)?.label} · {form.fields.length} field{form.fields.length === 1 ? "" : "s"}{form.fields.some((f) => f.show_if) ? " (some conditional)" : ""}{(form.audience_departments?.length || form.audience_positions?.length) ? ` · for ${[...(form.audience_departments ?? []), ...(form.audience_positions ?? [])].map((a) => a.name).join(", ")}` : " · everyone"}{form.department_name ? ` · to ${form.department_name}` : ""} · v{form.version}</span>
-                  <span className="block text-[11px] text-muted">Updated {formatDate(form.updated_at)}</span>
+                  <span className="block text-xs text-muted">Updated {formatDate(form.updated_at)}</span>
                 </button>
                 <Button size="icon-sm" variant="danger-ghost" aria-label={`Archive ${form.name}`} onClick={() => void archive(form)}><Archive /></Button>
               </div>

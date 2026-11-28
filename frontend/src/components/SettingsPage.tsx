@@ -39,7 +39,7 @@ export function SettingsPage() {
     <>
       <PageHeader title="Settings" description="How this installation reads, understands and stores your documents." />
       <Tabs className="mb-2" value={current.value} onValueChange={choose} items={TABS.map(({ value, label }) => ({ value, label }))} />
-      <p className="mb-5 text-xs text-muted">{current.description}</p>
+      <p className="mb-5 text-sm text-muted">{current.description}</p>
       <div className="grid gap-5">
         {current.value === "organization" && <OrgSettingsSection />}
         {current.value === "models" && <EmbeddingModelsPage />}

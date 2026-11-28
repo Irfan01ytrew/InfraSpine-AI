@@ -29,7 +29,7 @@ export function CardBody({ className, ...props }: HTMLAttributes<HTMLDivElement>
 
 /* ----------------------------------------------------------------- Badge */
 export const badgeVariants = cva(
-  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 [&_svg]:size-3",
+  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium leading-4 [&_svg]:size-3",
   {
     variants: {
       tone: {
@@ -83,7 +83,7 @@ export function PageHeader({ title, description, actions, eyebrow }: {
   return (
     <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
-        {eyebrow && <p className="mb-1 text-[11px] font-semibold tracking-wider text-primary uppercase">{eyebrow}</p>}
+        {eyebrow && <p className="mb-1 text-xs font-semibold tracking-wider text-primary uppercase">{eyebrow}</p>}
         <h1 className="text-[22px] font-semibold tracking-tight text-foreground">{title}</h1>
         {description && <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-muted">{description}</p>}
       </div>
@@ -129,7 +129,7 @@ export function Stat({ label, value, hint, icon }: { label: ReactNode; value: Re
 export function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
     <div className="w-full min-w-0 overflow-x-auto">
-      <table className={cn("w-full border-collapse text-left text-[13px] [&_td]:border-t [&_td]:border-border [&_td]:px-4 [&_td]:py-3 [&_td]:align-middle [&_th]:bg-surface-2 [&_th]:px-4 [&_th]:py-2.5 [&_th]:text-[11px] [&_th]:font-semibold [&_th]:tracking-wide [&_th]:text-muted [&_th]:uppercase [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-surface-2/60", className)} {...props} />
+      <table className={cn("w-full border-collapse text-left text-sm [&_td]:border-t [&_td]:border-border [&_td]:px-4 [&_td]:py-3.5 [&_td]:align-middle [&_th]:bg-surface-2 [&_th]:px-4 [&_th]:py-2.5 [&_th]:text-xs [&_th]:font-semibold [&_th]:tracking-wide [&_th]:text-muted [&_th]:uppercase [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-surface-2/60", className)} {...props} />
     </div>
   );
 }

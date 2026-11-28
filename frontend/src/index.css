@@ -46,10 +46,11 @@
   --color-danger-soft: var(--error-soft);
   --color-danger-text: var(--error-text);
 
-  --radius-sm: 6px;
-  --radius-md: var(--radius-sm);
-  --radius-lg: var(--radius);
-  --radius-xl: var(--radius-lg);
+  /* One radius scale, shared by the legacy stylesheet and Tailwind utilities. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
   --shadow-xs: var(--shadow-sm);
   --shadow-sm: var(--shadow);

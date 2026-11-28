@@ -155,7 +155,7 @@ export function PositionsSection() {
         <CardBody className="grid gap-4">
           {FAMILY_OPTIONS.filter((f) => library.some((p) => p.job_family === f.value)).map((f) => (
             <div key={f.value}>
-              <p className="mb-2 text-[11px] font-semibold tracking-wide text-muted uppercase">{f.label}</p>
+              <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">{f.label}</p>
               <div className="flex flex-wrap gap-1.5">
                 {library.filter((p) => p.job_family === f.value).map((p) => (
                   <button
@@ -273,14 +273,14 @@ export function OrgChartSection() {
               {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
             </button>
           ) : <span className="size-5 shrink-0" />}
-          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-soft text-[11px] font-semibold text-primary">{initials(person.email)}</span>
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-soft text-xs font-semibold text-primary">{initials(person.email)}</span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-[13px] font-medium text-foreground">{person.email}</span>
               {person.position_title ? <Badge tone="primary">{person.position_title}</Badge> : <Badge>No position</Badge>}
-              {reports.length > 0 && <span className="text-[11px] text-muted">{reports.length} direct report{reports.length === 1 ? "" : "s"}</span>}
+              {reports.length > 0 && <span className="text-xs text-muted">{reports.length} direct report{reports.length === 1 ? "" : "s"}</span>}
             </span>
-            <span className="block truncate text-[11px] text-muted">{person.departments.length ? person.departments.join(" · ") : "No department"} · software role: {person.role === "user" ? "employee" : person.role}</span>
+            <span className="block truncate text-xs text-muted">{person.departments.length ? person.departments.join(" · ") : "No department"} · software role: {person.role === "user" ? "employee" : person.role}</span>
           </span>
           <Button size="sm" variant="ghost" className="opacity-70 group-hover:opacity-100" onClick={() => setEditing(person)}><Pencil /> Edit</Button>
         </div>
@@ -371,7 +371,7 @@ function AssignDialog({ person, people, positions, onClose, onSaved }: {
         <Field label="Position"><Select aria-label="Position" value={positionId} onValueChange={setPositionId} options={positionOptions} /></Field>
         <Field label="Reports to" hint="People who report to this person are not offered, so the chart cannot loop."><Select aria-label="Reports to" value={managerId} onValueChange={setManagerId} options={managerOptions} /></Field>
         <div>
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-foreground-2"><History className="size-3.5" /> History</p>
+          <p className="mb-2 flex items-center gap-1.5 text-[13px] font-semibold text-foreground-2"><History className="size-3.5" /> History</p>
           {history === null ? <Skeleton className="h-12" /> : history.length === 0 ? <p className="text-xs text-muted">No changes recorded yet.</p> : (
             <ol className="grid gap-1.5 border-l border-border pl-3">
               {history.map((h, index) => (

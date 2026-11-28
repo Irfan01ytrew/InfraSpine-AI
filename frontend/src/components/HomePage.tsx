@@ -111,7 +111,7 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
     <div className="grid gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="mb-1 text-[11px] font-semibold tracking-wider text-primary uppercase">{brandName}</p>
+          <p className="mb-1 text-xs font-semibold tracking-wider text-primary uppercase">{brandName}</p>
           <h1 className="text-[24px] font-semibold tracking-tight text-foreground">{greeting()}</h1>
           <p className="mt-1 text-[13px] text-muted">Signed in as {user.email}. {setupDone ? `Here is how ${brandName} is doing.` : "Start here: each step opens the page where it is done."}</p>
         </div>
@@ -193,7 +193,7 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
       </section>
 
       <p className="flex items-center gap-2 text-xs text-muted">
-        <BookOpen className="size-3.5" /> Tip: press <kbd className="rounded border border-border bg-surface-2 px-1.5 font-sans text-[10px]">Ctrl K</kbd> anywhere to jump to any page by name.
+        <BookOpen className="size-3.5" /> Tip: press <kbd className="rounded border border-border bg-surface-2 px-1.5 font-sans text-xs">Ctrl K</kbd> anywhere to jump to any page by name.
       </p>
     </div>
   );

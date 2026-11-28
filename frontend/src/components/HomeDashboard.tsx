@@ -64,7 +64,7 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
               <kpi.icon className="size-4 shrink-0 transition-colors group-hover:text-primary" />
             </span>
             <span className="truncate text-[22px] leading-none font-semibold tracking-tight text-foreground tabular-nums">{kpi.value}</span>
-            <span className="truncate text-[11px] text-muted" title={kpi.hint}>{kpi.hint}</span>
+            <span className="truncate text-xs text-muted" title={kpi.hint}>{kpi.hint}</span>
           </button>
         ))}
       </div>
@@ -76,7 +76,7 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
               <h2 className="text-[14px] font-semibold text-foreground">Questions asked</h2>
               <p className="text-xs text-muted">Last 14 days</p>
             </div>
-            <div className="flex items-center gap-3 text-[11px] text-muted">
+            <div className="flex items-center gap-3 text-xs text-muted">
               <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary" />Answered</span>
               <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-danger" />Failed</span>
             </div>
@@ -96,14 +96,14 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
                           {ok > 0 && <div className="bg-primary" style={{ flexGrow: ok }} />}
                         </div>
                       ) : <div className="h-[3px] rounded-full bg-surface-2" />}
-                      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-[11px] whitespace-nowrap text-foreground shadow-lg group-hover:block">
+                      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-xs whitespace-nowrap text-foreground shadow-lg group-hover:block">
                         {day.label}: {day.questions} asked · {day.errors} failed
                       </span>
                     </div>
                   );
                 })}
               </div>
-              <div className="mt-2 flex justify-between text-[10px] text-muted"><span>{days[0]?.label}</span><span>Today</span></div>
+              <div className="mt-2 flex justify-between text-xs text-muted"><span>{days[0]?.label}</span><span>Today</span></div>
             </div>
           )}
         </Card>

@@ -184,7 +184,7 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
             placeholder={"Paste invoice text (Invoice No: …, Vendor: …, PO Number: …, Total: PKR …). Separate invoices with a line of ---"} />
           <div className="grid gap-2">
             <Button variant="secondary" disabled={busy || !texts.trim()} onClick={addTexts}>Add text</Button>
-            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-surface-2">
+            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-[13px] font-medium hover:bg-surface-2">
               <FileUp className="size-4" /> Upload PDF/DOC
               <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg"
                 onChange={(event) => { const file = event.target.files?.[0]; if (file) void act("Invoice uploaded", () => financeApi.upload(id, file)); event.target.value = ""; }} />
@@ -226,11 +226,11 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
           <thead><tr><th>#</th><th>Invoice</th><th>Vendor</th><th>PO</th><th>Amount</th><th>Status</th><th>Reasons</th></tr></thead>
           <tbody>{shown.map((invoice) => <tr key={invoice.id}>
             <td className="text-muted">{invoice.seq}</td>
-            <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-[10px] text-muted">{invoice.id}</div></td>
+            <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-xs text-muted">{invoice.id}</div></td>
             <td>{invoice.vendor_name ?? "—"}</td><td>{invoice.po_number ?? "—"}</td>
             <td className="whitespace-nowrap">{invoice.amount ? `${invoice.currency ?? ""} ${invoice.amount}` : "—"}</td>
             <td><StatusBadge status={invoice.status} /></td>
-            <td className="text-xs">{invoice.reasons.map((r) => r.message).join("; ") || "—"}</td>
+            <td>{invoice.reasons.map((r) => r.message).join("; ") || "—"}</td>
           </tr>)}</tbody>
         </Table>
       </CardBody>
@@ -274,9 +274,9 @@ function ExceptionsTab({ group, can, revision, toast }: { group: string; can: (p
         const draft = drafts[invoice.id] ?? { invoice_number: "", po_number: "", amount: "", note: "" };
         const set = (key: keyof typeof draft, value: string) => setDrafts((cur) => ({ ...cur, [invoice.id]: { ...draft, [key]: value } }));
         return <tr key={invoice.id}>
-          <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-[10px] text-muted">{invoice.id}</div></td>
+          <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-xs text-muted">{invoice.id}</div></td>
           <td>{invoice.vendor_name ?? "—"}</td><td className="whitespace-nowrap">{invoice.currency} {invoice.amount ?? "—"}</td>
-          <td className="text-xs">{invoice.reasons.map((r) => <div key={r.code}><Badge tone="danger">{r.code}</Badge> {r.message}</div>)}</td>
+          <td>{invoice.reasons.map((r) => <div key={r.code}><Badge tone="danger">{r.code}</Badge> {r.message}</div>)}</td>
           <td className="min-w-72"><div className="grid gap-1">
             {can("invoice.ingest") && <div className="grid grid-cols-3 gap-1">
               <Input value={draft.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} placeholder="Invoice no" aria-label="Corrected invoice number" />
@@ -345,7 +345,7 @@ function SpendTab({ group, revision }: { group: string; revision: number }) {
             <div className="flex flex-col-reverse overflow-hidden rounded-t" style={{ height: `${chart.max ? (point.total / chart.max) * 100 : 0}%` }}>
               {point.parts.map((part, index) => <div key={part.department} className={palette[index % palette.length]} style={{ height: `${point.total ? (part.amount / point.total) * 100 : 0}%` }} />)}
             </div>
-            <div className="mt-1 text-center text-[10px] text-muted">{point.month.slice(2)}</div>
+            <div className="mt-1 text-center text-xs text-muted">{point.month.slice(2)}</div>
           </div>)}
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-xs">{chart.departments.map((department, index) =>
