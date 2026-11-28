@@ -1,9 +1,10 @@
 import type { ComponentType } from "react";
-import { Activity, ArrowRight, Building2, CheckCircle2, Cpu, FileText, Gauge, MessageSquare, Users } from "lucide-react";
+import { Activity, ArrowRight, BarChart3, Building2, CheckCircle2, Cpu, FileText, Gauge, MessageSquare, Users } from "lucide-react";
 import { formatDate, formatNumber, timeAgo } from "../format";
+import { donutSegments, fillRunDays, topModules } from "../lib/dashboardCharts.mjs";
 import { cn } from "../lib/utils";
-import type { AuditEntry, UsageReport } from "../types";
-import { Button, Card } from "./ui";
+import type { AgentStudioAnalytics, AuditEntry, UsageReport } from "../types";
+import { Button, Card, EmptyState } from "./ui";
 
 export interface DashboardData {
   aiActive: boolean;
@@ -19,9 +20,19 @@ export interface DashboardData {
   openRequests: number | null;
   reviewQueue: number | null;
   activity: AuditEntry[] | null;
+  /** Agent Studio run analytics (30 days). Null when the endpoint could not be read — charts show their empty state, never a guess. */
+  moduleAnalytics: AgentStudioAnalytics | null;
 }
 
 const show = (value: number | null) => (value === null ? "—" : formatNumber(value));
+
+const OUTCOME_DOT: Record<string, string> = {
+  completed: "bg-success",
+  failed: "bg-danger",
+  awaiting: "bg-warning",
+  active: "bg-primary",
+  cancelled: "bg-border-strong",
+};
 
 /** Admin overview built only from live API data. */
 export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNavigate: (view: string) => void }) {
@@ -30,6 +41,21 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
   const successRate = summary && summary.questions > 0 ? Math.round((answered! / summary.questions) * 100) : null;
   const days = lastDays(14, data.usage?.daily ?? []);
   const peak = Math.max(1, ...days.map((d) => d.questions));
+
+  // Module activity, all from the live Agent Studio analytics payload.
+  const runs = data.moduleAnalytics;
+  const runDays = runs ? fillRunDays(30, runs.daily) : [];
+  const runPeak = Math.max(1, ...runDays.map((d) => d.completed + d.failed));
+  const runTotal = runs?.totals.total_runs ?? 0;
+  const runSuccess = runs?.totals.success_rate ?? null;
+  const outcomes = donutSegments([
+    { key: "completed", label: "Completed", value: runs?.totals.completed ?? 0, color: "var(--success)" },
+    { key: "failed", label: "Failed", value: runs?.totals.failed ?? 0, color: "var(--danger)" },
+    { key: "awaiting", label: "Awaiting approval", value: runs?.totals.awaiting_approval ?? 0, color: "var(--warning)" },
+    { key: "active", label: "Queued + running", value: (runs?.totals.queued ?? 0) + (runs?.totals.running ?? 0), color: "var(--primary)" },
+    { key: "cancelled", label: "Cancelled", value: runs?.totals.cancelled ?? 0, color: "var(--border-strong)" },
+  ]);
+  const busiest = runs ? topModules(runs.agents, 5) : [];
 
   const attention = [
     !data.aiActive ? { label: "No AI model is connected", view: "providers", tone: "danger" } : null,
@@ -64,7 +90,7 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
               <kpi.icon className="size-4 shrink-0 transition-colors group-hover:text-primary" />
             </span>
             <span className="truncate text-[22px] leading-none font-semibold tracking-tight text-foreground tabular-nums">{kpi.value}</span>
-            <span className="truncate text-[11px] text-muted" title={kpi.hint}>{kpi.hint}</span>
+            <span className="truncate text-xs text-muted" title={kpi.hint}>{kpi.hint}</span>
           </button>
         ))}
       </div>
@@ -76,13 +102,17 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
               <h2 className="text-[14px] font-semibold text-foreground">Questions asked</h2>
               <p className="text-xs text-muted">Last 14 days</p>
             </div>
-            <div className="flex items-center gap-3 text-[11px] text-muted">
+            <div className="flex items-center gap-3 text-xs text-muted">
               <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary" />Answered</span>
               <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-danger" />Failed</span>
             </div>
           </div>
           {data.usage === null ? (
-            <p className="px-5 py-10 text-center text-xs text-muted">The usage report could not be loaded.</p>
+            <EmptyState
+              icon={<BarChart3 />}
+              title="Usage report could not be loaded"
+              description="The 14-day questions trend is unavailable right now. Your data is safe — try refreshing the page."
+            />
           ) : (
             <div className="px-5 pt-6 pb-3">
               <div className="flex h-40 items-end gap-1.5" role="img" aria-label={`Questions per day for the last 14 days; busiest day had ${peak}`}>
@@ -91,19 +121,19 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
                   return (
                     <div key={day.day} className="group relative flex h-full min-w-0 flex-1 flex-col justify-end">
                       {day.questions > 0 ? (
-                        <div className="flex flex-col overflow-hidden rounded-t-[4px]" style={{ height: `${Math.max(4, (day.questions / peak) * 100)}%` }}>
+                        <div className="chart-bar-grow flex flex-col overflow-hidden rounded-t-[4px]" style={{ height: `${Math.max(4, (day.questions / peak) * 100)}%` }}>
                           {day.errors > 0 && <div className="bg-danger" style={{ flexGrow: day.errors }} />}
                           {ok > 0 && <div className="bg-primary" style={{ flexGrow: ok }} />}
                         </div>
                       ) : <div className="h-[3px] rounded-full bg-surface-2" />}
-                      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-[11px] whitespace-nowrap text-foreground shadow-lg group-hover:block">
+                      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-xs whitespace-nowrap text-foreground shadow-lg group-hover:block">
                         {day.label}: {day.questions} asked · {day.errors} failed
                       </span>
                     </div>
                   );
                 })}
               </div>
-              <div className="mt-2 flex justify-between text-[10px] text-muted"><span>{days[0]?.label}</span><span>Today</span></div>
+              <div className="mt-2 flex justify-between text-xs text-muted"><span>{days[0]?.label}</span><span>Today</span></div>
             </div>
           )}
         </Card>
@@ -131,6 +161,116 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
         </Card>
       </div>
 
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3.5">
+            <div>
+              <h2 className="text-[14px] font-semibold text-foreground">Module runs</h2>
+              <p className="text-xs text-muted">Last 30 days · {runs === null ? "—" : `${formatNumber(runTotal)} runs`}</p>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted">
+              <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary" />Completed</span>
+              <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-danger" />Failed</span>
+            </div>
+          </div>
+          {runs === null ? (
+            <EmptyState
+              icon={<BarChart3 />}
+              title="Module run data could not be loaded"
+              description="The 30-day runs trend is unavailable right now. Your data is safe — try refreshing the page."
+            />
+          ) : runTotal === 0 ? (
+            <EmptyState
+              icon={<BarChart3 />}
+              title="No module runs yet"
+              description="Module specialists have not run in the last 30 days. Runs will appear here as soon as an agent starts work."
+            />
+          ) : (
+            <>
+              <div className="px-5 pt-6 pb-3">
+                <div className="flex h-40 items-end gap-1" role="img" aria-label={`Module runs per day for the last 30 days; busiest day had ${runPeak} runs`}>
+                  {runDays.map((day) => {
+                    const total = day.completed + day.failed;
+                    return (
+                      <div key={day.day} className="group relative flex h-full min-w-0 flex-1 flex-col justify-end">
+                        {total > 0 ? (
+                          <div className="chart-bar-grow flex flex-col overflow-hidden rounded-t-[4px]" style={{ height: `${Math.max(4, (total / runPeak) * 100)}%` }}>
+                            {day.failed > 0 && <div className="bg-danger" style={{ flexGrow: day.failed }} />}
+                            {day.completed > 0 && <div className="bg-primary" style={{ flexGrow: day.completed }} />}
+                          </div>
+                        ) : <div className="h-[3px] rounded-full bg-surface-2" />}
+                        <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-xs whitespace-nowrap text-foreground shadow-lg group-hover:block">
+                          {day.label}: {total} runs · {day.failed} failed
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 flex justify-between text-xs text-muted"><span>{runDays[0]?.label}</span><span>Today</span></div>
+              </div>
+              {busiest.length > 0 && (
+                <div className="border-t border-border px-5 py-4">
+                  <h3 className="text-xs font-semibold text-foreground">Most active modules</h3>
+                  <ul className="mt-3 grid gap-2.5">
+                    {busiest.map((m) => (
+                      <li key={m.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-medium text-foreground">{m.name}</span>
+                          <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-surface-2">
+                            <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.max(3, m.share * 100)}%` }} />
+                          </span>
+                        </span>
+                        <span className="text-xs tabular-nums text-muted">{formatNumber(m.total)} runs · {formatNumber(m.completed)} done</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+
+        <Card className="overflow-hidden">
+          <div className="border-b border-border px-5 py-3.5">
+            <h2 className="text-[14px] font-semibold text-foreground">Run outcomes</h2>
+            <p className="text-xs text-muted">Last 30 days</p>
+          </div>
+          {runs === null ? (
+            <EmptyState
+              icon={<Gauge />}
+              title="Run outcomes could not be loaded"
+              description="The outcomes breakdown is unavailable right now. Your data is safe — try refreshing the page."
+            />
+          ) : runTotal === 0 ? (
+            <EmptyState
+              icon={<Gauge />}
+              title="No runs to break down yet"
+              description="Once module specialists run, their completed, failed and awaiting outcomes will appear here."
+            />
+          ) : (
+            <div className="flex flex-col items-center gap-4 px-5 py-6">
+              <svg viewBox="0 0 140 140" className="size-40" role="img" aria-label={`Run outcomes: ${outcomes.segments.map((s) => `${s.label} ${s.value}`).join(", ")}`}>
+                <circle cx="70" cy="70" r="56" fill="none" stroke="var(--surface-2)" strokeWidth="18" />
+                {outcomes.segments.map((s) => (
+                  <circle key={s.key} cx="70" cy="70" r="56" fill="none" stroke={s.color} strokeWidth="18" strokeDasharray={s.dash} strokeDashoffset={s.offset} transform="rotate(-90 70 70)" />
+                ))}
+                <text x="70" y="66" textAnchor="middle" className="fill-foreground text-xl font-semibold">{runSuccess === null ? "—" : `${runSuccess}%`}</text>
+                <text x="70" y="84" textAnchor="middle" className="fill-muted text-xs">success</text>
+              </svg>
+              <ul className="grid w-full gap-2">
+                {outcomes.segments.map((s) => (
+                  <li key={s.key} className="flex items-center gap-2 text-[13px]">
+                    <span className={`size-2.5 shrink-0 rounded-sm ${OUTCOME_DOT[s.key]}`} />
+                    <span className="flex-1 text-foreground-2">{s.label}</span>
+                    <span className="font-semibold tabular-nums text-foreground">{formatNumber(s.value)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Card>
+      </div>
+
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
@@ -139,8 +279,11 @@ export function HomeDashboard({ data, onNavigate }: { data: DashboardData; onNav
           </div>
           <Button size="sm" variant="ghost" onClick={() => onNavigate("logs")}>View all <ArrowRight /></Button>
         </div>
-        {data.activity === null ? <p className="px-5 py-6 text-xs text-muted">The audit log could not be loaded.</p>
-          : data.activity.length === 0 ? <p className="px-5 py-6 text-xs text-muted">No activity recorded yet.</p> : (
+        {data.activity === null ? (
+          <EmptyState icon={<Activity />} title="Audit log could not be loaded" description="Recent activity is unavailable right now. Your data is safe — try refreshing the page." />
+        ) : data.activity.length === 0 ? (
+          <EmptyState icon={<Activity />} title="No activity recorded yet" description="Actions taken in InfraSpine will appear here as soon as your team starts working." />
+        ) : (
           <ul className="divide-y divide-border">
             {data.activity.map((entry) => (
               <li key={entry.id} className="flex items-center gap-3 px-5 py-2.5 text-[13px]">

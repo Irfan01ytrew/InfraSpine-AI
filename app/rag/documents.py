@@ -50,6 +50,7 @@ from app.services.auth import normalize_email
 logger = logging.getLogger(__name__)
 
 
+
 async def page_image_withheld(db: AsyncSession, document: Document, page_number: int) -> bool:
     """Whether a page must not be shown as an image because it may show a credential. Images cannot be redacted,
     so this fails closed: a PDF page is withheld when its text names a credential or holds a secret, and when its
@@ -351,6 +352,55 @@ class DocumentService:
         )
         await self._publish_access_event(
             "document.acl_changed", doc.id, visibility=visibility, users=len(user_ids), groups=len(groups),
+        )
+        await self.db.commit()
+        await self.db.refresh(doc)
+        return doc
+
+    async def set_freshness(
+        self,
+        document_id: uuid.UUID,
+        **fields: datetime | uuid.UUID | None,
+    ) -> Document:
+        """Owner-set freshness metadata (Step AI slice 5).
+
+        ``fields`` is any subset of ``review_date``, ``expires_at`` and
+        ``superseded_by``; only passed fields are changed, and a passed
+        ``None`` clears the field. ``superseded_by`` must point at another
+        readable document (never the document itself). Flagging is advisory
+        only — it never hides the document or changes what is cited.
+        """
+        unknown = set(fields) - {"review_date", "expires_at", "superseded_by"}
+        if unknown:
+            raise InvalidInputError(f"Unknown freshness field(s): {', '.join(sorted(unknown))}.")
+        doc = await self._get_modifiable(document_id, lock=True)
+        changes: dict[str, object] = {}
+        if "review_date" in fields:
+            review_date = fields["review_date"]
+            assert review_date is None or isinstance(review_date, datetime)
+            doc.review_date = review_date
+            changes["review_date"] = review_date.isoformat() if review_date else None
+        if "expires_at" in fields:
+            expires_at = fields["expires_at"]
+            assert expires_at is None or isinstance(expires_at, datetime)
+            doc.expires_at = expires_at
+            changes["expires_at"] = expires_at.isoformat() if expires_at else None
+        if "superseded_by" in fields:
+            superseded_by = fields["superseded_by"]
+            if superseded_by is not None:
+                assert isinstance(superseded_by, uuid.UUID)
+                if superseded_by == doc.id:
+                    raise InvalidInputError("A document cannot supersede itself.")
+                await self.get(superseded_by)  # must exist and be readable
+                doc.superseded_by = superseded_by
+            else:
+                doc.superseded_by = None
+            changes["superseded_by"] = str(superseded_by) if superseded_by else None
+        if not changes:
+            return doc
+        audit.record(
+            self.db, self.ctx, "document.freshness_changed", target=str(doc.id),
+            details=changes,
         )
         await self.db.commit()
         await self.db.refresh(doc)

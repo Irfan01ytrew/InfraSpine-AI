@@ -35,8 +35,12 @@ from app.db.agent_studio_models import (
     AgentStudioThread,
 )
 from app.db.models import User
+from app.platform import access as platform_access
+from app.services.audit import AuditContext
 from app.services.llm import LLMClient
 from app.services.llm_runtime import LLMRuntime
+from app.workforce.budget_service import BUDGET_RETRY_DELAY_SECONDS, evaluate_start
+from app.workforce.delegation_service import WorkforceDelegationService
 
 if TYPE_CHECKING:
     from app.rag.components import RagComponents
@@ -421,6 +425,20 @@ class AgentStudioService:
             existing = await self._existing_idempotent_run(digest, agent_id, thread_id, clean_prompt, scheduled_key)
             if existing is not None:
                 return existing
+        # Step J slice 5: the workforce budget gate. A budget refusal
+        # hard-stops the run before it is created (the caller sees the
+        # refusal immediately — a queued run would look accepted). A
+        # registry-paused/retired agent is treated like an island-paused
+        # one: its run is created queued and never runs inline.
+        start_decision = await evaluate_start(self.db, kind="studio", agent_id=agent.id)
+        workforce_stopped = False
+        if not start_decision.allowed:
+            if start_decision.reason.startswith("not_active:"):
+                workforce_stopped = True
+            else:
+                raise InvalidInputError(
+                    "This agent cannot start work: workforce budget stop "
+                    f"({start_decision.reason}).")
         history = decode_thread_history(self.cipher, thread)
         memory = await _load_memories(self.db, self.user, agent, self.cipher)
         state: dict[str, Any] = {
@@ -470,9 +488,10 @@ class AgentStudioService:
         if not execute_inline:
             await self._mirror(run)
             return run, state, None
-        if await _paused_now(self.db, agent.id):
+        if await _paused_now(self.db, agent.id) or workforce_stopped:
             # Pause applies to every entry point (WhatsApp Cloud, Baileys, inline API): the task stays queued and
             # the worker runs it only after the agent is resumed. Callers report it as queued, not completed.
+            # (Step J slice 5: a registry-paused/retired agent queues the same way.)
             await self.db.commit()
             await self._mirror(run)
             return run, state, None
@@ -575,6 +594,25 @@ class AgentStudioService:
             run.attempt_count = max(0, run.attempt_count - 1)
             run.claimed_at = None
             run.next_attempt_at = datetime.now(UTC)
+            await self.db.commit()
+            await self.db.refresh(run)
+            return run, decode_run_state(self.cipher, run), None
+        # Step J slice 5: the same hand-back for a workforce stop that
+        # landed between claim and execution (registry pause/retire, or a
+        # budget that ran out). A budget refusal retries in an hour — the
+        # budget resets on a calendar boundary, not on resume — while a
+        # lifecycle stop retries immediately (the claim query excludes
+        # stopped agents, so it is not re-claimed until resumed).
+        start_decision = await evaluate_start(self.db, kind="studio", agent_id=agent.id)
+        if not start_decision.allowed:
+            run.status = "queued"
+            run.attempt_count = max(0, run.attempt_count - 1)
+            run.claimed_at = None
+            if start_decision.reason.startswith("not_active:"):
+                run.next_attempt_at = datetime.now(UTC)
+            else:
+                run.next_attempt_at = datetime.now(UTC) + timedelta(
+                    seconds=BUDGET_RETRY_DELAY_SECONDS)
             await self.db.commit()
             await self.db.refresh(run)
             return run, decode_run_state(self.cipher, run), None
@@ -726,6 +764,7 @@ class AgentStudioService:
                         agent, llm, name, arguments, graph_state,
                         usage_tracker=usage_tracker,
                         on_usage=persist_usage,
+                        run_id=claimed_run_id,
                     )
                 return await run_tool(
                     name,
@@ -879,6 +918,7 @@ class AgentStudioService:
         *,
         usage_tracker: dict[str, Any],
         on_usage,
+        run_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         target_text = str(arguments.get("agent_id") or "")
         try:
@@ -896,6 +936,30 @@ class AgentStudioService:
             raise ValueError("That subagent is paused, so it cannot take delegated work until it is resumed.")
         if set(child.approval_tools or []) & APPROVAL_TOOLS:
             raise ValueError("A delegated subagent can only use read-only or private-memory tools.")
+        # Step J slice 4: the workforce delegation policy gates the hand-off
+        # and audits it (parent run, child execution, policy version,
+        # decision). The delegated task text is never an input to the
+        # decision — it is untrusted. A policy failure fails closed: the
+        # delegation is refused rather than run ungoverned. When no policy
+        # exists the decision is "allowed (no_active_policy)" and the
+        # parent's allow-list above remains the only control.
+        actor = platform_access.principal_for(self.user)
+        ctx = AuditContext(actor_user_id=self.user.id, actor_email=self.user.email,
+                           ip_address=None, request_id=None)
+        try:
+            decision, _audit = await WorkforceDelegationService(
+                self.db, actor, ctx).record_delegation(
+                    "studio", parent.id, "studio", child.id,
+                    depth=len(visited),
+                    requested_tools=frozenset(child.tool_permissions or []),
+                    originator_user_id=self.user.id,
+                    parent_run_id=run_id, commit=False)
+        except Exception as exc:
+            logger.warning("Workforce delegation check failed for run %s: %s",
+                           run_id, type(exc).__name__)
+            raise ValueError("Delegation refused: the workforce policy check failed.") from exc
+        if not decision.allowed:
+            raise ValueError(f"Delegation refused by workforce policy: {decision.reason}.")
         task = str(arguments.get("task") or "").strip()
         if not task or len(task) > 3000:
             raise ValueError("Provide a subtask of up to 3,000 characters.")
@@ -908,6 +972,7 @@ class AgentStudioService:
                     child, child_llm, tool, args, child_state,
                     usage_tracker=usage_tracker,
                     on_usage=on_usage,
+                    run_id=run_id,
                 )
             return await run_tool(
                 tool,

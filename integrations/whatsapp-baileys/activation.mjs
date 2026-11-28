@@ -1,6 +1,6 @@
 const ACTIVATION = /^(?:\/agent|irfanix|عرفانکس|ارفانکس)(?=$|[\s,:،!؟])(?:[\s,:،!؟]+)?/iu;
 const GENERATED_REPLY = /^InfraSpine AI(?:\s|$)/iu;
-const FOLLOWUP_WINDOW_MS = 5 * 60 * 1000;
+export const FOLLOWUP_WINDOW_MS = 5 * 60 * 1000;
 const MAX_COMMAND_CHARS = 6000;
 
 export function activationFor(body, now, activeUntil) {

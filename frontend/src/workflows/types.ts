@@ -22,7 +22,7 @@ export interface Spec {
 export interface Scope { id: string; name: string; can_manage: boolean }
 export interface Member { id: string; email: string; role: string }
 export interface Adapter { name: string; label: string; module: string; allowed_risks: Risk[]; idempotent: boolean }
-export interface Template { key: string; name: string; description: string; spec: Spec }
+export interface Template { key: string; name: string; description: string; spec: Spec; category?: string }
 export interface Workflow {
   id: string; scope_id: string; owner_id: string; name: string; description: string; latest_version: number;
   active_version: number | null; enabled: boolean; updated_at: string; latest_status?: string; latest_version_id?: string; can_edit?: boolean;

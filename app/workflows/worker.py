@@ -5,7 +5,7 @@ import asyncio
 import signal
 
 from app.core.config import get_settings
-from app.core.crypto import CredentialCipher
+from app.core.crypto import rotating_cipher_from_settings
 from app.db.session import create_engine, create_sessionmaker
 from app.workflows.engine import run_worker, tick
 
@@ -14,7 +14,7 @@ async def main(once=False):
     settings = get_settings()
     engine = create_engine(settings.database_url.get_secret_value())
     factory = create_sessionmaker(engine)
-    cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    cipher = rotating_cipher_from_settings(settings)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

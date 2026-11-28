@@ -15,6 +15,11 @@ import type {
   LibraryPosition,
   OrgChartPerson,
   OrgHistoryEntry,
+  FoundryAppDetail,
+  FoundryAppSummary,
+  FoundryDeployRequest,
+  FoundryFeedbackResult,
+  FoundryScope,
   Position,
   Claim,
   ClaimDetail,
@@ -39,6 +44,7 @@ import type {
   RagAnswer,
   RagDocument,
   RagDocumentList,
+  ReviewQueueResponse,
   DocumentVersionInfo,
   DocumentVersionDiff,
   DocumentObligation,
@@ -47,7 +53,8 @@ import type {
   FinancialFormReviewQueueItem,
   DatabaseAnalysisCatalog,
   DatabaseAnalysisQuery,
-  DatabaseAnalysisResult,
+  DatabaseAnalysisResult,  DatabaseSummary,
+
   CloudConnector,
   CloudConnectorCreateInput,
   CloudConnectorSyncResult,
@@ -68,8 +75,12 @@ import type {
   User,
   AgentStudioAgent,
   AgentStudioAgentInput,
+  AgentControl,
+  AgentControlEvent,
+  AgentControlSpend,
   AgentStudioMemory,
   AgentStudioWhatsAppConnection,
+  WhatsAppPath,
   AgentStudioWhatsAppInput,
   AgentStudioRun,
   AgentStudioAnalytics,
@@ -181,6 +192,9 @@ import type {
   LegacyBrowserRun,
   LegacyBrowserStatus,
   OrgSettings,
+  RoutingPolicy,
+  RoutingPolicySave,
+  RoutingReport,
 } from "./types";
 
 export class ApiError extends Error {
@@ -402,6 +416,11 @@ export const api = {
   disableMfa: (password: string, code: string) =>
     request<void>("POST", "/api/auth/mfa/disable", { password, code }),
   logout: () => request<void>("POST", "/api/auth/logout"),
+  // Per-user language preference (Step Z slice 4): GET returns the stored choice
+  // (or the default with explicit:false); PUT stores the caller's own row only.
+  languagePreference: () => request<{ language: string; explicit: boolean }>("GET", "/api/language/preference"),
+  setLanguagePreference: (language: string) =>
+    request<{ language: string; explicit: boolean }>("PUT", "/api/language/preference", { language }),
   acceptInvitation: (token: string, password: string) =>
     request<{ email: string; role: string; message: string }>("POST", "/api/onboarding/accept", { token, password }),
   partnerMe: () => request<PartnerIdentity>("GET", "/api/partner/auth/me"),
@@ -445,6 +464,7 @@ export const api = {
   catalog: () =>
     request<{ providers: ProviderMetadata[] }>("GET", "/api/admin/providers/catalog"),
   providers: () => request<ProviderList>("GET", "/api/admin/providers"),
+  databaseSummary: () => request<DatabaseSummary>("GET", "/api/admin/database/summary"),
   createCustomProvider: (input: CreateCustomProviderInput) =>
     request<ProviderState>("POST", "/api/admin/providers/custom", input),
   updateProvider: (
@@ -493,8 +513,15 @@ export const api = {
   orgSettings: () => request<OrgSettings>("GET", "/api/admin/platform/org-settings"),
   orgTimeZones: () => request<{ time_zones: string[] }>("GET", "/api/admin/platform/time-zones"),
   saveOrgTimeZone: (time_zone: string) => request<OrgSettings>("PUT", "/api/admin/platform/org-settings", { time_zone }),
+  routingPolicy: () => request<RoutingPolicy>("GET", "/api/admin/routing-policy"),
+  saveRoutingPolicy: (body: RoutingPolicySave) => request<RoutingPolicy>("PUT", "/api/admin/routing-policy", body),
+  routingReport: (days = 30, departmentId?: string) =>
+    request<RoutingReport>("GET", `/api/admin/routing-report?days=${days}${departmentId ? `&department_id=${encodeURIComponent(departmentId)}` : ""}`),
   testOcrEngine: () => request<OcrEngineTestResult>("POST", "/api/admin/ocr-engine/test"),
   documents: () => request<RagDocumentList>("GET", "/api/rag/documents"),
+  documentReviewQueue: () => request<ReviewQueueResponse>("GET", "/api/rag/documents/review-queue"),
+  setDocumentFreshness: (id: string, input: { review_date?: string | null; expires_at?: string | null; superseded_by?: string | null }) =>
+    request<RagDocument>("PATCH", `/api/rag/documents/${encodeURIComponent(id)}/freshness`, input),
   downloadDocumentFile: (documentId: string) => download(`/api/rag/documents/${encodeURIComponent(documentId)}/file`),
   documentVersions: (documentId: string) =>
     request<DocumentVersionInfo[]>("GET", `/api/rag/documents/${encodeURIComponent(documentId)}/versions`),
@@ -606,7 +633,7 @@ export const api = {
       form.append("provider", choice.provider);
       form.append("model", choice.model);
     }
-    return request<{ transcript: string; answer: RagAnswer }>("POST", "/api/rag/voice-question", form);
+    return request<{ transcript: string; detected_language: string; answer: RagAnswer }>("POST", "/api/rag/voice-question", form);
   },
   researchDocuments: (question: string, documentIds?: string[]) =>
     request<ResearchReport>("POST", "/api/rag/research", {
@@ -863,7 +890,7 @@ export const api = {
     request<{ memories: AgentStudioMemory[] }>("GET", "/api/agent-studio/agents/" + encodeURIComponent(id) + "/memories"),
   deleteAgentStudioMemory: (agentId: string, memoryId: string) =>
     request<void>("DELETE", "/api/agent-studio/agents/" + encodeURIComponent(agentId) + "/memories/" + encodeURIComponent(memoryId)),
-  agentStudioWhatsApp: () => request<{ connection: AgentStudioWhatsAppConnection | null }>("GET", "/api/agent-studio/whatsapp"),
+  agentStudioWhatsApp: () => request<{ connection: AgentStudioWhatsAppConnection | null; path_setting: WhatsAppPath; active_path: WhatsAppPath | null; cloud_available: boolean; baileys_available: boolean }>("GET", "/api/agent-studio/whatsapp"),
   agentStudioWhatsAppQr: () => request<{ available: boolean; connection: {
     id: string; agent_id: string; enabled: boolean; status: string; phone_suffix: string | null; qr: string | null; last_error: string | null;
     latest_command?: { id: string; status: string; receipt: "server_acknowledged" | "device_delivered" | "read" | null; received_at: string } | null;
@@ -875,6 +902,8 @@ export const api = {
     request<{ connection: AgentStudioWhatsAppConnection }>("PUT", "/api/agent-studio/whatsapp", input),
   verifyAgentStudioWhatsApp: () => request<{ verified_name: string | null; display_phone_number: string | null; subscribed: boolean }>("POST", "/api/agent-studio/whatsapp/verify"),
   disconnectAgentStudioWhatsApp: () => request<void>("DELETE", "/api/agent-studio/whatsapp"),
+  setAgentStudioWhatsAppPath: (path: WhatsAppPath) =>
+    request<{ path_setting: WhatsAppPath; active_path: WhatsAppPath | null; cloud_available: boolean; baileys_available: boolean }>("PUT", "/api/agent-studio/whatsapp/path", { path }),
   agentDepartments: () => request<{ departments: AgentDepartment[] }>("GET", "/api/agents/departments"),
   createAgentProfile: (input: {
     name: string; department_group_id: string; agent_type: AgentType;
@@ -914,6 +943,16 @@ export const api = {
   revokeAgentCatalogTemplate: (id: string, rationale: string) =>
     request<AgentCatalogRevocation>("POST", `/api/agent-catalog/templates/${encodeURIComponent(id)}/revoke`, { rationale }),
   agentCatalogGrants: () => request<{ items: AgentCatalogGrant[] }>("GET", "/api/agent-catalog/grants"),
+  agentControls: () => request<{ controls: AgentControl[] }>("GET", "/api/agents/controls"),
+  agentControl: (id: string) => request<AgentControl>("GET", `/api/agents/controls/${encodeURIComponent(id)}`),
+  patchAgentControl: (id: string, input: { reason: string; status?: "active" | "paused" | "disabled"; spend_limit_usd?: string | null }) =>
+    request<AgentControl>("PATCH", `/api/agents/controls/${encodeURIComponent(id)}`, input),
+  killAgentControl: (id: string, reason: string) =>
+    request<AgentControl & { cancelled_work: Record<string, number> }>("POST", `/api/agents/controls/${encodeURIComponent(id)}/kill`, { reason }),
+  agentControlEvents: (id: string) =>
+    request<{ events: AgentControlEvent[] }>("GET", `/api/agents/controls/${encodeURIComponent(id)}/events`),
+  agentControlSpend: (id: string) =>
+    request<AgentControlSpend>("GET", `/api/agents/controls/${encodeURIComponent(id)}/spend`),
   createAgentCatalogGrant: (email: string, permission: "publish" | "review") =>
     request<AgentCatalogGrant>("POST", "/api/agent-catalog/grants", { email, permission }),
   revokeAgentCatalogGrant: (id: string) =>
@@ -1174,4 +1213,11 @@ export const api = {
   orgChart: () => request<{ people: OrgChartPerson[] }>("GET", "/api/org/chart"),
   auditLogs: (limit = 25) =>
     request<{ entries: AuditEntry[] }>("GET", `/api/admin/audit-logs?limit=${limit}`),
+  foundryScopes: () => request<{ scopes: FoundryScope[] }>("GET", "/api/foundry/scopes"),
+  foundryApps: (scopeId: string) => request<{ apps: FoundryAppSummary[] }>("GET", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps`),
+  foundryApp: (scopeId: string, slug: string) => request<FoundryAppDetail>("GET", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(slug)}`),
+  foundryDeployRequest: (scopeId: string, slug: string, buildFingerprint: string, target: string) =>
+    request<FoundryDeployRequest>("POST", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(slug)}/deploy-request`, { build_fingerprint: buildFingerprint, target }),
+  foundryFeedback: (scopeId: string, slug: string, input: { build_fingerprint: string; kind: string; note: string; changes: Array<{ action: string; name?: string | null; path?: string | null; method?: string | null; table?: string | null; columns?: string[][]; endpoints?: string[]; new_name?: string | null; purpose?: string | null }> }) =>
+    request<FoundryFeedbackResult>("POST", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(slug)}/feedback`, input),
 };

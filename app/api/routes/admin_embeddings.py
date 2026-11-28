@@ -6,16 +6,17 @@ import time
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.deps import require_admin
+from app.api.deps import DbSession, PlatformAdminUser, audit_context, require_platform_admin
 from app.rag.embeddings import Embedder
 from app.schemas.embeddings import EmbeddingModelStatusResponse, EmbeddingModelTestResponse
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/admin/embedding-models",
     tags=["admin"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_platform_admin)],
 )
 
 
@@ -38,7 +39,9 @@ async def embedding_model_status(request: Request) -> EmbeddingModelStatusRespon
 
 
 @router.post("/test", response_model=EmbeddingModelTestResponse)
-async def test_embedding_model(request: Request) -> EmbeddingModelTestResponse:
+async def test_embedding_model(
+    request: Request, db: DbSession, admin: PlatformAdminUser
+) -> EmbeddingModelTestResponse:
     embedder: Embedder = request.app.state.rag.embedder
     started = time.perf_counter()
     try:
@@ -51,17 +54,28 @@ async def test_embedding_model(request: Request) -> EmbeddingModelTestResponse:
             if unavailable
             else "The embedding health check failed."
         )
-        return EmbeddingModelTestResponse(
+        response = EmbeddingModelTestResponse(
             ok=False,
             model_name=embedder.model_name,
             dimensions=embedder.dimension,
             latency_ms=round((time.perf_counter() - started) * 1000),
             message=message,
         )
-    return EmbeddingModelTestResponse(
-        ok=True,
-        model_name=embedder.model_name,
-        dimensions=embedder.dimension,
-        latency_ms=round((time.perf_counter() - started) * 1000),
-        message="The embedding health check passed.",
+    else:
+        response = EmbeddingModelTestResponse(
+            ok=True,
+            model_name=embedder.model_name,
+            dimensions=embedder.dimension,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            message="The embedding health check passed.",
+        )
+    audit.record(
+        db,
+        audit_context(request, admin),
+        "admin.embedding_model_tested",
+        target=embedder.model_name,
+        details={"ok": response.ok, "latency_ms": response.latency_ms},
+        outcome="success" if response.ok else "failure",
     )
+    await db.commit()
+    return response

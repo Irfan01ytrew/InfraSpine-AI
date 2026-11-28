@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.deps import AdminUser, AppSettings, DbSession, audit_context, require_admin
+from app.api.deps import AppSettings, DbSession, PlatformAdminUser, audit_context, require_platform_admin
 from app.core.errors import InvalidInputError
 from app.schemas.deployment import (
     CompanyProfile,
@@ -31,7 +31,7 @@ async def public_company_profile(settings: AppSettings) -> CompanyProfile:
 router = APIRouter(
     prefix="/api/admin/deployment",
     tags=["deployment"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_platform_admin)],
 )
 
 
@@ -55,7 +55,7 @@ async def industry_templates() -> list[IndustryTemplateOut]:
 async def apply_template(
     template_id: str,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
     request: Request,
 ) -> IndustryTemplateApplyOut:
     """Create missing empty local departments; no membership or ACL is assigned."""
@@ -67,7 +67,7 @@ async def update_company(
     payload: CompanyProfile,
     settings: AppSettings,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
     request: Request,
 ) -> CompanyProfile:
     profile = payload.model_copy(update={"setup_complete": True})
@@ -98,7 +98,7 @@ async def activate_license(
     payload: SignedLicense,
     settings: AppSettings,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
     request: Request,
 ) -> LicenseStatus:
     try:

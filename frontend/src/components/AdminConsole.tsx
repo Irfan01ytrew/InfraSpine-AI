@@ -1,9 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
 import { Menu, Plus, RefreshCw, X } from "lucide-react";
 import { api, describeError } from "../api";
 import { cn } from "../lib/utils";
 import { AppSidebar, buildNav, CommandPalette } from "./AppSidebar";
+import { getLanguage, subscribeLanguage, translateNavGroups } from "../i18n.mjs";
+import { OfflineBanner } from "./OfflineBanner";
 import { Alert, Button, PageHeader, Skeleton, Tabs } from "./ui";
 import type { AuditEntry, ProviderList, ProviderMetadata, ProviderState, User } from "../types";
 import type { WorkspaceView } from "./ModuleWorkspaces";
@@ -23,9 +25,11 @@ function lazyNamedPage<TModule, TKey extends keyof TModule>(
 const AccountSecurityPage = lazyNamedPage(() => import("./AccountSecurityPage"), "AccountSecurityPage");
 const AuditLog = lazyNamedPage(() => import("./AuditLog"), "AuditLog");
 const ApprovalsPage = lazyNamedPage(() => import("./ApprovalsPage"), "ApprovalsPage");
+const ControlRoomRegistryPage = lazyNamedPage(() => import("../control-room/ControlRoomRegistryPage"), "ControlRoomRegistryPage");
 const AddProviderForm = lazyNamedPage(() => import("./AddProviderForm"), "AddProviderForm");
 const ClaimsPage = lazyNamedPage(() => import("./ClaimsPage"), "ClaimsPage");
 const FinancePage = lazyNamedPage(() => import("../finance/FinancePage"), "FinancePage");
+const HrPage = lazyNamedPage(() => import("../hr/HrPage"), "HrPage");
 const ProcessIntelligencePage = lazyNamedPage(() => import("../process-intelligence/ProcessIntelligencePage"), "ProcessIntelligencePage");
 const HomePage = lazyNamedPage(() => import("./HomePage"), "HomePage");
 const SettingsPage = lazyNamedPage(() => import("./SettingsPage"), "SettingsPage");
@@ -41,6 +45,7 @@ const OrgKnowledgePage = lazyNamedPage(() => import("./OrgKnowledgePage"), "OrgK
 const ProviderPanel = lazyNamedPage(() => import("./ProviderPanel"), "ProviderPanel");
 const ReportsPage = lazyNamedPage(() => import("./ReportsPage"), "ReportsPage");
 const ResearchPage = lazyNamedPage(() => import("./ResearchPage"), "ResearchPage");
+const SelfHealingPage = lazyNamedPage(() => import("../self-healing/SelfHealingPage"), "SelfHealingPage");
 const TrainingPage = lazyNamedPage(() => import("./TrainingPage"), "TrainingPage");
 const MarketResearchPage = lazyNamedPage(() => import("./MarketResearchPage"), "MarketResearchPage");
 const TracesPage = lazyNamedPage(() => import("./TracesPage"), "TracesPage");
@@ -48,9 +53,13 @@ const CompanySetupPage = lazyNamedPage(() => import("./CompanySetupPage"), "Comp
 const AutomationPage = lazyNamedPage(() => import("./AutomationPage"), "AutomationPage");
 const AgentCatalogPage = lazyNamedPage(() => import("./AgentCatalogPage"), "AgentCatalogPage");
 const AgentStudioPage = lazyNamedPage(() => import("./AgentStudioPage"), "AgentStudioPage");
+const AgentControlsPage = lazyNamedPage(() => import("./AgentControlsPage"), "AgentControlsPage");
+const FoundryPage = lazyNamedPage(() => import("./FoundryPage"), "FoundryPage");
+const WorkforcePage = lazyNamedPage(() => import("../workforce/WorkforcePage"), "WorkforcePage");
 const ServiceRequestsPage = lazyNamedPage(() => import("./ServiceRequestsPage"), "ServiceRequestsPage");
 const ExpertisePage = lazyNamedPage(() => import("./ExpertisePage"), "ExpertisePage");
 const ForecastsPage = lazyNamedPage(() => import("./ForecastsPage"), "ForecastsPage");
+const PredictiveContinuityPage = lazyNamedPage(() => import("./PredictiveContinuityPage"), "PredictiveContinuityPage");
 const ProposalCoveragePage = lazyNamedPage(() => import("./ProposalCoveragePage"), "ProposalCoveragePage");
 const MyWorkPage = lazyNamedPage(() => import("./MyWorkPage"), "MyWorkPage");
 const BudgetsPage = lazyNamedPage(() => import("./BudgetsPage"), "BudgetsPage");
@@ -58,6 +67,10 @@ const RequestFormsPage = lazyNamedPage(() => import("./RequestFormsPage"), "Requ
 const WebhooksPage = lazyNamedPage(() => import("./WebhooksPage"), "WebhooksPage");
 const PartnerWorkspacesPage = lazyNamedPage(() => import("./PartnerWorkspacesPage"), "PartnerWorkspacesPage");
 const CloudConnectorsPage = lazyNamedPage(() => import("./CloudConnectorsPage"), "CloudConnectorsPage");
+const ControlRoomPage = lazyNamedPage(() => import("../control-room/ControlRoomPage"), "ControlRoomPage");
+import { ControlRoomTabs } from "../control-room/ControlRoomTabs";
+const DatabaseOpsPage = lazyNamedPage(() => import("./DatabaseOpsPage"), "DatabaseOpsPage");
+const DecisionsPage = lazyNamedPage(() => import("../decisions/DecisionsPage"), "DecisionsPage");
 
 const RecoveryPage = lazy(async () => {
   const module = await import("../recovery/RecoveryPage");
@@ -76,22 +89,24 @@ const WorkspacesPage = lazy(async () => {
   return { default: module.WorkspacesPage };
 });
 
-type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
+type View = "process-intelligence" | "finance" | "hr" | "control-room" | "module-control-center" | "company-graph" | "digital-twin" | "workflow-engine" | "governance" | "recovery" | "continuity" | "resilience" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "predictive-continuity" | "market-research" | "training" | "org" | "claims" | "approvals" | "decisions" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "agent-controls" | "foundry" | "workforce" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "database" | "connectors" | "budgets" | "request-forms" | "webhooks" | "self-healing";
 
 // The view lives in the URL hash so a refresh keeps the page and it can be linked (#/logs).
 function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = false, canInvite = false): View {
   const view = window.location.hash.replace(/^#\/?/, "").split("?", 1)[0] as View;
-  if (["company-graph", "workflow-engine", "governance", "recovery", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view)) return isAdmin ? view : "knowledge";
+  if (["company-graph", "digital-twin", "workflow-engine", "governance", "recovery", "continuity", "resilience", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view)) return isAdmin ? view : "knowledge";
   if (view === "process-intelligence") return view;
   if (view === "finance") return view; // the finance API decides per department
+  if (view === "control-room") return view; // the control-room API decides per department
+  if (view === "hr") return view; // the HR API decides per department
   if (view === "module-control-center") return isAdmin ? view : "knowledge";
   if (view === "reports" && canViewReports) return view;
   if (view === "invite" && canInvite) return view;
-  if (view === "settings" || view === "providers" || view === "traces" || view === "logs" || view === "people" || view === "reports" || view === "deployment" || view === "workspaces" || view === "partner-workspaces" || view === "connectors") return isAdmin ? view : "knowledge";
+  if (view === "settings" || view === "providers" || view === "traces" || view === "logs" || view === "people" || view === "reports" || view === "deployment" || view === "database" || view === "workspaces" || view === "partner-workspaces" || view === "connectors" || view === "agent-controls" || view === "self-healing" || view === "workforce") return isAdmin ? view : "knowledge";
   if (view === "departments") return isManager ? view : "knowledge";
   if (view === "budgets") return isAdmin || isManager ? view : "knowledge";
   if (view === "request-forms" || view === "webhooks") return isAdmin ? view : "knowledge";
-  if (view === "memory" || view === "claims" || view === "org" || view === "research" || view === "proposals" || view === "forecasts" || view === "market-research" || view === "training" || view === "approvals" || view === "handoffs" || view === "meetings" || view === "requests" || view === "expertise" || view === "my-work" || view === "automation" || view === "agents" || view === "agent-studio" || view === "interviews" || view === "security") return view;
+  if (view === "memory" || view === "claims" || view === "org" || view === "research" || view === "proposals" || view === "forecasts" || view === "predictive-continuity" || view === "market-research" || view === "training" || view === "approvals" || view === "decisions" || view === "handoffs" || view === "meetings" || view === "requests" || view === "expertise" || view === "my-work" || view === "automation" || view === "agents" || view === "agent-studio" || view === "foundry" || view === "interviews" || view === "security") return view;
   if (view.startsWith("c/")) return "knowledge"; // a saved conversation link (#/c/<id>)
   if (view === "home") return isAdmin ? view : "knowledge";
   if (view === "knowledge" || !isAdmin) return "knowledge";
@@ -173,7 +188,12 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
   const state = list?.providers.find((p) => p.provider === selected);
   const active = list?.providers.find((p) => p.is_active);
 
-  const navGroups = useMemo(() => buildNav(isAdmin, isManager, canViewReports, canInvite), [isAdmin, isManager, canViewReports, canInvite]);
+  // Navigation labels follow the viewer's language (Step Z slice 4).
+  const language = useSyncExternalStore(subscribeLanguage, getLanguage);
+  const navGroups = useMemo(
+    () => translateNavGroups(buildNav(isAdmin, isManager, canViewReports, canInvite), language),
+    [isAdmin, isManager, canViewReports, canInvite, language],
+  );
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const wide = view === "knowledge";
   const currentLabel = navGroups.flatMap((g) => g.items).find((i) => i.view === view)?.label ?? (view === "security" ? "Account security" : "");
@@ -198,22 +218,27 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <Button variant="ghost" size="icon-sm" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Menu /></Button>
           <span className="truncate text-sm font-semibold text-foreground">{currentLabel || brandName}</span>
         </header>
+      <OfflineBanner />
       <main className={cn("relative min-h-0 min-w-0 flex-1", // Phones stack the Knowledge columns, so the page scrolls; desktops keep each column scrolling on its own.
         wide ? "flex flex-col scrollbar-thin max-lg:overflow-y-auto lg:overflow-hidden" : "scrollbar-thin overflow-x-hidden overflow-y-auto")}>
         <Suspense fallback={wide ? <Skeleton className="h-[34rem] w-full" /> : (
-          <div className="page-container mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="page-container mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
             <Skeleton className="h-[34rem] w-full" />
           </div>
         )}>
-        <div className={wide ? "contents" : "page-container mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"}>
+        <div key={view} className={wide ? "contents" : "page-container page-enter mx-auto w-full max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"}>
         {view === "module-control-center" ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><ModuleControlCenterPage /></Suspense>
-        ) : ["company-graph", "workflow-engine", "governance", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view) ? (
+        ) : ["company-graph", "digital-twin", "workflow-engine", "governance", "continuity", "resilience", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view) ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><ModuleWorkspacesPage view={view as WorkspaceView} onNavigate={(v) => setView(v as View)} /></Suspense>
         ) : view === "recovery" ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><RecoveryPage user={user} /></Suspense>
         ) : view === "finance" ? (
           <FinancePage />
+        ) : view === "control-room" ? (
+          <ControlRoomTabs registry={<ControlRoomRegistryPage />} live={<ControlRoomPage />} />
+        ) : view === "hr" ? (
+          <HrPage />
         ) : view === "process-intelligence" ? (
           <ProcessIntelligencePage user={user} />
         ) : view === "home" ? (
@@ -224,6 +249,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <AccountSecurityPage user={user} />
         ) : view === "deployment" ? (
           <CompanySetupPage onProfileSaved={onCompanyProfileSaved} />
+        ) : view === "database" ? (
+          <DatabaseOpsPage />
         ) : view === "settings" ? (
           <SettingsPage />
         ) : view === "knowledge" ? (
@@ -236,6 +263,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <ProposalCoveragePage />
         ) : view === "forecasts" ? (
           <ForecastsPage />
+        ) : view === "predictive-continuity" ? (
+          <PredictiveContinuityPage />
         ) : view === "market-research" ? (
           <MarketResearchPage isAdmin={isAdmin} />
         ) : view === "training" ? (
@@ -248,6 +277,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <ClaimsPage />
         ) : view === "approvals" ? (
           <ApprovalsPage />
+        ) : view === "decisions" ? (
+          <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><DecisionsPage /></Suspense>
         ) : view === "handoffs" ? (
           <HandoffsPage user={user} />
         ) : view === "requests" ? (
@@ -272,6 +303,12 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <AgentCatalogPage user={user} />
         ) : view === "agent-studio" ? (
           <AgentStudioPage />
+        ) : view === "agent-controls" ? (
+          <AgentControlsPage />
+        ) : view === "foundry" ? (
+          <FoundryPage />
+        ) : view === "workforce" ? (
+          <WorkforcePage />
         ) : view === "people" ? (
           <PeoplePage />
         ) : view === "workspaces" ? (
@@ -284,6 +321,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <ReportsPage />
         ) : view === "traces" ? (
           <TracesPage />
+        ) : view === "self-healing" ? (
+          <SelfHealingPage />
         ) : loadError ? (
           <Alert tone="danger" title="Couldn't load this page">{loadError}</Alert>
         ) : !list ? (

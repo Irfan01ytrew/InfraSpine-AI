@@ -43,7 +43,17 @@ export function Markdown({ text, renderCitation }: { text: string; renderCitatio
             if (tag) {
               if (tag.startsWith("S")) return renderCitation?.(tag, tag) ?? <span className="source-tag">[{tag}]</span>;
               const source = webSources.get(tag);
-              return source ? <a href={source.url} target="_blank" rel="noopener noreferrer" title={source.title} className="answer-web-citation">{tag.slice(1)}</a> : <span className="source-tag">[{tag}]</span>;
+              if (source) {
+                // Step P slice 3: the live-source chip shows when the source
+                // was published and when it was retrieved. A missing
+                // publication date is shown as missing, never invented.
+                const stamp = [
+                  `Published: ${source.published ?? "not available"}`,
+                  ...(source.retrieved ? [`Retrieved: ${source.retrieved}`] : []),
+                ].join(" · ");
+                return <a href={source.url} target="_blank" rel="noopener noreferrer" title={`${source.title} — ${stamp}`} className="answer-web-citation">{tag.slice(1)}</a>;
+              }
+              return <span className="source-tag">[{tag}]</span>;
             }
             if (!href) return <span>{children}</span>;
             const external = href.startsWith("https:");

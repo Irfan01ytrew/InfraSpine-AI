@@ -16,6 +16,7 @@ export const workflowApi = {
   save: (s:string,name:string,description:string,spec:Spec,id?:string,base?:number) => call<{workflow:Workflow;version:Version}>(scope(s)+(id?`/workflows/${id}/versions`:'/workflows'),'POST',{name,description,spec,base_version:base}),
   validate: (s:string,spec:Spec) => call<{valid:boolean;errors:Validation[]}>(scope(s)+'/validate','POST',spec),
   draft: (s:string,requirements:string) => call<{spec:Spec;errors:Validation[];requires_review:boolean}>(scope(s)+'/draft-from-text','POST',{requirements}),
+  templateDraft: (s:string,key:string,body:{name?:string;description?:string}={}) => call<{workflow:Workflow;version:Version}>(scope(s)+`/templates/${encodeURIComponent(key)}/draft`,'POST',body),
   review: (s:string,id:string,version_id:string) => call<Version>(scope(s)+`/workflows/${id}/review`,'POST',{version_id}),
   reviewDecision: (s:string,id:string,version_id:string,approved:boolean,note:string) => call<Version>(scope(s)+`/workflows/${id}/review-decision`,'POST',{version_id,approved,note}),
   publish: (s:string,id:string,version_id:string) => call<Version>(scope(s)+`/workflows/${id}/publish`,'POST',{version_id}),

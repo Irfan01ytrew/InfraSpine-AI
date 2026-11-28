@@ -226,7 +226,7 @@ export function CloudConnectorsPage() {
                           {item.sync_in_progress ? "Syncing" : item.last_sync_status ? `Last sync: ${item.last_sync_status}` : "Not yet synced"}
                         </Badge>
                         {item.last_sync_error_count > 0 && <Badge tone="danger">{item.last_sync_error_count} errors</Badge>}
-                        {item.last_synced_at && <span className="text-[11px] text-muted">{formatDate(item.last_synced_at)}</span>}
+                        {item.last_synced_at && <span className="text-xs text-muted">{formatDate(item.last_synced_at)}</span>}
                       </div>
                     </div>
                   </div>

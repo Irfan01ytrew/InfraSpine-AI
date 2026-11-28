@@ -33,7 +33,12 @@ def source_public(source):
 async def synchronize(db, scope, source_id, data: SyncInput, ctx):
     await lock_tenant(db, scope)
     source = await source_for(db, scope, source_id)
-    digest = hashlib.sha256(data.model_dump_json().encode()).hexdigest()
+    # The digest covers WHAT was synced (items, reference, visibility,
+    # readers), not WHEN it ran: observed_at is a fresh timestamp on every
+    # call, so including it made the replay branch unreachable — any re-seed
+    # or client retry with the same key and identical items 409'd instead of
+    # replaying. A different item/reference/visibility still 409s.
+    digest = hashlib.sha256(data.model_dump_json(exclude={"observed_at"}).encode()).hexdigest()
     replay = await db.scalar(select(GraphSync).where(GraphSync.tenant_id == scope.tenant_id, GraphSync.source_id == source_id, GraphSync.idempotency_key == data.idempotency_key))
     if replay:
         if replay.digest != digest:

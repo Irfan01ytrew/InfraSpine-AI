@@ -20,7 +20,12 @@ export function webCitationTargets(text) {
     const matches = [...line.matchAll(/\[([^\]]+)\]\((?:<(https:\/\/[^>\s]+)>|(https:\/\/[^)\s]+))\)/g)];
     const link = matches.find((match) => match[1] !== tag) ?? matches[0];
     const url = link?.[2] ?? link?.[3];
-    if (url && safeAnswerUrl(url)) targets.set(tag, { title: link[1], url });
+    // Step P slice 3: keep the source's timestamps with the citation so the
+    // chip can show them. A missing publication date stays null — it is
+    // shown as missing, never invented.
+    const published = line.match(/Published:\s*([^·\n]+)/)?.[1]?.trim() || null;
+    const retrieved = line.match(/Retrieved:\s*([^·\n]+)/)?.[1]?.trim() || null;
+    if (url && safeAnswerUrl(url)) targets.set(tag, { title: link[1], url, published, retrieved });
   }
   return targets;
 }

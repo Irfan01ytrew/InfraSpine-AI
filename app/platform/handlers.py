@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.digital_twin import feed_records as twin_feed_records
+from app.digital_twin import feed_changes as twin_feeds
 from app.platform.models import PlatformOutbox
 from app.platform.outbox import register
 
@@ -51,3 +53,42 @@ async def _on_document_access_changed(db: AsyncSession, event: PlatformOutbox) -
 
     tables._cache.clear()
     logger.info("document access changed: %s %s", event.event_type, event.payload.get("document_id"))
+
+
+@register("twin.proposal_action")
+async def _on_twin_proposal_action(db: AsyncSession, event: PlatformOutbox) -> None:
+    # Step K v2 slice 6: an approved twin proposal was dispatched.
+    # The event row itself is the durable action record (the
+    # proposal row carries the execution id + external ref); the
+    # physical follow-up (assigning a backup, reviewing a supplier)
+    # is a human/operator step the event triggers, so the handler
+    # only logs receipt — the dispatch is visible in the audit
+    # trail and the event is never silently swallowed.
+    logger.info("twin proposal action dispatched: proposal %s action %s",
+                event.payload.get("proposal_id"), event.payload.get("action_kind"))
+
+
+async def _on_twin_feed_event(db: AsyncSession, event: PlatformOutbox) -> None:
+    # Step K v2 slice 7: a live-sync feed event becomes a pending
+    # graph proposal through the governed-change path. The twin never
+    # writes the graph here — apply_feed only inserts a GraphChange
+    # a human approves or rejects. An event with no resolvable graph
+    # tenant (payload tenant_id, else an outbox scope_id that IS a
+    # graph tenant id) is skipped with a warning: a graph tenant id
+    # is not an org id, and guessing would attach the proposal to
+    # the wrong company. A malformed event raises, so the outbox
+    # retries it and dead-letters it for an operator — never a
+    # silent drop.
+    change = twin_feeds.translate_event(event.event_type, event.payload or {})
+    if change is None:
+        return
+    tenant_id = await twin_feed_records.resolve_tenant(db, event)
+    if tenant_id is None:
+        logger.warning("twin feed event %s (%s) has no graph tenant; skipped",
+                       event.event_type, event.id)
+        return
+    await twin_feed_records.apply_feed(db, tenant_id, change, observed_at=event.created_at)
+
+
+for _feed_event_type in twin_feeds.FEED_EVENTS:
+    register(_feed_event_type)(_on_twin_feed_event)

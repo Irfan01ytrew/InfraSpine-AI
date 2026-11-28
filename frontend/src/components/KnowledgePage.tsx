@@ -16,6 +16,7 @@ import type {
   DepartmentGroup,
   FinancialExtraction,
   FinancialFormReviewQueueItem,
+  ReviewQueueEntry,
   User,
 } from "../types";
 
@@ -38,6 +39,14 @@ import { AlertTriangle, ArrowUp, ArrowUpRight, ChevronDown, Download, ExternalLi
 import { cn } from "../lib/utils";
 import { Alert, Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, EmptyState, Field, Input, Select, Skeleton, Tooltip } from "./ui";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { allTags, expiryBadgeText, expiryStatus, matchesLibraryQuery, matchesTag } from "../knowledge/documentMeta.mjs";
+import {
+  clearReadCache,
+  loadKnowledgeAnswers,
+  recordKnowledgeAnswer,
+} from "../lib/offlineReadCache.mjs";
+import type { SavedKnowledgeAnswer } from "../lib/offlineReadCache.mjs";
+import { OfflineReadCachePanel } from "./OfflineReadCachePanel";
 
 const STATUS_LABEL: Record<RagDocument["status"], string> = {
   pending: "Queued",
@@ -105,6 +114,9 @@ export function KnowledgePage({ user }: { user: User }) {
   const [financialReview, setFinancialReview] = useState<{ documentId: string; result: FinancialExtraction } | null>(null);
   const [financialBusy, setFinancialBusy] = useState<string | null>(null);
   const [financialQueue, setFinancialQueue] = useState<FinancialFormReviewQueueItem[] | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<ReviewQueueEntry[] | null>(null);
+  const [reviewDateDraft, setReviewDateDraft] = useState<Record<string, string>>({});
+  const [reviewSaving, setReviewSaving] = useState<string | null>(null);
   const [financialReviewedExceptions, setFinancialReviewedExceptions] = useState<number[]>([]);
   const [financialRationale, setFinancialRationale] = useState("");
   const [financialExportBusy, setFinancialExportBusy] = useState(false);
@@ -123,6 +135,7 @@ export function KnowledgePage({ user }: { user: User }) {
       setMaxMb(list.max_upload_mb);
       setIngestion(list.ingestion ?? null);
       void api.financialReviewQueue().then((queue) => setFinancialQueue(queue.records)).catch(() => setFinancialQueue(null));
+      void api.documentReviewQueue().then((queue) => setReviewQueue(queue.entries)).catch(() => setReviewQueue(null));
     } catch (err) {
       if (Date.now() - documentErrorAt.current > 60_000) {
         documentErrorAt.current = Date.now();
@@ -359,9 +372,11 @@ export function KnowledgePage({ user }: { user: User }) {
   // ---- library search and filter (client-side over the loaded list)
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const needle = query.trim().toLowerCase();
+  // Step AB slice 5: filter by enrichment tag (derived metadata, app/rag/auto_enrich.py).
+  const [tagFilter, setTagFilter] = useState<string>("all");
   const statusMatch = STATUS_FILTERS.find((f) => f.value === statusFilter)!.matches;
-  const shownDocs = docs?.filter((d) => statusMatch(d) && (!needle || d.filename.toLowerCase().includes(needle))) ?? [];
+  const tags = allTags(docs);
+  const shownDocs = docs?.filter((d) => statusMatch(d) && matchesTag(d, tagFilter) && matchesLibraryQuery(d, query)) ?? [];
 
   // ---- "Ask about this document": the next questions in the open chat search this document only
   const [focusDoc, setFocusDoc] = useState<FocusDocument | null>(null);
@@ -551,7 +566,7 @@ export function KnowledgePage({ user }: { user: User }) {
                   <span className="block text-xs font-medium text-foreground">
                     {uploading ? "Uploading…" : isAdmin ? uploadVisibility === "shared" ? "Upload shared documents" : "Upload a restricted document" : "Upload department documents"}
                   </span>
-                  <span className="block text-[11px] leading-snug text-muted">PDF, Office, text, images, audio, video · up to {maxMb} MB each</span>
+                  <span className="block text-xs leading-snug text-muted">PDF, Office, text, images, audio, video · up to {maxMb} MB each</span>
                 </span>
               </button>
               <input ref={fileInput} type="file" accept={ACCEPT} multiple hidden onChange={(e) => void onUpload(e.target.files)} />
@@ -591,6 +606,40 @@ export function KnowledgePage({ user }: { user: User }) {
               </section>
             )}
 
+            {reviewQueue && reviewQueue.length > 0 && (
+              <section className="rounded-lg border border-warning/30 bg-warning-soft p-3" aria-label="Freshness review queue">
+                <p className="text-xs font-semibold text-warning-text">{reviewQueue.length} document{reviewQueue.length === 1 ? "" : "s"} need{reviewQueue.length === 1 ? "s" : ""} a freshness review</p>
+                <ul className="mt-2 grid gap-1.5">
+                  {reviewQueue.map((entry) => (
+                    <li key={entry.document.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground-2">
+                      <span className="min-w-0 truncate" title={entry.document.freshness_reasons?.[0]}>{entry.document.filename}</span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Badge tone={entry.document.freshness_status === "expired" || entry.document.freshness_status === "superseded" ? "danger" : entry.document.freshness_status === "stale" ? "warning" : "neutral"}>{entry.document.freshness_status ?? "needs review"}</Badge>
+                        {entry.open_conflicts > 0 && <span className="text-muted">· {entry.open_conflicts} open conflict{entry.open_conflicts === 1 ? "" : "s"}</span>}
+                        {entry.document.can_modify ? (
+                          <>
+                            <Input type="date" aria-label={`Review by date for ${entry.document.filename}`} className="h-7 w-[140px] text-xs" value={reviewDateDraft[entry.document.id] ?? entry.document.review_date?.slice(0, 10) ?? ""} onChange={(e) => setReviewDateDraft((d) => ({ ...d, [entry.document.id]: e.target.value }))} />
+                            <Button size="sm" className="h-7" loading={reviewSaving === entry.document.id} onClick={() => {
+                              const value = reviewDateDraft[entry.document.id] ?? entry.document.review_date?.slice(0, 10) ?? "";
+                              setReviewSaving(entry.document.id);
+                              void api.setDocumentFreshness(entry.document.id, { review_date: value ? new Date(`${value}T00:00:00Z`).toISOString() : null })
+                                .then(() => {
+                                  toast("success", "Review date saved");
+                                  setReviewDateDraft((d) => { const next = { ...d }; delete next[entry.document.id]; return next; });
+                                  return load();
+                                })
+                                .catch((err) => toast("error", "Could not save review date", describeError(err)))
+                                .finally(() => setReviewSaving(null));
+                            }}>Save review date</Button>
+                          </>
+                        ) : <span className="text-muted">Read only</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {docs && docs.length > 0 && (
               <div className="flex gap-2">
                 <Input
@@ -610,6 +659,16 @@ export function KnowledgePage({ user }: { user: User }) {
                   onValueChange={(v) => setStatusFilter(v as StatusFilter)}
                   options={STATUS_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
                 />
+                {tags.length > 0 && (
+                  <Select
+                    size="sm"
+                    className="w-[150px] shrink-0"
+                    aria-label="Filter by tag"
+                    value={tagFilter}
+                    onValueChange={(v) => setTagFilter(v)}
+                    options={[{ value: "all", label: "All tags" }, ...tags.map((t) => ({ value: t, label: t }))]}
+                  />
+                )}
               </div>
             )}
 
@@ -625,7 +684,7 @@ export function KnowledgePage({ user }: { user: User }) {
               <EmptyState
                 icon={<Search />}
                 title="No documents match"
-                action={<Button size="sm" variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); }}>Clear filters</Button>}
+                action={<Button size="sm" variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setTagFilter("all"); }}>Clear filters</Button>}
               />
             ) : (
               <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
@@ -643,7 +702,7 @@ export function KnowledgePage({ user }: { user: User }) {
                             {STATUS_LABEL[doc.status]}
                           </Badge>
                         </div>
-                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted">
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
                           {doc.visibility !== "shared" && (
                             <span className="inline-flex items-center gap-1 text-warning-text" title={`${VISIBILITY[doc.visibility].title}, so other users' chats don't use it`}>
                               <Lock className="size-3" />{VISIBILITY[doc.visibility].label} ·
@@ -656,11 +715,29 @@ export function KnowledgePage({ user }: { user: User }) {
                             timeAgo(doc.updated_at),
                           ].filter(Boolean).join(" · ")}
                         </p>
+                        {doc.summary && (
+                          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-muted">{doc.summary}</p>
+                        )}
+                        {((doc.tags?.length ?? 0) > 0 || doc.expiry_date) && (
+                          <p className="mt-1.5 flex flex-wrap items-center gap-1">
+                            {doc.tags?.map((tag) => (
+                              <Badge key={tag} title={`Show only documents tagged ${tag}`} className="cursor-pointer" onClick={() => setTagFilter(tag)}>{tag}</Badge>
+                            ))}
+                            {doc.expiry_date && (
+                              <Badge
+                                tone={expiryStatus(doc.expiry_date) === "expired" ? "danger" : expiryStatus(doc.expiry_date) === "due_soon" ? "warning" : "neutral"}
+                                title={`Expiry date ${doc.expiry_date}`}
+                              >
+                                {expiryBadgeText(doc.expiry_date)}
+                              </Badge>
+                            )}
+                          </p>
+                        )}
                       </div>
                     </div>
 
                     {doc.error_message && doc.status !== "ready" && (
-                      <p className={cn("mt-2 rounded-md px-2.5 py-1.5 text-[11px] leading-relaxed", doc.status === "failed" ? "bg-danger-soft text-danger-text" : "bg-surface-2 text-foreground-2")}>{doc.error_message}</p>
+                      <p className={cn("mt-2 rounded-md px-2.5 py-1.5 text-xs leading-relaxed", doc.status === "failed" ? "bg-danger-soft text-danger-text" : "bg-surface-2 text-foreground-2")}>{doc.error_message}</p>
                     )}
 
                     {(doc.searchable || doc.can_modify || doc.source_system === "file_server") && (
@@ -830,6 +907,18 @@ export function KnowledgePage({ user }: { user: User }) {
   );
 }
 
+const VOICE_LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  roman_urdu: "Roman Urdu",
+  urdu: "Urdu",
+  mixed: "Mixed",
+  unknown: "Unknown language",
+};
+
+function voiceLanguageLabel(language: string): string {
+  return VOICE_LANGUAGE_LABELS[language] ?? language;
+}
+
 interface DisplayTurn {
   key: string;
   question: string;
@@ -840,6 +929,8 @@ interface DisplayTurn {
   messageId?: number; // the saved assistant message, for feedback
   feedback?: -1 | 1 | null;
   ephemeral?: boolean;
+  /** Language the voice question was spoken in (Step Z slice 6); typed turns leave this unset. */
+  detectedLanguage?: string;
 }
 
 function toTurns(messages: ConversationMessage[]): DisplayTurn[] {
@@ -895,6 +986,63 @@ function KnowledgeChat({
   // Per-chat model pick. "" = the organization's default (active) model, resolved by the server each time.
   const [models, setModels] = useState<ModelOption[]>([]);
   const [pick, setPick] = useState("");
+
+  // Offline read-model cache (Step U, slice 5): last-known Knowledge
+  // answers, saved on this device and shown read-only while offline.
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [savedAnswers, setSavedAnswers] = useState<SavedKnowledgeAnswer[]>(() => {
+    try {
+      return typeof localStorage === "undefined" ? [] : loadKnowledgeAnswers(localStorage);
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    const refreshSaved = () => {
+      setOnline(typeof navigator === "undefined" ? true : navigator.onLine);
+      try {
+        if (typeof localStorage !== "undefined") setSavedAnswers(loadKnowledgeAnswers(localStorage));
+      } catch {
+        // Best-effort only; the live chat still works without the cache.
+      }
+    };
+    window.addEventListener("online", refreshSaved);
+    window.addEventListener("offline", refreshSaved);
+    window.addEventListener("storage", refreshSaved);
+    return () => {
+      window.removeEventListener("online", refreshSaved);
+      window.removeEventListener("offline", refreshSaved);
+      window.removeEventListener("storage", refreshSaved);
+    };
+  }, []);
+
+  function saveAnswerOffline(question: string, response: RagAnswer): void {
+    try {
+      if (typeof localStorage === "undefined") return;
+      const saved = recordKnowledgeAnswer(localStorage, {
+        question,
+        answer: response.answer,
+        citations: response.citations,
+        model: response.model,
+        provider: response.provider,
+        insufficientEvidence: response.insufficient_evidence,
+      });
+      if (saved) setSavedAnswers(saved);
+    } catch {
+      // The answer is already on screen; the offline copy is best-effort.
+    }
+  }
+
+  function clearSavedAnswers(): void {
+    try {
+      if (typeof localStorage !== "undefined") clearReadCache(localStorage);
+    } catch {
+      // See saveAnswerOffline.
+    }
+    setSavedAnswers([]);
+  }
   const keyOf = (provider: string | null, model: string | null) => (provider && model ? `${provider}\u0000${model}` : "");
 
   useEffect(() => {
@@ -1018,6 +1166,8 @@ function KnowledgeChat({
         ),
       );
       onUpdated(result.conversation);
+      const response = result.assistant_message.response;
+      if (response) saveAnswerOffline(question, response);
     } catch (err) {
       const message =
         err instanceof ApiError && err.code === "llm_not_configured"
@@ -1053,8 +1203,10 @@ function KnowledgeChat({
           question: result.transcript,
           answer: result.answer,
           ephemeral: true,
+          detectedLanguage: result.detected_language,
         },
       ]);
+      saveAnswerOffline(result.transcript, result.answer);
     } catch (err) {
       toast("error", "Could not answer voice question", describeError(err));
     } finally {
@@ -1165,6 +1317,11 @@ function KnowledgeChat({
         {readyCount > 0 && <Badge className="ml-auto" tone="neutral"><FileText /> {readyCount} doc{readyCount === 1 ? "" : "s"} ready</Badge>}
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" ref={scroller}>
+        {!online && savedAnswers.length > 0 && (
+          <div className="mx-auto w-full max-w-3xl px-5 pt-6">
+            <OfflineReadCachePanel answers={savedAnswers} onClear={clearSavedAnswers} />
+          </div>
+        )}
         {loading ? (
           <div className="mx-auto grid w-full max-w-3xl gap-4 px-5 py-8">
             <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />
@@ -1209,7 +1366,7 @@ function KnowledgeChat({
           <div className="mx-auto grid w-full max-w-3xl gap-6 px-5 py-6">
             {turns.map((turn) => (
               <div key={turn.key} className="grid gap-3">
-                {turn.ephemeral && <p className="justify-self-end text-[11px] text-muted" role="note">Temporary voice question · not saved to chat</p>}
+                {turn.ephemeral && <p className="justify-self-end text-xs text-muted" role="note">Temporary voice question · not saved to chat{turn.detectedLanguage ? ` · heard in ${voiceLanguageLabel(turn.detectedLanguage)}` : ""}</p>}
                 <div className="max-w-[85%] justify-self-end rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-xs rtl:rounded-br-2xl rtl:rounded-bl-md">{turn.question}</div>
                 {turn.answer ? (
                   <AnswerBubble
@@ -1314,7 +1471,7 @@ function KnowledgeChat({
               </Button>
             </div>
           </div>
-          <p className="mt-2 text-center text-[11px] text-muted">
+          <p className="mt-2 text-center text-xs text-muted">
             <kbd className="font-sans">Enter</kbd> to send · <kbd className="font-sans">Shift + Enter</kbd> for a new line · Relevant company facts include citations
           </p>
         </div>
@@ -1365,6 +1522,9 @@ function AnswerBubble({
             {answer.insufficient_evidence && <Badge tone="warning"><AlertTriangle /> {answer.strategy === "web_research" ? "Live lookup unavailable" : answer.strategy.includes("image") ? "Image unavailable" : "Insufficient document evidence"}</Badge>}
           </div>
         ) : null}
+        {answer.freshness_warning && (
+          <Alert tone="warning" title="Some sources may be out of date" className="mb-2">{answer.freshness_warning}</Alert>
+        )}
         <Markdown
           text={answer.answer}
           renderCitation={(tag, key) => {
@@ -1373,7 +1533,7 @@ function AnswerBubble({
               <button
                 key={key}
                 className={cn(
-                  "mx-0.5 inline-grid h-[18px] min-w-[18px] cursor-pointer place-items-center rounded-md px-1 align-[1px] text-[10.5px] font-semibold transition-colors",
+                  "mx-0.5 inline-grid h-[18px] min-w-[18px] cursor-pointer place-items-center rounded-md px-1 align-[1px] text-xs font-semibold transition-colors",
                   !source.available ? "cursor-not-allowed bg-surface-2 text-muted line-through" : open === tag ? "bg-primary text-primary-foreground" : "bg-primary-soft text-primary hover:bg-primary hover:text-primary-foreground",
                 )}
                 title={source.available ? `${source.filename}, ${citationPlace(source)}` : "No longer available to you"}
@@ -1393,14 +1553,14 @@ function AnswerBubble({
             {answer.page_images.map((img) => (
               <a key={img.page_number} className="group overflow-hidden rounded-lg border border-border bg-surface-2" href={img.url} target="_blank" rel="noopener" title="Open full size">
                 <img className="aspect-[3/4] w-full object-cover object-top transition-transform group-hover:scale-[1.02]" src={`${img.url}?width=480`} alt={`${img.filename}, page ${img.page_number}`} loading="lazy" />
-                <span className="block border-t border-border px-2 py-1 text-[11px] text-muted">Page {img.page_number}</span>
+                <span className="block border-t border-border px-2 py-1 text-xs text-muted">Page {img.page_number}</span>
               </a>
             ))}
           </div>
         )}
         {answer.citations.length > 0 && (
           <div className="mt-3 border-t border-border pt-3">
-            <p className="mb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-muted uppercase">Sources</p>
+            <p className="mb-1.5 text-xs font-semibold tracking-[0.08em] text-muted uppercase">Sources</p>
             <div className="grid gap-1">
               {answer.citations.map((c: Citation) => (
                 <div key={c.source_id} className={cn("rounded-lg border transition-colors", open === c.source_id ? "border-primary/30 bg-primary-soft/40" : "border-transparent")}>
@@ -1410,10 +1570,13 @@ function AnswerBubble({
                     disabled={!c.available}
                     aria-expanded={open === c.source_id}
                   >
-                    <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-md px-1 text-[10.5px] font-semibold", c.available ? "bg-primary-soft text-primary" : "bg-surface-2 text-muted")}>{c.source_id.slice(1)}</span>
+                    <span className={cn("grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-md px-1 text-xs font-semibold", c.available ? "bg-primary-soft text-primary" : "bg-surface-2 text-muted")}>{c.source_id.slice(1)}</span>
                     <FileText className="size-3.5 shrink-0 text-muted" />
                     <span className={cn("truncate font-medium", c.available ? "text-foreground" : "text-muted italic")}>{c.filename}</span>
                     <span className="shrink-0 text-muted">· {c.available ? citationPlace(c) : "no longer available"}</span>
+                    {c.freshness_status && c.freshness_status !== "fresh" && (
+                      <Badge tone={c.freshness_status === "expired" || c.freshness_status === "superseded" ? "danger" : c.freshness_status === "stale" ? "warning" : "neutral"} title={c.freshness_note ?? undefined}>{c.freshness_status}</Badge>
+                    )}
                     {c.available && <ChevronDown className={cn("ml-auto size-3.5 shrink-0 text-muted transition-transform", open === c.source_id && "rotate-180")} />}
                   </button>
                   {open === c.source_id && (
@@ -1447,14 +1610,28 @@ function AnswerBubble({
         {(
           <div className="mt-3 flex items-center justify-between gap-3">
             {answer.model ? (
-              <p className="truncate text-[11px] text-muted" title="AI provider and model that produced this answer">
-                {providerLabel ?? answer.provider} · {answer.model?.replace(/^models\//, "")}
-                {!!answer.memories_applied && (
-                  <span title="Your saved preferences and context shaped this answer. They are not sources.">
-                    {" "}· personalised with {answer.memories_applied} {answer.memories_applied === 1 ? "memory" : "memories"}
-                  </span>
+              <div className="min-w-0">
+                <p className="truncate text-xs text-muted" title="AI provider and model that produced this answer">
+                  {providerLabel ?? answer.provider} · {answer.model?.replace(/^models\//, "")}
+                  {!!answer.memories_applied && (
+                    <span title="Your saved preferences and context shaped this answer. They are not sources.">
+                      {" "}· personalised with {answer.memories_applied} {answer.memories_applied === 1 ? "memory" : "memories"}
+                    </span>
+                  )}
+                </p>
+                {answer.routing && (
+                  <details className="text-xs text-muted">
+                    <summary className="cursor-pointer truncate hover:underline">
+                      Why this model? {answer.routing.task_class.replace(/_/g, " ")} task · {answer.routing.policy} policy
+                      {answer.routing.estimated_cost_usd !== null && answer.routing.estimated_cost_usd !== undefined && (
+                        <> · est. ${answer.routing.estimated_cost_usd.toFixed(4)}</>
+                      )}
+                      {answer.routing.budget_action === "downgrade" && " · downgraded to fit the monthly budget"}
+                    </summary>
+                    <span>{answer.routing.reason}</span>
+                  </details>
                 )}
-              </p>
+              </div>
             ) : <span />}
             <div className="flex shrink-0 items-center gap-1">
             <CopyButton text={answer.answer} compact />

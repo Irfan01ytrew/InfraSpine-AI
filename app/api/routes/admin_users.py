@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
-from app.api.deps import AdminUser, AppSettings, DbSession, audit_context, require_admin
+from app.api.deps import AppSettings, DbSession, PlatformAdminUser, audit_context, require_platform_admin
 from app.schemas.users import (
     ActiveStateRequest,
     CsvInvitationPreviewRequest,
@@ -23,10 +23,10 @@ from app.schemas.users import (
 from app.services.users import UserAdminService
 from app.services.deployment import license_claims
 
-router = APIRouter(prefix="/api/admin", tags=["admin-users"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/api/admin", tags=["admin-users"], dependencies=[Depends(require_platform_admin)])
 
 
-def _service(db: DbSession, admin: AdminUser, request: Request) -> UserAdminService:
+def _service(db: DbSession, admin: PlatformAdminUser, request: Request) -> UserAdminService:
     return UserAdminService(db, admin, audit_context(request, admin))
 
 
@@ -69,7 +69,7 @@ async def update_user(
     payload: UpdateUserRequest,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
 ) -> UserOut:
     service = UserAdminService(db, admin, audit_context(request, admin))
     user = await service.update_role_and_departments(user_id, payload.role, payload.department_ids)
@@ -85,7 +85,7 @@ async def set_user_active(
     payload: ActiveStateRequest,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
 ) -> UserOut:
     service = UserAdminService(db, admin, audit_context(request, admin))
     user = await service.set_active(user_id, payload.active, payload.knowledge_transfer_to)
@@ -100,7 +100,7 @@ async def transfer_user_knowledge(
     user_id: uuid.UUID,
     payload: KnowledgeTransferRequest,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
     request: Request,
 ) -> KnowledgeTransferResponse:
     count = await UserAdminService(db, admin, audit_context(request, admin)).transfer_knowledge(
@@ -119,7 +119,7 @@ async def create_invitation(
     payload: InviteUserRequest,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
     settings: AppSettings,
 ) -> UserInvitationOut:
     claims = license_claims(settings)
@@ -140,7 +140,7 @@ async def preview_invitation_csv(
     payload: CsvInvitationPreviewRequest,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
     settings: AppSettings,
 ) -> CsvInvitationPreviewResponse:
     claims = license_claims(settings)
@@ -154,7 +154,7 @@ async def resend_invitation(
     invitation_id: uuid.UUID,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
 ) -> UserInvitationOut:
     invitation, token = await UserAdminService(db, admin, audit_context(request, admin)).resend_invitation(invitation_id)
     return _invitation_out(invitation, token)
@@ -165,7 +165,7 @@ async def revoke_invitation(
     invitation_id: uuid.UUID,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
 ) -> UserInvitationOut:
     invitation = await UserAdminService(db, admin, audit_context(request, admin)).revoke_invitation(invitation_id)
     return _invitation_out(invitation)

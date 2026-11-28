@@ -88,7 +88,7 @@ export function DropdownMenuItem({ className, danger, ...props }: ComponentProps
   );
 }
 export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof M.Label>) {
-  return <M.Label className={cn("px-2.5 py-1.5 text-[11px] font-semibold tracking-wide text-muted uppercase", className)} {...props} />;
+  return <M.Label className={cn("px-2.5 py-1.5 text-xs font-semibold tracking-wide text-muted uppercase", className)} {...props} />;
 }
 export function DropdownMenuSeparator() {
   return <M.Separator className="-mx-1 my-1 h-px bg-border" />;
@@ -133,7 +133,7 @@ export function Tabs({ value, onValueChange, items, className }: {
             className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-3 text-xs font-medium whitespace-nowrap text-muted outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring data-[state=active]:bg-surface data-[state=active]:text-foreground data-[state=active]:shadow-xs"
           >
             {it.label}
-            {it.count !== undefined && <span className="rounded-full bg-border px-1.5 text-[10px] leading-4 text-foreground-2">{it.count}</span>}
+            {it.count !== undefined && <span className="rounded-full bg-border px-1.5 text-xs leading-4 text-foreground-2">{it.count}</span>}
           </T.Trigger>
         ))}
       </T.List>

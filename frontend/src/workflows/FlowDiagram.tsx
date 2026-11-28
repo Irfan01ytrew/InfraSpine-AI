@@ -1,31 +1,8 @@
 import { useRef, useState } from 'react';
-import type { FlowNode, Kind, Spec, Step, Validation } from './types';
+import type { Kind, Spec, Step, Validation } from './types';
+import { connectNodes, deleteNode, newNode, nodeKinds, arrange } from './specEdit';
 
-export const nodeKinds: {kind:Kind;label:string;symbol:string}[] = [
-  {kind:'start',label:'Start',symbol:'▶'}, {kind:'task',label:'Data task',symbol:'▤'},
-  {kind:'human',label:'Human task',symbol:'◎'}, {kind:'approval',label:'Approval',symbol:'✓'},
-  {kind:'decision',label:'Decision',symbol:'◇'}, {kind:'parallel',label:'Parallel / join',symbol:'⋔'},
-  {kind:'timer',label:'Timer',symbol:'◷'}, {kind:'event',label:'Wait for event',symbol:'ϟ'},
-  {kind:'agent',label:'AI specialist',symbol:'✧'}, {kind:'integration',label:'Integration',symbol:'⇄'},
-  {kind:'subworkflow',label:'Subworkflow',symbol:'▣'}, {kind:'loop',label:'Bounded loop',symbol:'↻'},
-  {kind:'end',label:'End',symbol:'■'},
-];
-
-export function newNode(kind:Kind,x=100,y=100):FlowNode {
-  return {id:kind+'_'+crypto.randomUUID().slice(0,8),type:kind,label:nodeKinds.find(n=>n.kind===kind)!.label,x,y,
-    risk:kind==='agent'||kind==='integration'?'medium':'low',deadline_seconds:86400,timeout_seconds:60,max_attempts:3,
-    config:{values:{},form:[],...(kind==='decision'?{condition:{path:'input.amount',operator:'gte',value:0}}:{})}};
-}
-
-export function arrange(spec:Spec):Spec {
-  const ranks=new Map<string,number>(); const todo=[...spec.nodes];
-  for(let pass=0;pass<spec.nodes.length;pass++) for(const n of todo) {
-    const parents=spec.edges.filter(e=>e.target===n.id).map(e=>e.source);
-    if(parents.every(p=>ranks.has(p))) ranks.set(n.id,parents.length?Math.max(...parents.map(p=>ranks.get(p)!))+1:0);
-  }
-  const counts=new Map<number,number>();
-  return {...spec,nodes:spec.nodes.map(n=>{const r=ranks.get(n.id)??0; const i=counts.get(r)??0; counts.set(r,i+1); return {...n,x:60+r*270,y:70+i*150};})};
-}
+export { arrange, newNode, nodeKinds };
 
 export function FlowDiagram({spec,onChange,selected,onSelect,errors=[],steps=[]}: {
   spec:Spec;onChange?:(spec:Spec)=>void;selected?:string;onSelect?:(id:string)=>void;errors?:Validation[];steps?:Step[];
@@ -36,13 +13,20 @@ export function FlowDiagram({spec,onChange,selected,onSelect,errors=[],steps=[]}
   const nodeMap=new Map(spec.nodes.map(n=>[n.id,n])); const statuses=new Map(steps.map(s=>[s.node_id,s.status]));
   const connect=(target:string)=>{
     if(!onChange || !connecting || connecting===target) return;
-    if(!spec.edges.some(e=>e.source===connecting&&e.target===target)) onChange({...spec,edges:[...spec.edges,{source:connecting,target,branch:nodeMap.get(connecting)?.type==='decision'?'true':'always'}]});
+    onChange(connectNodes(spec, connecting, target));
     setConnecting(null);
   };
   return <div className="wf-diagram-shell">
+    {onChange&&<div className="wf-palette" role="toolbar" aria-label="Add a step">
+      {nodeKinds.map(k=><button key={k.kind} type="button" draggable
+        onDragStart={e=>{e.dataTransfer.setData('application/infraspine-node',k.kind);e.dataTransfer.effectAllowed='copy';}}
+        onClick={()=>{const n=newNode(k.kind,100,100);onChange({...spec,nodes:[...spec.nodes,n]});onSelect?.(n.id);}}
+        title={`Add ${k.label}`}>{k.symbol} {k.label}</button>)}
+    </div>}
     <div className="wf-diagram-tools"><span>{connecting?'Select a destination node':onChange?'Drag nodes · connect using the right port':'Persisted execution graph'}</span>
       <div className="wf-inline"><button onClick={()=>setZoom(z=>Math.max(.3,z-.1))} aria-label="Zoom out">−</button><span>{Math.round(zoom*100)}%</span><button onClick={()=>setZoom(z=>Math.min(1.5,z+.1))} aria-label="Zoom in">+</button>
       <button onClick={()=>setZoom(Math.min(.9,900/width))}>Fit</button>{onChange&&<button onClick={()=>onChange(arrange(spec))}>Auto-layout</button>}
+      {onChange&&selected&&spec.nodes.some(n=>n.id===selected)&&<button onClick={()=>onChange(deleteNode(spec,selected))}>Delete selected node</button>}
       {connecting&&<button onClick={()=>setConnecting(null)}>Cancel connector</button>}</div>
     </div>
     <div className="wf-canvas" onDragOver={e=>{if(onChange)e.preventDefault();}} onDrop={e=>{

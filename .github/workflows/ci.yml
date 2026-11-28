@@ -104,3 +104,24 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  # Step I slice 7: dependency vulnerability audit. Runs pip-audit against
+  # the Python lockfile and npm audit against the frontend lockfile, then
+  # applies docs/security-audit-allowlist.json. The script exits 1 on
+  # unallowlisted findings and 2 when a scanner cannot run (fail closed).
+  security-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install pip-audit
+      - name: Dependency vulnerability audit
+        run: python scripts/security_dependency_audit.py

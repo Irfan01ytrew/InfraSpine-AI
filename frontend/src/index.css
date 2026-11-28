@@ -46,10 +46,11 @@
   --color-danger-soft: var(--error-soft);
   --color-danger-text: var(--error-text);
 
-  --radius-sm: 6px;
-  --radius-md: var(--radius-sm);
-  --radius-lg: var(--radius);
-  --radius-xl: var(--radius-lg);
+  /* One radius scale, shared by the legacy stylesheet and Tailwind utilities. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
   --shadow-xs: var(--shadow-sm);
   --shadow-sm: var(--shadow);
@@ -67,6 +68,18 @@
   from { opacity: 1; }
   to { opacity: 0; transform: scale(0.98); }
 }
+/* Page enter: one soft rise when navigation swaps the view (180ms, inside
+   the 150-300ms motion budget). The global prefers-reduced-motion rule in
+   styles.css collapses this to ~0ms for users who ask for less motion. */
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+/* Chart bars grow from the baseline on mount (300ms). */
+@keyframes chart-grow {
+  from { transform: scaleY(0.15); opacity: 0.35; }
+  to { transform: scaleY(1); opacity: 1; }
+}
 
 @layer base {
   /* Preflight removes list markers; rich answer text still needs them. */
@@ -75,6 +88,8 @@
 }
 
 @layer components {
+  .page-enter { animation: page-in 180ms ease-out both; }
+  .chart-bar-grow { animation: chart-grow 300ms ease-out both; transform-origin: bottom; }
   .scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
   .markdown { overflow-wrap: anywhere; }
   .markdown :is(h1, h2, h3, h4, h5, h6) { font-weight: 650; line-height: 1.4; margin-top: 1.2em; }
@@ -92,10 +107,32 @@
   .markdown .answer-code { margin-block: 1rem; }
   .markdown .answer-code pre { margin: 0; white-space: pre; overflow-wrap: normal; }
   .markdown .answer-code code { padding: 0; border: 0; border-radius: 0; background: transparent; font-family: var(--mono); }
-  .markdown .answer-web-citation { display: inline-grid; place-items: center; min-width: 20px; padding: 0 4px; margin-inline: 2px; border-radius: 5px; background: var(--primary-soft); font-size: 0.8em; text-decoration: none; }
+  .markdown .answer-web-citation { display: inline-grid; place-items: center; min-width: 20px; padding: 0 4px; margin-inline: 2px; border-radius: 5px; background: var(--primary-soft); font-size: 12px; text-decoration: none; }
   .markdown .hljs-keyword, .markdown .hljs-selector-tag, .markdown .hljs-literal { color: var(--primary); font-weight: 600; }
   .markdown .hljs-string, .markdown .hljs-attr, .markdown .hljs-addition { color: var(--success-text); }
   .markdown .hljs-number, .markdown .hljs-built_in, .markdown .hljs-title { color: var(--warning-text); }
   .markdown .hljs-comment, .markdown .hljs-quote { color: var(--muted); font-style: italic; }
   .markdown .hljs-deletion { color: var(--error-text); }
 }
+
+/* Workflow diagram canvas (Step AD slice 3). FlowDiagram.tsx shipped with
+   class names but no rules, so the mounted canvas rendered unstyled. */
+.wf-diagram-shell { display: grid; gap: 8px; }
+.wf-diagram-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.wf-inline { display: flex; align-items: center; gap: 6px; }
+.wf-inline button, .wf-palette button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.wf-inline button:hover, .wf-palette button:hover { border-color: var(--border-strong); }
+.wf-palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.wf-canvas { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.wf-dot-grid { fill: var(--surface-2); }
+.wf-edge { fill: none; stroke: var(--border-strong); stroke-width: 2; }
+.wf-edge-label { fill: var(--muted); font-size: 12px; }
+.wf-node { cursor: grab; outline: none; }
+.wf-node rect { fill: var(--surface); stroke: var(--border-strong); }
+.wf-node.selected rect { stroke: var(--primary); stroke-width: 2; }
+.wf-node.invalid rect { stroke: var(--danger); }
+.wf-node-accent { fill: var(--primary); }
+.wf-node-kind { fill: var(--muted); font-size: 12px; font-weight: 600; }
+.wf-node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
+.wf-node-meta { fill: var(--muted); font-size: 12px; }
+.wf-port { fill: var(--surface); stroke: var(--primary); cursor: crosshair; }

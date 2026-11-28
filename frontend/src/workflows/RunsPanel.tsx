@@ -40,7 +40,7 @@ export function RunsPanel({ scopeId, revision }: { scopeId: string; revision: nu
         <tbody>{runs.map((run) => <tr key={run.id} className="cursor-pointer" onClick={() => void show(run.id)}>
           <td className="font-mono text-xs">{run.id.slice(0, 8)}{run.simulation && <Badge className="ml-1">simulation</Badge>}</td>
           <td className="text-xs">{run.origin ?? "workflow"}{run.origin_ref ? ` · ${run.origin_ref}` : ""}</td>
-          <td><Badge tone={TONE[run.status] ?? "neutral"}>{run.status}</Badge>{run.blocked_reason && <div className="text-[11px] text-warning-text">{run.blocked_reason}</div>}</td>
+          <td><Badge tone={TONE[run.status] ?? "neutral"}>{run.status}</Badge>{run.blocked_reason && <div className="text-xs text-warning-text">{run.blocked_reason}</div>}</td>
           <td className="text-xs">{run.phase ?? "—"}</td><td className="text-xs">{run.last_verified_node ?? "—"}</td>
           <td className="text-xs">{new Date(run.started_at ?? run.created_at).toLocaleString()}</td>
         </tr>)}</tbody>
@@ -59,7 +59,7 @@ export function RunsPanel({ scopeId, revision }: { scopeId: string; revision: nu
         <Table>
           <thead><tr><th>Step</th><th>Status</th><th>Phase</th><th>Attempts</th><th>Verified</th><th /></tr></thead>
           <tbody>{open.steps.map((step) => <tr key={step.id}>
-            <td>{step.node_id}</td><td><Badge tone={TONE[step.status] ?? "neutral"}>{step.status}</Badge>{step.failure_code && <div className="text-[11px] text-danger-text">{step.failure_code}</div>}</td>
+            <td>{step.node_id}</td><td><Badge tone={TONE[step.status] ?? "neutral"}>{step.status}</Badge>{step.failure_code && <div className="text-xs text-danger-text">{step.failure_code}</div>}</td>
             <td className="text-xs">{step.phase ?? "—"}</td><td>{step.attempts}</td>
             <td className="text-xs">{step.verified_at ? new Date(step.verified_at).toLocaleString() : "—"}</td>
             <td>{step.status === "action" && <Button size="sm" disabled={busy} onClick={() => act(() => workflowApi.perform(scopeId, open.run.id, step.id), open.run.id)}>Perform as me</Button>}</td>

@@ -19,6 +19,11 @@ from app.workflows.security import (decision_authority, is_manager, require_memb
 
 ACTIVE_RUNS = ('queued', 'running', 'paused', 'compensating')
 
+# Origins a workflow definition row may carry (mirrors the wf_definitions
+# CHECK constraint). Studio drafts created from a template use 'studio' with
+# origin_ref=<template key>; one such row exists per scope + template key.
+WORKFLOW_ORIGINS = ('workflow', 'automation', 'system', 'studio', 'governance')
+
 
 def action_data(node, context):
     return {'node': node.model_dump(mode='json'), 'values': resolve(node.config.values, context),
@@ -143,8 +148,11 @@ class WorkflowService:
                 errors.append({'code': 'scope_or_contract', 'message': str(exc), 'node_id': node.id})
         return errors
 
-    async def save(self, scope_id, name, description, spec, *, workflow_id=None, base_version=None):
+    async def save(self, scope_id, name, description, spec, *, workflow_id=None, base_version=None,
+                   origin='workflow', origin_ref=None):
         await require_scope(self.db, self.actor, scope_id)
+        if origin not in WORKFLOW_ORIGINS:
+            raise InvalidInputError('Unknown workflow origin.')
         if workflow_id:
             workflow = await self.workflow(scope_id, workflow_id, lock=True)
             await require_owner(self.db, self.actor, workflow)
@@ -156,7 +164,8 @@ class WorkflowService:
         else:
             number = 1
             workflow = Workflow(id=uuid4(), scope_id=scope_id, owner_id=self.actor.id,
-                                name=name, description=description, latest_version=1)
+                                name=name, description=description, latest_version=1,
+                                origin=origin, origin_ref=origin_ref)
             self.db.add(workflow)
             await self.db.flush()
         data = spec.model_dump(mode='json')
@@ -164,7 +173,8 @@ class WorkflowService:
             number=number, spec=data, digest=digest(data), author_id=self.actor.id, status='draft')
         self.db.add(version)
         record(self.db, self.ctx, 'workflow.draft_saved', target=str(workflow.id),
-               details={'scope_id': str(scope_id), 'version': number, 'digest': version.digest})
+               details={'scope_id': str(scope_id), 'version': number, 'digest': version.digest,
+                        'origin': origin, 'origin_ref': origin_ref})
         await self.db.flush()
         return workflow, version
 
@@ -426,6 +436,12 @@ class WorkflowService:
                 if dispatch.status == 'pending': dispatch.status = 'cancelled'
             if run.origin == 'studio':
                 from app.agent_studio.unified import on_workflow_cancelled
+                await on_workflow_cancelled(self.db, self.cipher, run)
+            elif run.origin == 'continuity':
+                from app.continuity.unified import on_workflow_cancelled
+                await on_workflow_cancelled(self.db, self.cipher, run)
+            elif run.origin == 'founder_voice':
+                from app.founder_voice.unified import on_workflow_cancelled
                 await on_workflow_cancelled(self.db, self.cipher, run)
         elif command == 'retry' and run.status == 'failed':
             if any(d.status == 'unknown' for d in dispatches):

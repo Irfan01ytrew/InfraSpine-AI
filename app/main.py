@@ -18,8 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__
 from app.api.routes import (
     workflow_engine,
+    control_room,
     finance,
     approvals as approval_routes,
+    foundry as foundry_routes,
+    hr as hr_routes,
     integrations,
     infrastructure,
     quality,
@@ -27,11 +30,13 @@ from app.api.routes import (
     agent_studio,
     agent_studio_whatsapp,
     agent_studio_baileys,
+    whatsapp_auto,
     request_forms,
     webhooks as webhook_routes,
     access_admin,
     agent_catalog,
     agent_actions,
+    agent_controls,
     agents,
     automation,
     admin_embeddings,
@@ -39,31 +44,41 @@ from app.api.routes import (
     admin_ocr,
     admin_parsers,
     admin_providers,
+    admin_database,
     admin_reports,
+    admin_routing,
+    scheduled_reports,
     admin_agent_runs,
     admin_traces,
     auth,
     chat,
     claims,
     conversations,
+    cost_intelligence,
     departments,
     deployment as deployment_routes,
     expertise,
     exports,
     forecasts,
+    predictive_continuity,
     folder_sync,
     cloud_connectors,
     sso,
     scim,
     collaboration,
+    digital_twin,
+    companion,
     governance,
+    decisions,
     handoffs,
     health,
     knowledge,
     knowledge_interviews,
+    language,
     legacy_browser,
     memory,
     meetings,
+    offline,
     rag,
     admin_users,
     onboarding,
@@ -73,14 +88,19 @@ from app.api.routes import (
     partner_portal,
     proposal_coverage,
     role_templates,
+    self_healing,
     service_requests,
+    founder_voice,
+    voice,
+    workforce,
 )
 from app.core.config import get_settings
-from app.core.crypto import CredentialCipher
+from app.core.crypto import rotating_cipher_from_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.session import create_engine, create_sessionmaker
 from app.rag import components as rag_components
+from app.security.rate_limit import RateLimiter, rate_limit_response
 from app.services.llm_runtime import LLMRuntime
 from app.services.provider_admin import rebind_legacy_credentials
 from app.services.agents import recover_abandoned_runs
@@ -154,11 +174,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning("Recovered %s stale agent runs after process startup", recovered_agent_runs)
     except Exception as exc:
         logger.error("Agent run startup recovery failed: %s", type(exc).__name__)
-    app.state.cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    # Rotating cipher: decrypts with the current key or any retired key, so a
+    # master-key rotation never makes stored credentials unreadable. With no
+    # MASTER_ENCRYPTION_KEY_PREVIOUS configured it behaves exactly like the
+    # single-key cipher (Step I slice 5; runbook docs/step-i-key-rotation-runbook.md).
+    app.state.cipher = rotating_cipher_from_settings(settings)
     try:  # one-time upgrade: bind custom-provider keys saved before origin binding (idempotent)
         await rebind_legacy_credentials(app.state.sessionmaker, app.state.cipher)
     except Exception as exc:
         logger.error("Binding stored provider credentials to their endpoints failed: %s", type(exc).__name__)
+    try:  # one-time setup: decision-memory roles exist so administrators can grant them (idempotent)
+        async with app.state.sessionmaker() as db:
+            await decisions.ensure_decision_roles(db)
+            await db.commit()
+    except Exception as exc:
+        logger.error("Creating decision memory roles failed: %s", type(exc).__name__)
+    try:  # one-time setup: scheduled-report roles exist so administrators can grant them (idempotent)
+        async with app.state.sessionmaker() as db:
+            await scheduled_reports.ensure_report_roles(db)
+            await db.commit()
+    except Exception as exc:
+        logger.error("Creating scheduled report roles failed: %s", type(exc).__name__)
     # One runtime per process; it caches the client built from the active DB configuration.
     app.state.llm_runtime = LLMRuntime(settings, app.state.cipher)
 
@@ -250,6 +286,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.integrations.whatsapp import run_whatsapp_agent_worker
         from app.services.agent_studio_baileys import run_baileys_worker
 
+        # Step F slice 3: the live Baileys bridge sessions are shared on
+        # app.state so the Cloud worker can fail over to them.
+        app.state.baileys_sessions = {}
+
         worker_tasks.append(asyncio.create_task(
             run_baileys_worker(app, settings, stop_worker), name="agent-studio-baileys-worker"
         ))
@@ -262,6 +302,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.llm_runtime,
                 app.state.rag,
                 stop_worker,
+                baileys_sessions=app.state.baileys_sessions,
             ),
             name="agent-studio-whatsapp-worker",
         ))
@@ -327,6 +368,10 @@ def create_app() -> FastAPI:
         openapi_url=None if settings.is_production else "/openapi.json",
     )
 
+    # Step I slice 2: per-process in-memory rate limiter (per-IP buckets in
+    # the middleware below, per-user bucket in get_current_user).
+    app.state.rate_limiter = RateLimiter()
+
     @app.middleware("http")
     async def request_context(request: Request, call_next) -> Response:
         incoming = request.headers.get("X-Request-ID", "")
@@ -334,8 +379,11 @@ def create_app() -> FastAPI:
         request.state.request_id = request_id
         started = time.perf_counter()
         rejection = _reject_oversized_upload(request, settings)
+        limited = rate_limit_response(request, settings)
         if rejection is not None:
             response = rejection
+        elif limited is not None:
+            response = limited
         elif settings.license_enforcement_enabled and path_is_licensed(request.url.path):
             license = license_status(settings)
             if license.status != "valid":
@@ -367,6 +415,17 @@ def create_app() -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
+        # Step I slice 6: Permissions-Policy denies powerful browser
+        # features this app never uses (camera/mic/geolocation/payment/USB).
+        # HSTS is emitted only when hsts_enabled is set — it must only be
+        # enabled behind HTTPS, and enabling it live is an owner decision.
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        )
+        if settings.hsts_enabled:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         path = request.url.path
         if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
@@ -386,14 +445,26 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     from app.api.routes import company_graph
     app.include_router(company_graph.router)
+    from app.api.routes import digital_twin
+    app.include_router(digital_twin.router)
+    from app.api.routes import whatif
+    app.include_router(whatif.router)
     app.include_router(workflow_engine.router)
+    app.include_router(control_room.router)
     app.include_router(finance.router)
+    app.include_router(hr_routes.router)
+    from app.api.routes import resilience as resilience_routes
+
+    app.include_router(resilience_routes.router)
     app.include_router(approval_routes.router)
+    app.include_router(foundry_routes.router)
+    app.include_router(voice.router)
     app.include_router(recovery_router)
     app.include_router(continuity_router)
     app.include_router(integrations.router)
     app.include_router(infrastructure.router)
     app.include_router(quality.router)
+    app.include_router(self_healing.router)
     from app.api.routes import platform_admin
     app.include_router(platform_admin.router)
     app.include_router(health.router)
@@ -401,10 +472,12 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(agent_studio.router)
     app.include_router(agent_studio_whatsapp.router)
+    app.include_router(whatsapp_auto.router)
     app.include_router(agent_studio_baileys.router)
     app.include_router(agent_catalog.router)
     app.include_router(agents.router)
     app.include_router(agent_actions.router)
+    app.include_router(agent_controls.router)
     app.include_router(automation.router)
     app.include_router(personal_tasks.router)
     app.include_router(partner_admin.router)
@@ -416,8 +489,11 @@ def create_app() -> FastAPI:
     app.include_router(admin_ocr.router)
     app.include_router(admin_parsers.router)
     app.include_router(admin_providers.router)
+    app.include_router(admin_database.router)
+    app.include_router(admin_routing.router)
     app.include_router(admin_traces.router)
     app.include_router(admin_reports.router)
+    app.include_router(scheduled_reports.router)
     app.include_router(admin_agent_runs.router)
     app.include_router(admin_users.router)
     app.include_router(deployment_routes.public_router)
@@ -429,10 +505,13 @@ def create_app() -> FastAPI:
     app.include_router(org.chart_router)
     app.include_router(departments.router)
     app.include_router(governance.router)
+    app.include_router(decisions.router)
     app.include_router(rag.router)
     app.include_router(conversations.router)
     app.include_router(memory.router)
+    app.include_router(companion.router)
     app.include_router(meetings.router)
+    app.include_router(offline.router)
     app.include_router(claims.router)
     app.include_router(knowledge.router)
     app.include_router(knowledge_interviews.router)
@@ -442,14 +521,19 @@ def create_app() -> FastAPI:
     app.include_router(request_forms.router)
     app.include_router(webhook_routes.router)
     app.include_router(expertise.router)
+    app.include_router(workforce.router)
     app.include_router(forecasts.router)
+    app.include_router(predictive_continuity.router)
     app.include_router(exports.router)
     app.include_router(exports.image_router)
     app.include_router(folder_sync.router)
+    app.include_router(language.router)
     app.include_router(cloud_connectors.router)
     app.include_router(sso.router)
     app.include_router(scim.router)
     app.include_router(collaboration.router)
+    app.include_router(founder_voice.router)
+    app.include_router(cost_intelligence.router)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:

@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { FormEvent } from "react";
 import { BadgeCheck, FileUp, Play, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
 import { describeError } from "../api";
 import { useFeedback } from "../components/Feedback";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, SelectInput, Skeleton, Stat, Table, Tabs, Textarea } from "../components/ui";
 import { financeApi } from "./api";
-import type { Batch, BatchSummary, FinanceScope, Invoice, KnowledgeDocument, Payment, PaymentApproval, Spend } from "./api";
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "./financeView.mjs";
+import type { AnomalySettings, Batch, BatchSummary, CashFlow, FinanceScope, Invoice, KnowledgeDocument, Payment, PaymentApproval, Spend, TaxReport, VendorHistoryInvoice } from "./api";
+import { actionableStep, anomalyFlags, canApproveAnomaly, cashFlowSeries, flagDetailLines, headline, isAnomalyFlagged, reasonCounts, shortHash, skippedSummary, spendMonthLabel, spendSeries } from "./financeView.mjs";
+import { formatMoneyForLanguage } from "../format";
+import { getLanguage, subscribeLanguage } from "../i18n.mjs";
 
-type Tab = "batches" | "exceptions" | "approvals" | "spend";
+type Tab = "batches" | "exceptions" | "anomalies" | "approvals" | "spend" | "cashflow" | "tax";
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger";
 
 const STATUS_TONE: Record<string, Tone> = {
@@ -61,12 +63,17 @@ export function FinancePage() {
       </div>
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)} items={[
         { value: "batches", label: "Batches" }, { value: "exceptions", label: "Exceptions queue" },
+        { value: "anomalies", label: "Anomaly queue" },
         { value: "approvals", label: "Payment approvals" }, { value: "spend", label: "Spend chart" },
+        { value: "cashflow", label: "Cash flow" }, { value: "tax", label: "Tax report" },
       ]} />
       {tab === "batches" && <BatchesTab group={group} can={can} reasons={reasons} revision={revision} toast={toast} />}
       {tab === "exceptions" && <ExceptionsTab group={group} can={can} revision={revision} toast={toast} />}
+      {tab === "anomalies" && <AnomaliesTab group={group} can={can} revision={revision} toast={toast} />}
       {tab === "approvals" && <ApprovalsTab revision={revision} toast={toast} />}
       {tab === "spend" && <SpendTab group={group} revision={revision} />}
+      {tab === "cashflow" && <CashFlowTab group={group} revision={revision} toast={toast} />}
+      {tab === "tax" && <TaxReportTab group={group} revision={revision} toast={toast} />}
     </>}
   </div>;
 }
@@ -184,10 +191,15 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
             placeholder={"Paste invoice text (Invoice No: …, Vendor: …, PO Number: …, Total: PKR …). Separate invoices with a line of ---"} />
           <div className="grid gap-2">
             <Button variant="secondary" disabled={busy || !texts.trim()} onClick={addTexts}>Add text</Button>
-            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-surface-2">
+            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-[13px] font-medium hover:bg-surface-2">
               <FileUp className="size-4" /> Upload PDF/DOC
               <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg"
                 onChange={(event) => { const file = event.target.files?.[0]; if (file) void act("Invoice uploaded", () => financeApi.upload(id, file)); event.target.value = ""; }} />
+            </label>
+            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-surface-2" title="A photographed receipt becomes a pending invoice in the approval queue. It is read with local OCR and checked like any other invoice.">
+              <FileUp className="size-4" /> Upload receipt photo
+              <input type="file" className="hidden" accept=".png,.jpg,.jpeg,.webp"
+                onChange={(event) => { const file = event.target.files?.[0]; if (file) void act("Receipt photo added", () => financeApi.uploadReceiptPhoto(id, file)); event.target.value = ""; }} />
             </label>
           </div>
         </div>}
@@ -226,11 +238,11 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
           <thead><tr><th>#</th><th>Invoice</th><th>Vendor</th><th>PO</th><th>Amount</th><th>Status</th><th>Reasons</th></tr></thead>
           <tbody>{shown.map((invoice) => <tr key={invoice.id}>
             <td className="text-muted">{invoice.seq}</td>
-            <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-[10px] text-muted">{invoice.id}</div></td>
+            <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-xs text-muted">{invoice.id}</div></td>
             <td>{invoice.vendor_name ?? "—"}</td><td>{invoice.po_number ?? "—"}</td>
             <td className="whitespace-nowrap">{invoice.amount ? `${invoice.currency ?? ""} ${invoice.amount}` : "—"}</td>
             <td><StatusBadge status={invoice.status} /></td>
-            <td className="text-xs">{invoice.reasons.map((r) => r.message).join("; ") || "—"}</td>
+            <td>{invoice.reasons.map((r) => r.message).join("; ") || "—"}</td>
           </tr>)}</tbody>
         </Table>
       </CardBody>
@@ -274,9 +286,9 @@ function ExceptionsTab({ group, can, revision, toast }: { group: string; can: (p
         const draft = drafts[invoice.id] ?? { invoice_number: "", po_number: "", amount: "", note: "" };
         const set = (key: keyof typeof draft, value: string) => setDrafts((cur) => ({ ...cur, [invoice.id]: { ...draft, [key]: value } }));
         return <tr key={invoice.id}>
-          <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-[10px] text-muted">{invoice.id}</div></td>
+          <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-xs text-muted">{invoice.id}</div></td>
           <td>{invoice.vendor_name ?? "—"}</td><td className="whitespace-nowrap">{invoice.currency} {invoice.amount ?? "—"}</td>
-          <td className="text-xs">{invoice.reasons.map((r) => <div key={r.code}><Badge tone="danger">{r.code}</Badge> {r.message}</div>)}</td>
+          <td>{invoice.reasons.map((r) => <div key={r.code}><Badge tone="danger">{r.code}</Badge> {r.message}</div>)}</td>
           <td className="min-w-72"><div className="grid gap-1">
             {can("invoice.ingest") && <div className="grid grid-cols-3 gap-1">
               <Input value={draft.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} placeholder="Invoice no" aria-label="Corrected invoice number" />
@@ -293,6 +305,144 @@ function ExceptionsTab({ group, can, revision, toast }: { group: string; can: (p
       })}</tbody>
     </Table>
   </Card>;
+}
+
+const ANOMALY_SETTING_FIELDS: { key: keyof AnomalySettings["thresholds"]; label: string; hint: string; step: string }[] = [
+  { key: "min_history", label: "Prior invoices for outlier detection", hint: "1–100", step: "1" },
+  { key: "outlier_mad_multiplier", label: "Outlier: median + k × MAD", hint: "0.1–100", step: "0.1" },
+  { key: "outlier_ratio_when_flat", label: "Outlier when amounts are flat: above k × median", hint: "0.1–100", step: "0.1" },
+  { key: "near_duplicate_days", label: "Near-duplicate window (days)", hint: "0–365", step: "1" },
+  { key: "velocity_window_days", label: "Repeat-payment window (days)", hint: "1–365", step: "1" },
+  { key: "velocity_max_prior", label: "Repeat-payment flag at N priors", hint: "1–100", step: "1" },
+];
+
+function AnomalySettingsCard({ group, can, toast }: { group: string; can: (p: string) => boolean; toast: ToastFn }) {
+  const [settings, setSettings] = useState<AnomalySettings | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    financeApi.anomalySettings(group).then((result) => {
+      setSettings(result);
+      setDraft(Object.fromEntries(Object.entries(result.thresholds).map(([k, v]) => [k, String(v)])));
+    }).catch((err) => toast("error", "Anomaly settings could not be loaded", describeError(err)));
+  }, [group, toast]);
+  if (!can("finance.manage")) return null;
+  async function save() {
+    const thresholds = Object.fromEntries(Object.entries(draft)
+      .map(([key, value]) => [key, Number(value)]).filter(([, value]) => Number.isFinite(value)));
+    setBusy(true);
+    try {
+      const result = await financeApi.setAnomalySettings(group, thresholds);
+      setSettings(result);
+      setDraft(Object.fromEntries(Object.entries(result.thresholds).map(([k, v]) => [k, String(v)])));
+      toast("success", "Anomaly thresholds saved — they apply to verifications from now on");
+    } catch (err) { toast("error", "Thresholds could not be saved", describeError(err)); }
+    finally { setBusy(false); }
+  }
+  if (!settings) return <Skeleton className="h-24 w-full" />;
+  return <Card>
+    <CardHeader title="Anomaly detection thresholds"
+      description="Per-department tuning. A change never rewrites already-verified invoices — it only affects verifications that run after it. Every change is written to the audit log." />
+    <CardBody className="grid gap-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {ANOMALY_SETTING_FIELDS.map((field) => <Field key={field.key} label={field.label}>
+          <div className="flex items-center gap-2">
+            <Input type="number" step={field.step} value={draft[field.key] ?? ""} aria-label={field.label}
+              onChange={(e) => setDraft((cur) => ({ ...cur, [field.key]: e.target.value }))} />
+            {settings.customized.includes(field.key) && <Badge tone="primary">custom</Badge>}
+          </div>
+          <span className="text-xs text-muted">{field.hint}</span>
+        </Field>)}
+      </div>
+      <div><Button disabled={busy} onClick={save}>Save thresholds</Button></div>
+    </CardBody>
+  </Card>;
+}
+
+function AnomaliesTab({ group, can, revision, toast }: { group: string; can: (p: string) => boolean; revision: number; toast: ToastFn }) {
+  const [items, setItems] = useState<Invoice[] | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<{ vendor: string; rows: VendorHistoryInvoice[] } | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [local, setLocal] = useState(0);
+  useEffect(() => {
+    financeApi.exceptions(group).then((result) => setItems(result.invoices.filter(isAnomalyFlagged)))
+      .catch((err) => toast("error", "Anomaly queue could not be loaded", describeError(err)));
+  }, [group, revision, local, toast]);
+  async function resolve(invoice: Invoice, action: "approve" | "reject") {
+    try {
+      await financeApi.resolve(invoice.id, action, null, notes[invoice.id] ?? "");
+      toast("success", action === "approve" ? "Invoice approved — it can now be grouped into a payment" : "Invoice rejected");
+      setLocal((v) => v + 1);
+    } catch (err) { toast("error", "Could not resolve", describeError(err)); }
+  }
+  async function showHistory(invoice: Invoice) {
+    if (!invoice.vendor_id) return;
+    setHistoryBusy(true);
+    try {
+      const result = await financeApi.vendorHistory(group, invoice.vendor_id);
+      setHistory({ vendor: result.vendor.name, rows: result.invoices });
+    } catch (err) { toast("error", "Vendor history could not be loaded", describeError(err)); }
+    finally { setHistoryBusy(false); }
+  }
+  if (items === null) return <Skeleton className="h-40 w-full" />;
+  if (!items.length) return <div className="grid gap-4">
+    <AnomalySettingsCard group={group} can={can} toast={toast} />
+    <Card><EmptyState icon={<BadgeCheck />} title="No anomaly flags"
+      description="No invoice in this department is waiting on an anomaly review. Flags never reject or pay anything on their own — they wait for an owner here." /></Card>
+  </div>;
+  return <div className="grid gap-4">
+    <AnomalySettingsCard group={group} can={can} toast={toast} />
+    <Card>
+      <CardHeader title={`Anomaly queue (${items.length})`}
+        description="Advisory flags only: approve the invoice as-is once you have checked the flag, or reject it. Correcting the data happens in the Exceptions queue — the flags are re-checked on the next verification round." />
+      <Table>
+        <thead><tr><th>Invoice</th><th>Vendor</th><th>Amount</th><th>Flags</th><th>Review</th></tr></thead>
+        <tbody>{items.map((invoice) => {
+          const approvable = canApproveAnomaly(invoice);
+          const held = invoice.reasons.some((r) => r.code === "payee_verification_hold");
+          return <tr key={invoice.id}>
+            <td><div className="font-medium">{invoice.invoice_number ?? "—"}</div><div className="font-mono text-xs text-muted">{invoice.id}</div></td>
+            <td><button type="button" className="text-left font-medium underline decoration-dotted" disabled={historyBusy || !invoice.vendor_id}
+              onClick={() => showHistory(invoice)} title="Show this vendor's prior invoices">{invoice.vendor_name ?? "—"}</button>
+              {held && <div><Badge tone="warning">payee hold</Badge></div>}</td>
+            <td className="whitespace-nowrap">{invoice.currency} {invoice.amount ?? "—"}</td>
+            <td className="text-xs">{anomalyFlags(invoice).map((flag) => <div key={flag.code} className="mb-1">
+              <Badge tone="warning">{flag.code}</Badge> {flag.message}
+              {flagDetailLines(flag).map((line) => <div key={line} className="font-mono text-xs text-muted">{line}</div>)}
+            </div>)}</td>
+            <td className="min-w-64"><div className="grid gap-1">
+              <Input value={notes[invoice.id] ?? ""} onChange={(e) => setNotes((cur) => ({ ...cur, [invoice.id]: e.target.value }))}
+                placeholder="Review note (required for the audit record)" aria-label="Review note" />
+              <div className="flex gap-1">
+                {can("invoice.verify") && <Button size="sm" variant="primary" disabled={!approvable}
+                  title={approvable ? "Accept this invoice as-is; the decision is recorded in the audit log" : "A deterministic reason is present — correct the data in the Exceptions queue first"}
+                  onClick={() => resolve(invoice, "approve")}>Approve</Button>}
+                {can("invoice.verify") && <Button size="sm" variant="secondary" onClick={() => resolve(invoice, "reject")}>Reject</Button>}
+              </div>
+              {!approvable && <span className="text-xs text-muted">Approve is off: a deterministic reason is present.</span>}
+            </div></td>
+          </tr>;
+        })}</tbody>
+      </Table>
+    </Card>
+    {history && <Card>
+      <CardHeader title={`Vendor history — ${history.vendor}`}
+        description="Prior invoices from this department, newest first. Bank accounts are masked to the last 4 characters."
+        actions={<Button variant="secondary" size="sm" onClick={() => setHistory(null)}>Close</Button>} />
+      <Table>
+        <thead><tr><th>Invoice</th><th>Date</th><th>Amount</th><th>Status</th><th>Bank account</th><th>Reasons</th></tr></thead>
+        <tbody>{history.rows.map((row) => <tr key={row.id}>
+          <td className="font-medium">{row.invoice_number ?? "—"}</td>
+          <td>{row.invoice_date ?? "—"}</td>
+          <td className="whitespace-nowrap">{row.currency} {row.amount ?? "—"}</td>
+          <td><StatusBadge status={row.status} /></td>
+          <td className="font-mono text-xs">{row.bank_account_masked ?? "—"}</td>
+          <td className="text-xs">{row.reasons.map((r) => r.code).join(", ") || "—"}</td>
+        </tr>)}</tbody>
+      </Table>
+    </Card>}
+  </div>;
 }
 
 function ApprovalsTab({ revision, toast }: { revision: number; toast: ToastFn }) {
@@ -322,7 +472,113 @@ function ApprovalsTab({ revision, toast }: { revision: number; toast: ToastFn })
   </Card>)}</div>;
 }
 
+function CashFlowTab({ group, revision, toast }: { group: string; revision: number; toast: ToastFn }) {
+  const [data, setData] = useState<CashFlow | null>(null);
+  const [scopeAll, setScopeAll] = useState(true);
+  const [currency, setCurrency] = useState("PKR");
+  const [months, setMonths] = useState(3);
+  const [opening, setOpening] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setBusy(true);
+    financeApi.cashFlow(currency, months, scopeAll ? undefined : group, opening || undefined)
+      .then((result) => setData(result))
+      .catch((err) => toast("error", "Cash-flow forecast could not be loaded", describeError(err)))
+      .finally(() => setBusy(false));
+  }, [currency, months, scopeAll, group, opening, toast]);
+  useEffect(() => { void load(); }, [load, revision]);
+  const chart = cashFlowSeries(data);
+  return <Card>
+    <CardHeader title="Cash-flow forecast" description="Forward projection — every number is a forecast, never money already spent. Inflows are not recorded anywhere, so the projection covers outflows only."
+      actions={<div className="flex flex-wrap items-center gap-2">
+        <Badge tone="warning">forecast</Badge>
+        <SelectInput value={scopeAll ? "all" : "one"} onChange={(e) => setScopeAll(e.target.value === "all")} aria-label="Scope">
+          <option value="all">All my departments</option><option value="one">This department</option></SelectInput>
+        <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} aria-label="Currency" className="w-20" maxLength={3} />
+        <SelectInput value={String(months)} onChange={(e) => setMonths(Number(e.target.value))} aria-label="Months">
+          <option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></SelectInput>
+        <Input value={opening} onChange={(e) => setOpening(e.target.value)} placeholder="Opening balance" aria-label="Opening balance" className="w-36" inputMode="decimal" />
+        <Button variant="secondary" disabled={busy} onClick={load}>Refresh</Button>
+        <Button variant="secondary" disabled={!data} onClick={() => void financeApi.downloadCsv(
+          `/cash-flow.csv?currency=${currency}&months=${months}${scopeAll ? "" : `&group_id=${group}`}${opening ? `&opening_balance=${encodeURIComponent(opening)}` : ""}`,
+          `cash-flow-${data?.as_of ?? "forecast"}.csv`)}>Download CSV</Button>
+      </div>} />
+    <CardBody>
+      {!data ? <Skeleton className="h-40 w-full" /> : <>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span>Opening balance: <b>{data.currency} {data.opening_balance}</b></span>
+          <span>Expected outflow ({data.months.length} mo, forecast): <b>{data.currency} {data.total_expected_outflow}</b></span>
+          <span>Closing balance (forecast): <b>{data.currency} {data.closing_balance}</b></span>
+          <span className="text-muted">History used: {data.history_months_used} month(s) · as of {data.as_of}</span>
+        </div>
+        {data.warnings.length > 0 && <Alert tone="warning" title="Forecast warnings">{data.warnings.map((w) => w.detail ?? w.code).join(" ")}</Alert>}
+        <div className="flex h-48 items-end gap-2" role="img" aria-label="Forecast expected outflow by month">
+          {chart.months.map((point) => <div key={point.month} className="flex h-full flex-1 flex-col justify-end" title={`${point.month} (forecast): ${data.currency} ${point.expected.toLocaleString()} · closing ${point.closing.toLocaleString()} · ${point.confidence} confidence`}>
+            <div className="rounded-t bg-warning" style={{ height: `${chart.max ? (point.expected / chart.max) * 100 : 0}%` }} />
+            <div className="mt-1 text-center text-xs text-muted">{point.month.slice(2)}</div>
+          </div>)}
+        </div>
+        <Table>
+          <thead><tr><th>Month</th><th>Scheduled (forecast)</th><th>Recurring estimate (forecast)</th><th>Expected outflow (forecast)</th><th>Net (forecast)</th><th>Closing (forecast)</th><th>Basis</th><th>Confidence</th></tr></thead>
+          <tbody>{data.months.map((m) => <tr key={m.month}>
+            <td>{m.month}</td><td>{data.currency} {m.scheduled_outflow}</td><td>{data.currency} {m.recurring_estimate}</td>
+            <td>{data.currency} {m.expected_outflow}</td><td>{data.currency} {m.net}</td><td>{data.currency} {m.closing_balance}</td>
+            <td>{m.basis}</td><td><Badge tone={m.confidence === "high" ? "success" : m.confidence === "medium" ? "primary" : "warning"}>{m.confidence}</Badge></td>
+          </tr>)}</tbody>
+        </Table>
+      </>}
+    </CardBody>
+  </Card>;
+}
+
+function TaxReportTab({ group, revision, toast }: { group: string; revision: number; toast: ToastFn }) {
+  const [data, setData] = useState<TaxReport | null>(null);
+  const [scopeAll, setScopeAll] = useState(true);
+  const [months, setMonths] = useState(12);
+  const [currency, setCurrency] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setBusy(true);
+    financeApi.taxReport(months, scopeAll ? undefined : group, currency || undefined)
+      .then((result) => setData(result))
+      .catch((err) => toast("error", "Tax report could not be loaded", describeError(err)))
+      .finally(() => setBusy(false));
+  }, [months, scopeAll, group, currency, toast]);
+  useEffect(() => { void load(); }, [load, revision]);
+  return <Card>
+    <CardHeader title="Tax report" description="Totals by month, department and currency over verified and paid invoices."
+      actions={<div className="flex flex-wrap items-center gap-2">
+        <SelectInput value={scopeAll ? "all" : "one"} onChange={(e) => setScopeAll(e.target.value === "all")} aria-label="Scope">
+          <option value="all">All my departments</option><option value="one">This department</option></SelectInput>
+        <SelectInput value={String(months)} onChange={(e) => setMonths(Number(e.target.value))} aria-label="Months">
+          <option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></SelectInput>
+        <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} placeholder="Currency (all)" aria-label="Currency filter" className="w-28" maxLength={3} />
+        <Button variant="secondary" disabled={busy} onClick={load}>Refresh</Button>
+        <Button variant="secondary" disabled={!data} onClick={() => void financeApi.downloadCsv(
+          `/tax-report.csv?months=${months}${scopeAll ? "" : `&group_id=${group}`}${currency ? `&currency=${currency}` : ""}`,
+          `tax-report-${data?.to ?? "report"}.csv`)}>Download CSV</Button>
+      </div>} />
+    <CardBody>
+      {!data ? <Skeleton className="h-40 w-full" /> : <>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span>Period: <b>{data.from} → {data.to}</b></span>
+          {data.totals.map((t) => <span key={t.currency}>Total {t.currency}: <b>{t.amount}</b> ({t.count} invoices)</span>)}
+        </div>
+        {data.warnings.length > 0 && <Alert tone="warning" title="Report warnings">{data.warnings.map((w) => `${w.detail ?? w.code}${w.count !== undefined ? ` (${w.count})` : ""}`).join(" ")}</Alert>}
+        {data.rows.length === 0 ? <EmptyState icon={<Wallet />} title="No verified or paid invoices in this period" />
+          : <Table>
+            <thead><tr><th>Month</th><th>Department</th><th>Currency</th><th>Amount</th><th>Invoices</th></tr></thead>
+            <tbody>{data.rows.map((row, index) => <tr key={`${row.month}-${row.department}-${row.currency}-${index}`}>
+              <td>{row.month}</td><td>{row.department}</td><td>{row.currency}</td><td>{row.amount}</td><td>{row.count}</td>
+            </tr>)}</tbody>
+          </Table>}
+      </>}
+    </CardBody>
+  </Card>;
+}
+
 function SpendTab({ group, revision }: { group: string; revision: number }) {
+  const language = useSyncExternalStore(subscribeLanguage, getLanguage);
   const [spend, setSpend] = useState<Spend | null>(null);
   const [scopeAll, setScopeAll] = useState(true);
   const [currency, setCurrency] = useState("");
@@ -341,11 +597,11 @@ function SpendTab({ group, revision }: { group: string; revision: number }) {
     <CardBody>
       {!spend || !spend.rows.length ? <EmptyState icon={<Wallet />} title="No verified spend yet" /> : <>
         <div className="flex h-56 items-end gap-2" role="img" aria-label="Monthly spend by department">
-          {chart.series.map((point) => <div key={point.month} className="flex h-full flex-1 flex-col justify-end" title={`${point.month}: ${currency} ${point.total.toLocaleString()}`}>
+          {chart.series.map((point) => <div key={point.month} className="flex h-full flex-1 flex-col justify-end" title={`${spendMonthLabel(point.month, language)}: ${formatMoneyForLanguage(point.total, currency || undefined, language)}`}>
             <div className="flex flex-col-reverse overflow-hidden rounded-t" style={{ height: `${chart.max ? (point.total / chart.max) * 100 : 0}%` }}>
               {point.parts.map((part, index) => <div key={part.department} className={palette[index % palette.length]} style={{ height: `${point.total ? (part.amount / point.total) * 100 : 0}%` }} />)}
             </div>
-            <div className="mt-1 text-center text-[10px] text-muted">{point.month.slice(2)}</div>
+            <div className="mt-1 text-center text-xs text-muted">{spendMonthLabel(point.month, language)}</div>
           </div>)}
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-xs">{chart.departments.map((department, index) =>

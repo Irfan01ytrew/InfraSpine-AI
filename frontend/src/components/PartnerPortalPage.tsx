@@ -165,7 +165,7 @@ export function PartnerPortalPage() {
                         {item.citations.map((citation) => (
                           <article className="partner-citation" key={`${citation.source_record_id}-${citation.source_id}`}>
                             <strong><span className="partner-citation-id">{citation.source_id}</span> {citation.title}</strong>
-                            {citation.location_label && <small>{citation.location_label}</small>}
+                            {citation.location_label && <small className="text-xs">{citation.location_label}</small>}
                             <p>{citation.excerpt}</p>
                             {citation.download_available && <a href={`/api/partner/sources/${encodeURIComponent(citation.source_record_id)}/file`} download>Download original</a>}
                           </article>

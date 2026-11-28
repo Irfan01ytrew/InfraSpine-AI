@@ -13,13 +13,16 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import AppSettings, CurrentUser, DbSession
+from app.api.deps import AdminUser, AppSettings, CurrentUser, DbSession
 from app.core.errors import InvalidInputError
 from app.finance import extraction
+from app.finance.anomaly import mask_account
 from app.finance.connectors import resolve_connector
-from app.finance.service import FinanceService, batch_out, invoice_out, money, payment_out
+from app.finance.service import (FinanceService, batch_out, cash_flow_csv, cash_flow_out, invoice_out, money,
+                                 payment_out, tax_report_csv, tax_report_out, vendor_history_out)
 from app.finance.verification import REASONS
 
 router = APIRouter(prefix='/api/finance', tags=['finance'])
@@ -37,6 +40,10 @@ class VendorIn(Strict):
     currency: str = Field(pattern=CURRENCY)
     tax_id: str | None = Field(default=None, max_length=64)
     status: Literal['active', 'blocked'] = 'active'
+    # Step R slice 4: only allow-listed vendors may be auto-picked-up by the
+    # autopilot sweep. Default False: a new vendor always needs a human to
+    # start its first batch.
+    autopilot_allowed: bool = False
 
 
 class PurchaseOrderIn(Strict):
@@ -78,7 +85,7 @@ class InvoicesIn(Strict):
 
 
 class ResolveIn(Strict):
-    action: Literal['correct', 'reject']
+    action: Literal['correct', 'reject', 'approve']
     fields: InvoiceRow | None = None
     note: str = Field(default='', max_length=500)
 
@@ -105,13 +112,27 @@ class ConnectorIn(Strict):
     mode: Literal['mock', 'http', 'http+mock'] | None = None
 
 
+class AutopilotPolicyIn(Strict):
+    enabled: bool = False
+    dry_run: bool = False
+    max_payment_amount: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)
+    daily_cap: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)
+
+
+class AnomalySettingsIn(Strict):
+    # Threshold overrides keyed by AnomalyConfig field name; validated strictly
+    # in the service (unknown keys and out-of-range values are rejected).
+    thresholds: dict = Field(default_factory=dict)
+
+
 def svc(request: Request, db, user, settings) -> FinanceService:
     return FinanceService(db, user, settings, request.app.state.cipher)
 
 
 def vendor_out(v) -> dict:
     return {'id': str(v.id), 'name': v.name, 'bank_account': v.bank_account, 'currency': v.currency,
-            'tax_id': v.tax_id, 'status': v.status}
+            'tax_id': v.tax_id, 'status': v.status,
+            'autopilot_allowed': bool(getattr(v, 'autopilot_allowed', False))}
 
 
 @router.get('/scopes')
@@ -122,6 +143,35 @@ async def scopes(request: Request, db: DbSession, user: CurrentUser, settings: A
     except Exception:
         connector = 'unavailable'
     return {'scopes': await service.scopes(), 'reasons': REASONS, 'connector': connector}
+
+
+@router.get('/scopes/{group_id}/vendors/{vendor_id}/history')
+async def vendor_history(group_id: UUID, vendor_id: UUID, request: Request, db: DbSession, user: CurrentUser,
+                         settings: AppSettings):
+    """Step Y slice 4: per-vendor history for the anomaly queue (read-only).
+    The vendor's bank account is masked here too — the full account never
+    leaves the server in this view (the vendor-master endpoints keep their
+    own contract)."""
+    vendor, rows = await svc(request, db, user, settings).vendor_history(group_id, vendor_id)
+    vendor_view = vendor_out(vendor)
+    vendor_view['bank_account'] = mask_account(vendor.bank_account)
+    return {'vendor': vendor_view, 'invoices': [vendor_history_out(r) for r in rows]}
+
+
+@router.get('/scopes/{group_id}/anomaly-settings')
+async def anomaly_settings(group_id: UUID, request: Request, db: DbSession, user: CurrentUser,
+                           settings: AppSettings):
+    """Step Y slice 5: the department's effective anomaly thresholds."""
+    return await svc(request, db, user, settings).anomaly_settings(group_id)
+
+
+@router.put('/scopes/{group_id}/anomaly-settings')
+async def set_anomaly_settings(group_id: UUID, body: AnomalySettingsIn, request: Request, db: DbSession,
+                               user: CurrentUser, settings: AppSettings):
+    """Step Y slice 5: change the department's anomaly thresholds (finance.manage)."""
+    out = await svc(request, db, user, settings).set_anomaly_settings(group_id, body.thresholds)
+    await db.commit()
+    return out
 
 
 @router.get('/scopes/{group_id}/vendors')
@@ -249,6 +299,32 @@ async def set_connector(body: ConnectorIn, request: Request, db: DbSession, user
     return out
 
 
+@router.get('/autopilot/status')
+async def autopilot_status(request: Request, db: DbSession, user: AdminUser, settings: AppSettings):
+    return await svc(request, db, user, settings).autopilot_status()
+
+
+@router.get('/duplicate-guard/report')
+async def duplicate_guard_report(request: Request, db: DbSession, user: AdminUser, settings: AppSettings):
+    """Step R slice 5: run the duplicate-payment guard on demand and return
+    the report. Read-only (payment rows + connector read-back); it creates
+    no payment and touches no approval. One audit event is written per run."""
+    from app.finance.duplicate_guard import run_duplicate_guard
+
+    report = await run_duplicate_guard(db, user, settings, cipher=request.app.state.cipher)
+    return report.to_dict()
+
+
+@router.put('/autopilot/policy')
+async def set_autopilot_policy(body: AutopilotPolicyIn, request: Request, db: DbSession, user: AdminUser,
+                               settings: AppSettings):
+    out = await svc(request, db, user, settings).set_autopilot_policy(
+        enabled=body.enabled, dry_run=body.dry_run,
+        max_payment_amount=body.max_payment_amount, daily_cap=body.daily_cap)
+    await db.commit()
+    return out
+
+
 @router.post('/batches/{batch_id}/invoices/upload', status_code=201)
 async def upload_invoice(batch_id: UUID, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
                          file: UploadFile = File(...), note: str = Form(default='')):
@@ -258,6 +334,23 @@ async def upload_invoice(batch_id: UUID, request: Request, db: DbSession, user: 
     await service.batch(batch_id, 'invoice.ingest')  # check before parsing anything
     facts = extraction.facts_from_file(name, content, settings=settings, date_order=settings.rag_date_order)
     rows = await service.add_invoices(batch_id, [('file', facts, name, extraction.digest_of(content))])
+    await db.commit()
+    return {'invoices': [invoice_out(r) for r in rows]}
+
+
+@router.post('/batches/{batch_id}/invoices/receipt-photo', status_code=201)
+async def upload_receipt_photo(batch_id: UUID, request: Request, db: DbSession, user: CurrentUser,
+                               settings: AppSettings, file: UploadFile = File(...)):
+    """Receipt photo -> `pending` invoice in the approval queue (Step AC slice 2).
+
+    The photo is read with local OCR and run through the same extractor as text/file
+    intake; the same 17 verification checks run when the batch starts. A photo OCR
+    cannot read is an error, never a guessed invoice. Never pays.
+    """
+    content = await file.read(10 * 1024 * 1024 + 1)
+    name = (file.filename or 'receipt.jpg')[:200]
+    service = svc(request, db, user, settings)
+    rows = await service.add_receipt_photo(batch_id, name, content)
     await db.commit()
     return {'invoices': [invoice_out(r) for r in rows]}
 
@@ -305,6 +398,50 @@ async def decide(approval_id: UUID, body: DecisionIn, request: Request, db: DbSe
 async def spend(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
                 months: int = Query(12, ge=1, le=36), group_id: UUID | None = None):
     return await svc(request, db, user, settings).spend(months=months, group_id=group_id)
+
+
+@router.get('/cash-flow')
+async def cash_flow(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                    currency: str = Query(pattern=CURRENCY), months: int = Query(3, ge=1, le=12),
+                    group_id: UUID | None = None, opening_balance: Decimal | None = Query(default=None, ge=0)):
+    """Cash-flow forecast (Step AC slice 3): forward projection, every month labelled
+    `forecast`. Read-only — it never pays, approves or changes anything."""
+    result = await svc(request, db, user, settings).cash_flow(
+        months=months, currency=currency, group_id=group_id, opening_balance=opening_balance)
+    return cash_flow_out(result)
+
+
+@router.get('/cash-flow.csv')
+async def cash_flow_csv_export(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                               currency: str = Query(pattern=CURRENCY), months: int = Query(3, ge=1, le=12),
+                               group_id: UUID | None = None, opening_balance: Decimal | None = Query(default=None, ge=0)):
+    """One-click CSV export of the same cash-flow projection."""
+    result = await svc(request, db, user, settings).cash_flow(
+        months=months, currency=currency, group_id=group_id, opening_balance=opening_balance)
+    return Response(content=cash_flow_csv(result), media_type='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename="cash-flow-{result.as_of.isoformat()}.csv"'})
+
+
+@router.get('/tax-report')
+async def tax_report(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                     months: int = Query(12, ge=1, le=36), group_id: UUID | None = None,
+                     currency: str | None = Query(default=None, pattern=CURRENCY)):
+    """Tax report (Step AC slice 4): totals by period + department + currency over
+    verified/paid invoices. Read-only — it totals DB rows, never pays or approves."""
+    result = await svc(request, db, user, settings).tax_report(
+        months=months, group_id=group_id, currency=currency)
+    return tax_report_out(result)
+
+
+@router.get('/tax-report.csv')
+async def tax_report_csv_export(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                                months: int = Query(12, ge=1, le=36), group_id: UUID | None = None,
+                                currency: str | None = Query(default=None, pattern=CURRENCY)):
+    """One-click CSV download of the same tax report."""
+    result = await svc(request, db, user, settings).tax_report(
+        months=months, group_id=group_id, currency=currency)
+    return Response(content=tax_report_csv(result), media_type='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename="tax-report-{result["to"]}.csv"'})
 
 
 __all__ = ['router', 'payment_out']

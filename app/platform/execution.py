@@ -84,6 +84,12 @@ async def execute_once(
     try:
         ref = str(await dispatch())
     except Exception as exc:
+        # A dispatch database error aborts the transaction: roll back
+        # first, or the failure-marking writes below can never commit and
+        # the execution stays 'claimed' forever (a replay then waits
+        # forever instead of failing).
+        await db.rollback()
+        row = await db.get(PlatformActionExecution, execution_id)
         row.status, row.failure_code = "failed", f"dispatch_{type(exc).__name__}"[:80]
         await publish(db, "action.failed", action.scope_id, {"execution_id": str(row.id), "stage": "dispatch"}, p.trace_id)
         audit(db, p, "platform.action_failed", outcome="failure", target=str(row.id),

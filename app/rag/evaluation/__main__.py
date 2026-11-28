@@ -76,7 +76,7 @@ async def _run(dataset_arg: str, personas_arg: str, ks: tuple[int, ...]) -> tupl
 async def _run_answers(dataset_arg: str, personas_arg: str, ks: tuple[int, ...]) -> tuple[Path, Path]:
     """Same deployment files as retrieval evaluation. `ks` is unused; chat uses the configured top-k."""
     del ks
-    from app.core.crypto import CredentialCipher
+    from app.core.crypto import rotating_cipher_from_settings
     from app.core.errors import LLMNotConfiguredError, LLMUnavailableError
     from app.services.llm_runtime import LLMRuntime
 
@@ -85,7 +85,7 @@ async def _run_answers(dataset_arg: str, personas_arg: str, ks: tuple[int, ...])
     dataset = load_dataset(_locate(root, dataset_arg, "datasets"))
     personas = load_personas(_locate(root, personas_arg, "personas"))
     engine = create_engine(settings.database_url.get_secret_value())
-    runtime = LLMRuntime(settings, CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id))
+    runtime = LLMRuntime(settings, rotating_cipher_from_settings(settings))
     try:
         sessionmaker = create_sessionmaker(engine)
         try:

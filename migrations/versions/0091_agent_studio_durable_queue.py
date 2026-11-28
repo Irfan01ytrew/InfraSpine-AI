@@ -12,7 +12,16 @@ depends_on = None
 
 
 def upgrade():
-    if not sa.inspect(op.get_bind()).has_table("integration_whatsapp_dispatches"):
+    # Isolated-schema runs (INFASPINE_TEST_SCHEMA) set search_path to
+    # "<test schema>,public". A schema-less has_table() uses
+    # pg_table_is_visible, so it sees public's table and wrongly skips
+    # creating the table in the test schema; 0092's unqualified ALTER TABLE
+    # then hits public's table and fails with DuplicateColumnError. Check
+    # the current schema explicitly so the table is created where the
+    # migration is actually running.
+    bind = op.get_bind()
+    schema = bind.execute(sa.text("SELECT current_schema()")).scalar()
+    if not sa.inspect(bind).has_table("integration_whatsapp_dispatches", schema=schema):
         op.create_table(
             "integration_whatsapp_dispatches",
             sa.Column("inbound_id", postgresql.UUID(as_uuid=True), nullable=False),
