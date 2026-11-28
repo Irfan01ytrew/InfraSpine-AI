@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 
-from app.api.deps import get_provider_admin, require_admin
+from app.api.deps import get_provider_admin, require_platform_admin
 from app.schemas.providers import (
     AuditLogEntry,
     AuditLogResponse,
@@ -22,7 +22,7 @@ from app.schemas.providers import (
 )
 from app.services.provider_admin import ProviderAdminService
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_platform_admin)])
 
 Admin = Annotated[ProviderAdminService, Depends(get_provider_admin)]
 ProviderId = Annotated[str, Path(pattern=r"^[a-z0-9_-]{1,50}$")]

@@ -25,7 +25,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
-from app.core.crypto import CredentialCipher, EncryptedValue
+from app.core.crypto import EncryptedValue, RotatingCredentialCipher, rotating_cipher_from_settings
 from app.core.errors import InvalidInputError, NotFoundError
 from app.db.models import AccessGroup, ServiceRequest, User
 from app.db.webhook_models import WEBHOOK_EVENTS, Webhook, WebhookDelivery
@@ -50,9 +50,9 @@ def policy(settings: Settings | None = None) -> EndpointPolicy:
     return EndpointPolicy(parse_trusted_origins((settings or get_settings()).webhook_trusted_private_origins))
 
 
-def _cipher(settings: Settings | None = None) -> CredentialCipher:
+def _cipher(settings: Settings | None = None) -> RotatingCredentialCipher:
     settings = settings or get_settings()
-    return CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    return rotating_cipher_from_settings(settings)
 
 
 def _aad(webhook_id: uuid.UUID) -> bytes:

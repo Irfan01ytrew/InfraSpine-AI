@@ -22,7 +22,7 @@ TRANSITIONS = {
     "escalated": {"investigating", "cancelled", "resolved"},
 }
 RISK = {"probe": "low", "retry": "low", "resume": "low", "reprocess": "medium", "fallback": "medium", "restart": "high", "compensate": "high", "route_approver": "high"}
-_SECRET_KEY = re.compile(r"password|secret|token|authorization|cookie|credential|api.?key|private.?key", re.I)
+_SECRET_KEY = re.compile(r"password|secret|token|authorization|cookie|credential|api.?key|private.?key|master.?key|encryption.?key", re.I)
 _SECRET_TEXT = re.compile(r"(?i)(bearer\s+\S+|(?:password|token|secret|api[_-]?key)\s*[:=]\s*[^\s,;]+|(?:postgres(?:ql)?|https?)://[^\s/@]+:[^\s/@]+@[^\s]+)")
 
 

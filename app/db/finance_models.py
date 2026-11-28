@@ -9,8 +9,8 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import (CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint,
-                        func, text)
+from sqlalchemy import (Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String,
+                        UniqueConstraint, func, text)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,11 @@ class FinVendor(Base):
     bank_account: Mapped[str] = mapped_column(String(64))
     currency: Mapped[str] = mapped_column(String(3))
     status: Mapped[str] = mapped_column(String(16), default='active', server_default=text("'active'"))
+    # Step R slice 4: only allow-listed vendors may be auto-picked-up by the
+    # autopilot sweep. Default False: a new vendor always needs a human to
+    # start its first batch. Set only via the vendor save endpoint.
+    autopilot_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                                    server_default=text("false"))
     created_at: Mapped[datetime] = _ts()
 
 
@@ -77,6 +82,21 @@ class FinGoodsReceipt(Base):
     amount: Mapped[Decimal] = mapped_column(MONEY)
     received_on: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = _ts()
+
+
+class FinAnomalySettings(Base):
+    """Step Y slice 5: per-department anomaly detection threshold overrides.
+
+    One row per department (group_id). ``thresholds`` is a JSON object keyed by
+    AnomalyConfig field name; absent keys fall back to the slice-1 defaults, and
+    no row at all means the defaults apply. A change never rewrites history.
+    """
+    __tablename__ = 'fin_anomaly_settings'
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('access_groups.id', ondelete='RESTRICT'),
+                                                primary_key=True)
+    thresholds: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'))
+    updated_at: Mapped[datetime] = _ts()
 
 
 class FinInvoiceBatch(Base):

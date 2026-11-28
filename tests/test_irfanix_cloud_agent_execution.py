@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -6,6 +7,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from sqlalchemy import insert, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from fastapi.testclient import TestClient
 
 from app.agent_studio.service import AgentStudioService
@@ -18,7 +21,9 @@ from app.integrations import whatsapp_artifacts
 from app.main import app
 from app.services.agent_studio_whatsapp import _seal
 from app.core.config import get_settings
-from tests.conftest import ADMIN_EMAIL, run_db
+from app.db.session import test_engine_options as _test_engine_options
+from app.platform.channels import link_identity
+from tests.conftest import ADMIN_EMAIL, TEST_DATABASE_URL, run_db
 
 
 def test_official_cloud_webhook_runs_agent_and_delivers_status_and_result(monkeypatch, clean_tables):
@@ -27,7 +32,9 @@ def test_official_cloud_webhook_runs_agent_and_delivers_status_and_result(monkey
     outgoing = []
     executed = []
 
-    async def disable_background_worker(*_args):
+    # The lifespan starts the worker with baileys_sessions=... (slice 3);
+    # the stub must accept that keyword.
+    async def disable_background_worker(*_args, **_kwargs):
         return
 
     async def fake_provider_request(_base, path, *, payload=None, files=None, **_kwargs):
@@ -85,6 +92,23 @@ def test_official_cloud_webhook_runs_agent_and_delivers_status_and_result(monkey
             return agent_id
 
         agent_id = run_db(seed)
+
+        # Slice 2: an allow-listed sender acts only with a verified identity.
+        # Link the sender the way the unified-intake tests do, or the worker
+        # refuses the inbound as identity_revoked and no run ever starts.
+        async def link_sender():
+            engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, **_test_engine_options())
+            try:
+                sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+                async with sessionmaker() as session:
+                    owner_id = await session.scalar(select(User.id).where(User.email == ADMIN_EMAIL))
+                    await link_identity(session, owner_id, "whatsapp_cloud", "30000001",
+                                        method="whatsapp:confirmed")
+                    await session.commit()
+            finally:
+                await engine.dispose()
+
+        asyncio.run(link_sender())
         url = f"/api/agent-studio/whatsapp/webhook/{connection_id}"
         body = json.dumps({"entry": [{"id": "100001", "changes": [{"value": {
             "metadata": {"phone_number_id": "200001"},
@@ -136,7 +160,10 @@ def test_official_cloud_webhook_runs_agent_and_delivers_status_and_result(monkey
         assert len(outgoing) == 3
         assert outgoing[0]["text"]["body"].startswith("Request received.")
         assert outgoing[1]["type"] == "document"
-        assert outgoing[2]["text"]["body"].startswith("[SUCCESS]")
+        # Step F slice 5: the run completes inline (no execute_once row), so
+        # the artifact status claims no success marker without verification.
+        assert outgoing[2]["text"]["body"].startswith("Agent task completed.")
+        assert not outgoing[2]["text"]["body"].startswith("[SUCCESS]")
         assert "verified synthetic task is complete" in outgoing[2]["text"]["body"]
         assert "WhatsApp accepted 1 output file(s) for delivery" in outgoing[2]["text"]["body"]
         assert "synthetic-token" not in outgoing[2]["text"]["body"]

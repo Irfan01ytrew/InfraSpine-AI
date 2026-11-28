@@ -102,7 +102,7 @@ export function BudgetsPage({ user }: { user: User }) {
               <Field label="Amount"><Input inputMode="decimal" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value.replace(/[^0-9.]/g, "") })} placeholder="500000" /></Field>
               <Field label="Currency"><Input maxLength={3} value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value.toUpperCase().replace(/[^A-Z]/g, "") })} placeholder="PKR" /></Field>
               <div className="flex flex-wrap items-center gap-2 md:col-span-2 xl:col-span-4">
-                <span className="text-xs text-muted">Period:</span>
+                <span className="text-[13px] text-muted">Period:</span>
                 {(["month", "quarter", "year"] as const).map((kind) => (
                   <Button key={kind} size="sm" variant="ghost" onClick={() => { const [start, end] = period(kind); setDraft({ ...draft, start, end }); }}>This {kind}</Button>
                 ))}
@@ -142,7 +142,7 @@ export function BudgetsPage({ user }: { user: User }) {
                       <div className="h-full bg-warning/70" style={{ width: `${committedPct}%` }} />
                     </div>
                   </div>
-                  <dl className="grid grid-cols-3 gap-2 text-xs">
+                  <dl className="grid grid-cols-3 gap-2 text-sm">
                     <div><dt className="text-muted">Approved</dt><dd className="font-semibold text-foreground tabular-nums">{formatMoney(approved, b.currency)}</dd></div>
                     <div><dt className="text-muted">Committed</dt><dd className="font-semibold text-foreground tabular-nums">{formatMoney(committed, b.currency)}</dd></div>
                     <div><dt className="text-muted">Remaining</dt><dd className={cn("font-semibold tabular-nums", Number(b.remaining) < 0 ? "text-danger-text" : "text-foreground")}>{formatMoney(Number(b.remaining), b.currency)}</dd></div>

@@ -85,7 +85,7 @@ class Credentials(Input):
 
 class ConnectorInput(Input):
     name: str = Field(min_length=2, max_length=120)
-    provider: Literal["rest", "graphql", "soap", "microsoft365", "gmail", "google_calendar", "google_drive", "slack"]
+    provider: Literal["rest", "graphql", "soap", "microsoft365", "gmail", "google_calendar", "google_drive", "slack", "teams"]
     base_url: str = Field(min_length=8, max_length=1000)
     config: ConnectorConfig = Field(default_factory=ConnectorConfig)
     credentials: Credentials = Field(default_factory=Credentials)
@@ -100,7 +100,7 @@ class ConnectorPatch(Input):
 
 
 class JobInput(Input):
-    operation: Literal["verify", "sync", "rest.write", "soap.call", "email.send", "calendar.create", "slack.send"]
+    operation: Literal["verify", "sync", "rest.write", "soap.call", "email.send", "calendar.create", "slack.send", "teams.send"]
     idempotency_key: str = Field(min_length=8, max_length=120, pattern=r"^[A-Za-z0-9_.:-]+$")
     payload: dict = Field(default_factory=dict)
 
@@ -167,3 +167,11 @@ class CalendarEvent(Input):
 class SlackMessage(Input):
     channel: str = Field(pattern=r"^[CDG][A-Z0-9]{4,40}$")
     text: str = Field(min_length=1, max_length=4000)
+
+
+class TeamsMessage(Input):
+    """A text message to one channel of one team (Graph channel messages)."""
+
+    team_id: str = Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    channel_id: str = Field(max_length=120, pattern=r"^[A-Za-z0-9_:@.\-]{1,120}$")
+    text: str = Field(min_length=1, max_length=10000)

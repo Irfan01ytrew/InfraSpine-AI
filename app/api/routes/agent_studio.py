@@ -58,7 +58,16 @@ from app.schemas.agent_studio_whatsapp import (
     WhatsAppConnectionOut,
     WhatsAppConnectionResponse,
     WhatsAppConnectionSave,
+    WhatsAppPathResponse,
+    WhatsAppPathSave,
+    WhatsAppRotateSecret,
     WhatsAppVerifyResponse,
+)
+from app.integrations.whatsapp_failover import (
+    get_path_setting,
+    live_baileys_session,
+    resolve_primary,
+    set_path_setting,
 )
 from app.services import audit
 from app.services.chat_exports import MEDIA_TYPES, resolve_chat_export
@@ -68,6 +77,7 @@ from app.services.agent_studio_whatsapp import (
     delete_connection as delete_whatsapp_connection,
     get_connection as get_whatsapp_connection,
     public_connection as public_whatsapp_connection,
+    rotate_connection_secret as rotate_whatsapp_secret,
     save_connection as save_whatsapp_connection,
     verify_and_subscribe as verify_whatsapp_and_subscribe,
 )
@@ -88,7 +98,47 @@ async def agent_studio_whatsapp_connection(
         str(request.base_url),
         settings.whatsapp_webhook_base_url,
     )
-    return WhatsAppConnectionResponse(connection=WhatsAppConnectionOut.model_validate(result) if result else None)
+    # Step F slice 3: the runtime path setting + which transport a reply
+    # would actually use right now.
+    path_setting = await get_path_setting(db, user.id)
+    cloud_available = connection is not None and connection.enabled
+    sessions = getattr(request.app.state, "baileys_sessions", None) or {}
+    baileys_session = await live_baileys_session(db, sessions, user.id)
+    active_path = resolve_primary(
+        path_setting, own_channel="cloud",
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
+    return WhatsAppConnectionResponse(
+        connection=WhatsAppConnectionOut.model_validate(result) if result else None,
+        path_setting=path_setting, active_path=active_path,
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
+
+
+@router.put("/whatsapp/path", response_model=WhatsAppPathResponse)
+async def set_agent_studio_whatsapp_path(
+    payload: WhatsAppPathSave, request: Request, db: DbSession, user: CurrentUser
+) -> WhatsAppPathResponse:
+    """Step F slice 3: store the owner's WhatsApp transport path setting.
+
+    ``cloud`` / ``baileys`` pick the primary transport; ``auto`` prefers the
+    channel a message arrived on. The setting only picks the primary — a
+    failed primary is still retried once on the other path.
+    """
+    path_setting = await set_path_setting(db, user.id, payload.path)
+    await db.commit()
+    connection = await get_whatsapp_connection(db, user)
+    cloud_available = connection is not None and connection.enabled
+    sessions = getattr(request.app.state, "baileys_sessions", None) or {}
+    baileys_session = await live_baileys_session(db, sessions, user.id)
+    active_path = resolve_primary(
+        path_setting, own_channel="cloud",
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
+    return WhatsAppPathResponse(
+        path_setting=path_setting, active_path=active_path,
+        cloud_available=cloud_available, baileys_available=baileys_session is not None,
+    )
 
 
 @router.put("/whatsapp", response_model=WhatsAppConnectionResponse)
@@ -128,6 +178,27 @@ async def verify_agent_studio_whatsapp_connection(
     audit.record(db, audit_context(request, user), "agent_studio.whatsapp_verified", target=str(row.id))
     await db.commit()
     return WhatsAppVerifyResponse(**details, subscribed=True)
+
+
+@router.post("/whatsapp/rotate-secret", response_model=WhatsAppConnectionResponse)
+async def rotate_agent_studio_whatsapp_secret(
+    payload: WhatsAppRotateSecret, request: Request, db: DbSession, user: CurrentUser,
+    settings: AppSettings,
+) -> WhatsAppConnectionResponse:
+    """Step F slice 6: rotate one stored WhatsApp secret.
+
+    The old value stops verifying immediately (webhooks signed with the
+    old app secret fail the HMAC check; the old verify token no longer
+    answers the subscription challenge). The secret itself is never
+    returned or logged.
+    """
+    row = await rotate_whatsapp_secret(
+        db, user, request.app.state.cipher, payload.secret, payload.new_value.get_secret_value()
+    )
+    agent = await db.get(AgentStudioAgent, row.agent_id)
+    result = public_whatsapp_connection(row, agent.name if agent else None, str(request.base_url),
+                                       settings.whatsapp_webhook_base_url)
+    return WhatsAppConnectionResponse(connection=WhatsAppConnectionOut.model_validate(result))
 
 
 @router.delete("/whatsapp", status_code=status.HTTP_204_NO_CONTENT)

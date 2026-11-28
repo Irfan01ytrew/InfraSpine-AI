@@ -9,12 +9,12 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Date, Select, cast, func, select
 
-from app.api.deps import DbSession, require_admin
+from app.api.deps import DbSession, require_platform_admin
 from app.core.errors import NotFoundError
 from app.db.models import ConversationMessage, Document, RagTrace, User
 from app.schemas.traces import DecisionCount, TraceChunkOut, TraceDay, TraceDetail, TraceListResponse, TraceOut, TraceSummary
 
-router = APIRouter(prefix="/api/admin/traces", tags=["admin"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/api/admin/traces", tags=["admin"], dependencies=[Depends(require_platform_admin)])
 
 
 def _rows() -> Select:

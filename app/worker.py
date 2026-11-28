@@ -53,6 +53,23 @@ async def _schema_ready(sessionmaker) -> str | None:
     return None
 
 
+def _report_deliver(sessionmaker, settings):
+    """Build the scheduled-report ``deliver`` callback for this process.
+
+    WhatsApp sends need the master key to decrypt the connection token; when
+    the key is unavailable the callback still works for email/in_app and
+    WhatsApp deliveries fail closed with a typed error (retried, never sent).
+    """
+    from app.core.crypto import CredentialCipher
+    from app.services.scheduled_report_delivery import make_report_deliver
+
+    try:
+        cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    except (ValueError, TypeError, AttributeError):
+        cipher = None
+    return make_report_deliver(sessionmaker, settings, cipher)
+
+
 async def _run(args: argparse.Namespace) -> int:
     import asyncio
     import logging
@@ -130,9 +147,14 @@ async def _run(args: argparse.Namespace) -> int:
         if args.once:
             from app.services.training_reminders import process_training_reminders
             from app.services.personal_task_reminders import process_personal_task_reminders
+            from app.services.hr_salary_reminders import process_salary_reminders
             from app.services.automation_worker import process_workflows_once
             from app.services.service_request_worker import process_service_request_slas
             from app.services.approval_reminders import process_approval_reminders
+            from app.services.scheduled_report_worker import (
+                deliver_pending_report_deliveries,
+                process_scheduled_reports,
+            )
             from app.services.request_attachments import cleanup_orphans
             from app.services.webhooks import deliver_due
             from app.services.folder_sync import process_due_folder_syncs
@@ -146,23 +168,44 @@ async def _run(args: argparse.Namespace) -> int:
                 partner_processed += 1
             reminders = await process_training_reminders(sessionmaker)
             personal_task_reminders = await process_personal_task_reminders(sessionmaker, settings=settings)
+            salary_reminders = await process_salary_reminders(sessionmaker)
             workflows = await process_workflows_once(sessionmaker)
             sla_escalations = 0
             while completed_batch := await process_service_request_slas(sessionmaker):
                 sla_escalations += completed_batch
             approval_reminders = await process_approval_reminders(sessionmaker)
+            # Step AF slice 4: control-room alert dispatch (one pass). Guarded so
+            # an alert failure never blocks the rest of the worker run.
+            try:
+                from app.control_room.dispatch import process_control_room_alerts
+
+                control_room_alerts = await process_control_room_alerts(sessionmaker, settings)
+                log.info("Control room alerts: %s", control_room_alerts)
+            except Exception as exc:  # noqa: BLE001 - worker must not die on alerts
+                log.warning("Control room alert dispatch failed (%s)", type(exc).__name__)
+            report_deliver = _report_deliver(sessionmaker, settings)
+            scheduled_reports = await process_scheduled_reports(
+                sessionmaker, deliver=report_deliver)
+            report_deliveries = await deliver_pending_report_deliveries(
+                sessionmaker, deliver=report_deliver)
             await cleanup_orphans(sessionmaker, settings=settings)
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
             if getattr(settings, "workflow_engine_on", False):
-                from app.core.crypto import CredentialCipher
+                from app.core.crypto import rotating_cipher_from_settings
+                from app.finance.approval_reminders import process_finance_approval_reminders
+                from app.services.finance_autopilot import process_finance_autopilot
                 from app.workflows.engine import tick
 
-                cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+                cipher = rotating_cipher_from_settings(settings)
                 ticks = 0
                 while ticks < 1000 and await tick(sessionmaker, cipher):
                     ticks += 1
                 log.info("Workflow engine: %s ticks", ticks)
+                autopilot_decisions = await process_finance_autopilot(sessionmaker, settings=settings, cipher=cipher)
+                log.info("Finance autopilot: %s sweep decisions", autopilot_decisions)
+                finance_reminders = await process_finance_approval_reminders(sessionmaker)
+                log.info("Finance approval reminders: %s approvals nudged", finance_reminders)
             log.info(
                 "Processed %s documents, %s training reminders, %s personal task reminders, %s workflow events, %s service request SLA escalations and %s folder sync runs",
                 processed,
@@ -173,6 +216,9 @@ async def _run(args: argparse.Namespace) -> int:
                 folder_sync_runs,
             )
             log.info("Processed %s partner sources and %s approval step reminders", partner_processed, approval_reminders)
+            log.info("Processed %s scheduled report occurrences and %s pending report deliveries",
+                     scheduled_reports, report_deliveries)
+            log.info("Processed %s salary reminders", salary_reminders)
             return 0
 
         stop = asyncio.Event()
@@ -186,9 +232,14 @@ async def _run(args: argparse.Namespace) -> int:
                 signal.signal(getattr(signal, name), request_stop)
         from app.services.training_reminders import run_training_reminders
         from app.services.personal_task_reminders import run_personal_task_reminders
+        from app.services.hr_salary_reminders import run_salary_reminders
         from app.services.automation_worker import run_automation_worker
         from app.services.service_request_worker import run_service_request_sla_worker
         from app.services.approval_reminders import run_approval_reminders
+        from app.control_room.dispatch import run_alert_dispatch
+        from app.finance.approval_reminders import run_finance_approval_reminders
+        from app.services.finance_autopilot import run_finance_autopilot
+        from app.services.scheduled_report_worker import run_scheduled_report_worker
         from app.services.request_attachments import run_attachment_cleanup
         from app.services.webhooks import run_webhook_worker
         from app.services.folder_sync import run_folder_sync_worker
@@ -198,11 +249,15 @@ async def _run(args: argparse.Namespace) -> int:
             # Unified workflow runtime (step E): automation rules, the invoice flow and governance actions.
             # On by default; WORKFLOW_ENGINE_WORKER_ENABLED=false is the kill switch. Leased claims make it safe to
             # run here and in the API at the same time. Agent Studio steps wait for the API process (LLM runtime).
-            from app.core.crypto import CredentialCipher
+            from app.core.crypto import rotating_cipher_from_settings
             from app.workflows.engine import run_worker as run_workflow_engine
 
-            cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+            cipher = rotating_cipher_from_settings(settings)
             background.append(run_workflow_engine(sessionmaker, cipher, stop))
+            # Finance autopilot (step R slice 2): same kill switch; the org-settings policy gates the sweep itself.
+            background.append(run_finance_autopilot(sessionmaker, stop, settings=settings, cipher=cipher))
+            # Finance approval reminders (step R slice 3): same kill switch; nudges only, never decides.
+            background.append(run_finance_approval_reminders(sessionmaker, stop))
             log.info("Workflow engine worker started (WORKFLOW_ENGINE_WORKER_ENABLED=false turns it off)")
         else:
             log.warning("Workflow engine worker is OFF (WORKFLOW_ENGINE_WORKER_ENABLED=false)")
@@ -213,9 +268,12 @@ async def _run(args: argparse.Namespace) -> int:
             partner_worker.run(stop),
             run_training_reminders(sessionmaker, stop),
             run_personal_task_reminders(sessionmaker, stop, settings=settings),
+            run_salary_reminders(sessionmaker, stop),
             run_automation_worker(sessionmaker, stop),
             run_service_request_sla_worker(sessionmaker, stop),
             run_approval_reminders(sessionmaker, stop),
+            run_alert_dispatch(sessionmaker, settings, stop),
+            run_scheduled_report_worker(sessionmaker, stop, deliver=_report_deliver(sessionmaker, settings)),
             run_attachment_cleanup(sessionmaker, stop),
             run_webhook_worker(sessionmaker, stop),
             run_folder_sync_worker(sessionmaker, settings, stop),

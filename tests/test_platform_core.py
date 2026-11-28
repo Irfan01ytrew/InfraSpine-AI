@@ -331,6 +331,45 @@ def test_a_crash_after_dispatch_is_resumed_by_verifying_not_by_dispatching_again
     run(go)
 
 
+def test_execute_once_dispatch_database_error_is_recorded_failed_not_wedged_claimed():
+    """A dispatch SQL error aborts the transaction; the failure must still
+    be recorded (row 'failed'), not wedged 'claimed' forever."""
+    async def go(sm):
+        from sqlalchemy import text
+
+        from app.platform.models import PlatformActionExecution
+
+        s = await setup(sm)
+        async with sm() as db:
+            officer = await principal(db, USER_EMAIL)
+            action = ActionSpec("invoice.verify", s["finance"], {"invoice_id": "INV-600"},
+                                subject="invoice:INV-600")
+
+            async def bad_sql_dispatch():
+                # Runs on execute_once's own session: the error aborts its
+                # transaction, so the failure-marking writes must roll back
+                # first or they can never commit.
+                await db.execute(text("SELECT * FROM no_such_table_xyz"))
+                return "never"
+
+            async def verify(ref):
+                return VerifiedResult(True, {"ref": ref})
+
+            result = await platform.execute_once(db, officer, "wf:run-1:item-40", action,
+                                                 duty="invoice.verify", dispatch=bad_sql_dispatch,
+                                                 verify=verify)
+            assert result.status == "failed"
+            row = await db.get(PlatformActionExecution, result.execution_id)
+            assert row.status == "failed"
+            assert row.failure_code and row.failure_code.startswith("dispatch_")
+            again = await platform.execute_once(db, officer, "wf:run-1:item-40", action,
+                                                duty="invoice.verify", dispatch=bad_sql_dispatch,
+                                                verify=verify)
+            assert (again.status, again.replayed) == ("failed", True)
+
+    run(go)
+
+
 # ------------------------------------------------------------------------------------------- revocation
 
 def test_revoke_user_access_stops_sessions_channels_principals_memberships_and_requests():

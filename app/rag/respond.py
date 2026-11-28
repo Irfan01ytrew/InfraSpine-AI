@@ -93,6 +93,8 @@ async def rag_respond(
                     f"[S{number}] {chunk.filename}, {chunk.location_label}" for number, chunk in answer.cited
                 ))
                 export_content += "\n\n## Sources\n" + "\n".join(f"- {source}" for source in sources)
+            if answer.freshness_warning:
+                export_content += f"\n\n{answer.freshness_warning}"
             token, _filename = await asyncio.to_thread(
                 create_chat_export,
                 export_content,
@@ -118,6 +120,8 @@ async def rag_respond(
         "RAG chat strategy=%s passages=%s cited=%s insufficient=%s",
         result.strategy, len(result.passages), len(answer.cited), answer.insufficient_evidence,
     )
+    # Step AI slice 4: per-citation freshness rides on the citation it labels.
+    freshness_by_source = {entry.source_number: entry for entry in answer.citation_freshness}
     return RagChatResponse(
         answer=redact_credentials(answer.answer, secrets),
         insufficient_evidence=answer.insufficient_evidence,
@@ -132,9 +136,13 @@ async def rag_respond(
                 chunk_index=chunk.chunk_index,
                 score=round(chunk.score, 4),
                 snippet=redact_credentials(chunk.content, secrets)[:SNIPPET_CHARS],
+                freshness_status=(freshness_by_source[number].status if number in freshness_by_source else None),
+                freshness_score=(freshness_by_source[number].score if number in freshness_by_source else None),
+                freshness_note=(freshness_by_source[number].note if number in freshness_by_source else None),
             )
             for number, chunk in answer.cited
         ],
+        freshness_warning=answer.freshness_warning,
         retrieved_chunks=len(result.passages),
         strategy=result.strategy,
         chart=_chart_out(result.chart),

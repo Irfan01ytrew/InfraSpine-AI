@@ -17,6 +17,14 @@ import httpx2
 
 from app.core.config import Settings
 from app.core.errors import LLMRateLimitError, LLMTimeoutError, LLMUnavailableError
+from app.language.words import (
+    ROMAN_URDU_FRESH_WORDS,
+    ROMAN_URDU_NEWS_WORDS,
+    ROMAN_URDU_QUERY_NOISE_WORDS,
+    ROMAN_URDU_QUERY_STOPWORDS,
+    ROMAN_URDU_TODAY_WORDS,
+    word_alternation,
+)
 from app.providers.endpoint_security import (
     UnsafeEndpointError,
     guarded_http_client,
@@ -51,21 +59,17 @@ _QUERY_STOP_WORDS = frozenset({
     # Output-format and instruction words do not identify the subject being searched.
     "and", "what", "check", "write", "create", "compare", "include", "three", "points", "point",
     "publication", "date", "source", "sources", "link", "links",
-    # Common Roman Urdu/Hindi request words. Removing these improves recall while
-    # retaining the subject terms users actually want searched.
-    "acha", "achha", "aj", "aaj", "batao", "btao", "batayein", "btaein", "batana",
-    "chahiye", "chahye", "dekho", "dekhna", "dhoondo", "dhondo", "dhundho", "dhoondho",
-    "hai", "hain", "he", "h", "ka", "ke", "ki", "karo", "kro", "karna", "krna",
-    "kya", "kia", "konsi", "konse", "konsa", "konsay", "koun", "kounsa", "kounsi",
-    "mujhe", "mujhay", "mujai", "meri", "mere", "mera", "mein", "mai", "me", "par", "pe",
-    "please", "se", "sy", "to", "ye", "yeh", "iss", "is", "kiya", "jao", "jayein",
-})
+}) | ROMAN_URDU_QUERY_STOPWORDS  # Roman Urdu/Hindi request words: app/language/words.py
 _DATE_WORDS = frozenset({
     "january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
     "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
 })
 _SEARCH_QUERY_NOISE = frozenset({
-    "what", "there", "none", "no", "say", "says", "so", "else", "status", "ongoing", "match", "matches", "source",
+    # NOTE (integration merge P + knowledge-fix): singular "match" is NOT noise -- it is
+    # the topic word in Roman Urdu "next match" questions ("pak next match"). Plural
+    # "matches" stays noise: it is generic filler in live-scores queries
+    # ("latest scores ... matches") and Step P's tests pin it stripped.
+    "what", "there", "none", "no", "say", "says", "so", "else", "status", "ongoing", "matches", "source",
     "sources", "link", "links", "cite", "citations", "summaries", "summary", "please", "whether",
     "include", "three", "points", "point", "publication", "date",
     "official", "program", "update", "updates", "major", "news", "story", "stories", "headline", "headlines",
@@ -73,14 +77,16 @@ _SEARCH_QUERY_NOISE = frozenset({
     # not the subject; leaving them in a public search query can return dictionary pages or no results.
     "website", "websites", "only", "facts", "fact", "explicitly", "stated", "its", "clickable",
     "actual", "directly", "exactly", "each", "every", "bullet", "bullets", "published",
-    "acha", "achha", "batao", "btao", "batayein", "dekho", "dhoondo", "dhondo", "hai", "hain",
-    "ka", "ke", "ki", "karo", "kro", "kya", "kia", "mein", "mai", "par", "pe", "se", "sy",
-})
+}) | ROMAN_URDU_QUERY_NOISE_WORDS  # Roman Urdu words: app/language/words.py
+_NEWS_FRESHNESS = "latest|newest|most\\s+recent|recent|breaking|today|right\\s+now|currently"
+_NEWS_SUBJECTS = "news|headline|headlines|story|stories"
 _CURRENT_NEWS_REQUEST = re.compile(
-    r"\b(?:latest|newest|most\s+recent|recent|breaking|today|right\s+now|currently|"
-    r"aaj|aj|abhi|taaza|taza)\b.{0,80}\b(?:news|headline|headlines|story|stories|khabar|khabrain)\b"
-    r"|\b(?:news|headline|headlines|story|stories|khabar|khabrain)\b.{0,80}"
-    r"\b(?:latest|newest|most\s+recent|recent|breaking|today|right\s+now|currently|aaj|aj|abhi|taaza|taza)\b",
+    r"\b(?:" + _NEWS_FRESHNESS + "|" + word_alternation(ROMAN_URDU_TODAY_WORDS)
+    + "|" + word_alternation(ROMAN_URDU_FRESH_WORDS)
+    + r")\b.{0,80}\b(?:" + _NEWS_SUBJECTS + "|" + word_alternation(ROMAN_URDU_NEWS_WORDS) + r")\b"
+    r"|\b(?:" + _NEWS_SUBJECTS + "|" + word_alternation(ROMAN_URDU_NEWS_WORDS)
+    + r")\b.{0,80}\b(?:" + _NEWS_FRESHNESS + "|" + word_alternation(ROMAN_URDU_TODAY_WORDS)
+    + "|" + word_alternation(ROMAN_URDU_FRESH_WORDS) + r")\b",
     re.IGNORECASE,
 )
 _NEWS_HUB_PATHS = frozenset({
@@ -277,7 +283,10 @@ def _public_search_queries(prompt: str) -> list[str]:
         topic = " ".join(news_topic_terms[:6])
         if topic:
             queries.append(f"{topic} news {today}")
-    if (
+    # Schedule ("next match") questions route as cricket web-lookups, but they ask
+    # about a FUTURE fixture, not live scores: do not prepend the live-scores query
+    # (see _is_schedule_only_cricket_request).
+    if not _is_schedule_only_cricket_request(prompt) and (
         ("cricket" in topic_terms and topic_terms.intersection({"score", "scores", "match", "matches", "live", "ongoing", "status"}))
         or is_current_cricket_request(prompt)
     ):
@@ -544,12 +553,42 @@ def is_current_cricket_request(prompt: str) -> bool:
         prompt, re.I | re.S,
     )
     question = match.group(1) if match else prompt
-    cricket = bool(re.search(r"\bcricket\b|کرکٹ", question, re.I))
+    cricket = bool(re.search(r"\bcricket\b|کرکٹ|\bmatch\b|\bscorecard\b", question, re.I))
     current = bool(re.search(
         r"\b(?:live|current|currently|now|today|score|scores|status|ongoing|right\s+now|"
-        r"is+s?\s+wa[qk]t|abhi|aaj|aj|ho\s+rah[aeiy]+|chal\s+raha)\b|اس\s+وقت|آج", question, re.I,
+        r"is+s?\s+wa[qk]t|abhi|aaj|aj|ho\s+rah[aeiy]+|chal\s+raha|next|upcoming|scheduled|"
+        r"fixture|fixtures|kb|kab|agla|agli|aane)\b|اس\s+وقت|آج", question, re.I,
     ))
     return cricket and current
+
+
+def _is_schedule_only_cricket_request(prompt: str) -> bool:
+    """True when a cricket question asks about a FUTURE fixture with no live-score signal.
+
+    "pak a ka next match kb hai?" must still count as a cricket web-lookup
+    (is_current_cricket_request stays True -- Step P's direct-path detection), but it
+    asks when the NEXT match is, not for live scores. Forcing it through the live
+    scoreboard / authoritative-scorecard path returns live scores (or refuses for lack
+    of a scorecard) instead of the schedule answer, and prepending
+    "international cricket live scores today" to the search queries buries the topical
+    "pak next match" query. Schedule-only questions therefore go through generic
+    topical search. (Integration merge: Step P live-data + knowledge-fix.)
+    """
+    match = re.search(
+        r"(?:NORMALIZED LIVE SEARCH QUESTION|CURRENT QUESTION):\s*(.+?)(?=\n\n|$)",
+        prompt, re.I | re.S,
+    )
+    question = match.group(1) if match else prompt
+    future = bool(re.search(
+        r"\b(?:next|upcoming|scheduled|fixture|fixtures|kb|kab|agla|agli|aane)\b",
+        question, re.I,
+    ))
+    live = bool(re.search(
+        r"\b(?:live|current|currently|now|today|score|scores|status|ongoing|right\s+now|"
+        r"is+s?\s+wa[qk]t|abhi|aaj|aj|ho\s+rah[aeiy]+|chal\s+raha)\b|اس\s+وقت|آج",
+        question, re.I,
+    ))
+    return future and not live
 
 
 def _cricket_events(sources: list[dict[str, str]]) -> tuple[list[dict], list[dict[str, str]]]:
@@ -1229,7 +1268,7 @@ async def public_web_research(
     if len(urls) > 5 or any(not _public_https_url(url) for url in urls):
         raise LLMUnavailableError("Only up to five public HTTPS URLs can be inspected.")
 
-    if not urls and is_current_cricket_request(prompt):
+    if not urls and is_current_cricket_request(prompt) and not _is_schedule_only_cricket_request(prompt):
         # Search-engine snippets can lag behind a changing scorecard. Fetch the live listing
         # and its match pages directly before considering generic search results.
         direct_scores = await _cricbuzz_live_scoreboard(settings, prompt)
@@ -1303,7 +1342,7 @@ async def public_web_research(
     if not sources:
         raise LLMUnavailableError("The public search returned no relevant source content.")
 
-    if is_current_cricket_request(prompt):
+    if is_current_cricket_request(prompt) and not _is_schedule_only_cricket_request(prompt):
         events, score_sources = _cricket_events(sources)
         if not score_sources:
             raise LLMUnavailableError("Search returned no authoritative cricket scorecard for a live-status answer.")

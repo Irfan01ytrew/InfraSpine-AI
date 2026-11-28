@@ -3,11 +3,14 @@
 * finance.verify_invoices (person with invoice.verify): every invoice is checked through `execute_once`
   (duty invoice.verify, subject = the batch) so the duty is recorded for separation of duties, the decision is
   written exactly once per invoice revision and read back. Slices are checkpointed; pause, revoke or a crash
-  stop before the next invoice and resume with the invoices still pending (by id).
+  stop before the next invoice and resume with the invoices still pending (by id). Step Y: anomaly flags from
+  `app.finance.anomaly` (history of prior batches) are appended to the invoice reasons and force the
+  exceptions queue when they block straight-through approval — advisory only, never an auto-reject.
 * finance.request_payment_approvals (auto, as the requester): groups verified invoices per vendor into
   payments and requests a platform approval of the *exact* transfer (amount, payee account from the vendor
   master, invoice set, batch) with expiry and single use. Re-requests on expiry; rejection returns invoices to
-  the exceptions queue.
+  the exceptions queue. Step Y: a verified invoice whose reasons still carry a payee-verification hold code
+  (changed bank account, first-time payee) is refused here and returned to exceptions instead of being grouped.
 * finance.execute_payments (person with funds.transfer): `execute_once` consumes the approval (hash must still
   match the payment recomputed from the database), submits through the payment connector with an idempotency
   key, and only marks the payment paid after reading the transfer back from the connector.
@@ -23,7 +26,16 @@ from sqlalchemy import func, or_, select, update
 
 from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
-from app.db.finance_models import FinGoodsReceipt, FinInvoice, FinInvoiceBatch, FinPayment, FinPurchaseOrder, FinVendor
+from app.db.finance_models import (FinAnomalySettings, FinGoodsReceipt, FinInvoice, FinInvoiceBatch, FinPayment,
+                                   FinPurchaseOrder, FinVendor)
+from app.finance.anomaly import (
+    PAYMENT_HOLD_CODES,
+    AnomalyConfig,
+    InvoiceRecord,
+    blocks_straight_through,
+    config_from_settings,
+    detect_anomalies,
+)
 from app.finance.connectors import ConnectorUnavailable, TransferRequest, resolve_connector
 from app.finance.verification import InvoiceFacts, PurchaseOrder, Reference, Vendor, invoice_key, name_key, verify_invoice
 from app.platform.approvals import ActionSpec, request_approval
@@ -99,6 +111,31 @@ async def reference_for(db, batch: FinInvoiceBatch, settings) -> Reference:
                      max_age_days=settings.finance_max_invoice_age_days)
 
 
+async def anomaly_config_for(db, group_id) -> AnomalyConfig:
+    """Step Y slice 5: the department's anomaly thresholds, or the slice-1 defaults
+    when the department has no stored settings."""
+    row = await db.scalar(select(FinAnomalySettings).where(FinAnomalySettings.group_id == group_id))
+    return config_from_settings(dict(row.thresholds or {}) if row is not None else None)
+
+
+async def history_for(db, batch: FinInvoiceBatch) -> list[InvoiceRecord]:
+    """Step Y anomaly baseline: this department's invoices from *prior* batches, any status.
+
+    Invoices in the batch being verified are contemporaneous intake, not history — counting
+    them would flag any bulk intake (every vendor's invoices in one batch share a date, so
+    the velocity rule would fire on the whole batch). A department's very first batch has
+    no baseline at all, so the caller skips detection for it: with no history there is no
+    anomaly signal, only the absence of one (a first-time-payee flag on every invoice of a
+    first batch would say nothing). Once any prior batch exists, first-time vendors are
+    flagged normally.
+    """
+    rows = (await db.scalars(select(FinInvoice).where(
+        FinInvoice.group_id == batch.group_id, FinInvoice.batch_id != batch.id)
+        .order_by(FinInvoice.invoice_date, FinInvoice.id))).all()
+    return [InvoiceRecord(r.id, r.vendor_name, r.invoice_number, r.amount, r.currency,
+                          r.invoice_date, r.bank_account_on_invoice) for r in rows]
+
+
 async def _verify_key(db, invoice: FinInvoice) -> str | None:
     """`invoice.verify:<id>:r<revision>`; a claim abandoned by a crash before its write is retired (it never
     changed the invoice: the decision and the 'dispatched' mark commit together) and a new key is used."""
@@ -116,8 +153,28 @@ async def _verify_one(ctx: ActionContext, batch: FinInvoiceBatch, inv: FinInvoic
     facts = InvoiceFacts(inv.id, inv.invoice_number, inv.vendor_name, inv.po_number, inv.amount, inv.currency,
                          inv.invoice_date, inv.bank_account_on_invoice)
     result = verify_invoice(facts, ref)
-    outcome = 'verified' if result.verified else 'exception'
-    codes = [r['code'] for r in result.reasons]
+    # Step Y slice 2: advisory anomaly flags from the department's prior batches, recorded on
+    # the invoice row's reasons alongside the deterministic reasons — never a silent side
+    # channel. Any flag blocks straight-through approval: the invoice goes to the exceptions
+    # queue for explicit owner review. Flags never reject, never pay, never change the payee
+    # or the amount, and never touch approvals.
+    # The history is carried on the batch object by VerifyInvoicesHandler.run (one load per
+    # slice, not one per invoice); _verify_one keeps its 4-argument contract — the Step E
+    # crash-resume test monkeypatches this function with a 4-argument wrapper, so the
+    # signature must not grow. Direct callers without the attribute fall back to loading it.
+    record = InvoiceRecord(inv.id, inv.vendor_name, inv.invoice_number, inv.amount, inv.currency,
+                           inv.invoice_date, inv.bank_account_on_invoice)
+    history = getattr(batch, '_anomaly_history', None)
+    if history is None:
+        history = await history_for(ctx.db, batch)
+    # Step Y slice 5: the department's thresholds (loaded once per slice by
+    # VerifyInvoicesHandler.run, same transient-attribute pattern as the history).
+    # Direct callers without the attribute fall back to the slice-1 defaults.
+    config = getattr(batch, '_anomaly_config', None) or AnomalyConfig()
+    flags = detect_anomalies(record, history, config) if history else []
+    reasons = result.reasons + [{'code': f.code, 'message': f.message, 'details': dict(f.details)} for f in flags]
+    outcome = 'verified' if result.verified and not blocks_straight_through(flags) else 'exception'
+    codes = [r['code'] for r in reasons]
     inv_id, revision = inv.id, inv.revision
     spec = ActionSpec('invoice.verify', ctx.platform_scope_id,
                       {'invoice_id': str(inv_id), 'revision': revision, 'source_digest': inv.source_digest,
@@ -131,7 +188,7 @@ async def _verify_one(ctx: ActionContext, batch: FinInvoiceBatch, inv: FinInvoic
                                   .execution_options(populate_existing=True))
         if row.status != 'pending' or row.revision != revision:
             raise ConflictError('Invoice changed during verification.')
-        row.status, row.reasons, row.vendor_id = outcome, result.reasons, result.vendor_id
+        row.status, row.reasons, row.vendor_id = outcome, reasons, result.vendor_id
         row.verified_by, row.verified_at, row.updated_at = ctx.principal.user_id, _now(), _now()
         return f'invoice:{inv_id}:r{revision}'
 
@@ -169,6 +226,12 @@ class VerifyInvoicesHandler:
             batch.status = 'verifying'
             await ctx.db.commit()
         ref = await reference_for(ctx.db, batch, settings)
+        history = await history_for(ctx.db, batch)
+        # Transient (non-persisted) attributes: the slice's history and thresholds
+        # for _verify_one. They are set fresh every round, so a resumed slice
+        # re-reads prior batches and the current settings.
+        batch._anomaly_history = history
+        batch._anomaly_config = await anomaly_config_for(ctx.db, batch.group_id)
         checked = verified = 0
         for index, inv in enumerate(pending):
             if index:
@@ -241,6 +304,23 @@ class RequestPaymentApprovalsHandler:
         rows = list((await ctx.db.scalars(select(FinInvoice).where(
             FinInvoice.batch_id == batch.id, FinInvoice.status == 'verified', FinInvoice.payment_id.is_(None),
             FinInvoice.vendor_id.is_not(None)).order_by(FinInvoice.seq).with_for_update())).all())
+        # Step Y slice 3, payment boundary: a verified invoice whose reasons still carry a
+        # payee-verification hold code (changed bank account, first-time payee) must never be
+        # grouped into a payment. Slice 2 normally routes such invoices to exceptions at
+        # verification; this is defence in depth for rows verified before this feature (or by
+        # another path). The invoice returns to the exceptions queue; only an owner, through
+        # the existing resolve flow, can bring it back — the hold is never auto-approved.
+        held = [inv for inv in rows
+                if any((r or {}).get('code') in PAYMENT_HOLD_CODES for r in (inv.reasons or []))]
+        for inv in held:
+            rows.remove(inv)
+            if not any((r or {}).get('code') == 'payee_verification_hold' for r in (inv.reasons or [])):
+                inv.reasons = list(inv.reasons or []) + [{
+                    'code': 'payee_verification_hold',
+                    'message': 'Payment held: the payee bank details need owner verification before any payment.'}]
+            inv.status, inv.payment_id, inv.updated_at = 'exception', None, _now()
+            ctx.note('payment.held_for_payee_verification', invoice_id=str(inv.id),
+                     codes=[r['code'] for r in inv.reasons if (r or {}).get('code') in PAYMENT_HOLD_CODES])
         groups: dict[tuple, list[FinInvoice]] = {}
         for inv in rows:
             groups.setdefault((inv.vendor_id, inv.currency), []).append(inv)
@@ -478,4 +558,4 @@ register(VerifyInvoicesHandler())
 register(RequestPaymentApprovalsHandler())
 register(ExecutePaymentsHandler())
 
-__all__ = ['batch_subject', 'payment_spec', 'reference_for', 'name_key']
+__all__ = ['batch_subject', 'history_for', 'payment_spec', 'reference_for', 'name_key']

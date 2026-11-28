@@ -10,13 +10,14 @@ import logging
 import mimetypes
 import re
 import tempfile
+import time
 import uuid
 from decimal import Decimal, InvalidOperation
 from pathlib import Path as FilePath
 from typing import Annotated, Literal, get_args
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +64,13 @@ from app.db.models import (
     User,
 )
 from app.rag.access import readable_by
+from app.platform.idempotency import (
+    canonical_request_hash,
+    claim_request,
+    complete_request,
+    fail_request,
+    validate_idempotency_key,
+)
 from app.rag import tracing
 from app.rag.answer import Turn
 from app.rag.components import RagComponents
@@ -76,6 +84,7 @@ from app.rag.parsers.registry import limits_from_settings, parse_document
 from app.rag.pdf import PdfError, render_page_png
 from app.rag.respond import rag_respond
 from app.rag.research import SPECIALIST_PROMPTS, research_plan
+from app.services.document_freshness import review_queue_entries
 from app.services.document_versions import (
     compare_extracted_sections,
     source_quote_present_in_sections,
@@ -93,6 +102,7 @@ from app.rag.training import (
 from app.schemas.agents import AgentDepartmentListResponse, AgentDepartmentOut
 from app.schemas.access import DocumentAccessRequest
 from app.schemas.rag import (
+    DocumentFreshnessRequest,
     DocumentListResponse,
     DocumentOut,
     DocumentVersionOut,
@@ -117,6 +127,8 @@ from app.schemas.rag import (
     RagTrainingRequest,
     ResearchFinding,
     ResearchReport,
+    ReviewQueueEntryOut,
+    ReviewQueueResponse,
     TrainingModule,
     TrainingPlan,
     TrainingAssignmentCreateResponse,
@@ -157,6 +169,10 @@ from app.schemas.financial_forms import (
 )
 from app.schemas.database_analysis import DatabaseAnalysisCatalog, DatabaseAnalysisQuery, DatabaseAnalysisResult
 from app.services import audit
+from app.services.llm_runtime import resolve_chat_client, routing_info
+from app.services.model_router import RoutingDecision
+from app.services.routing_records import record_routing
+from app.services.routing_policy import routing_context_for_user
 from app.services.database_analysis import (
     DatabaseAnalysisAccessDenied,
     DatabaseAnalysisConfigurationError,
@@ -213,6 +229,28 @@ async def list_documents(
         max_upload_mb=settings.rag_max_upload_mb,
         embedding_model=rag.embedder.model_name,
         ingestion=IngestionStatus(mode=settings.rag_ingestion_mode, workers_online=await workers_online(db, settings)),
+    )
+
+
+@router.get("/documents/review-queue", response_model=ReviewQueueResponse)
+async def document_review_queue(
+    service: Documents, user: CurrentUser, rag: Rag, db: DbSession
+) -> ReviewQueueResponse:
+    """Documents needing a human freshness review: stale, expired, or
+    superseded, or with open contradiction candidates. Only documents the
+    caller may already read are ever listed. Flagging is advisory — it
+    never hides a document or changes what is cited."""
+    docs = await service.list()
+    entries = await review_queue_entries(db, docs)
+    return ReviewQueueResponse(
+        entries=[
+            ReviewQueueEntryOut(
+                document=await _document_out(e.document, service, user, rag),
+                open_conflicts=e.open_conflicts,
+                severity=e.severity,
+            )
+            for e in entries
+        ]
     )
 
 
@@ -917,6 +955,19 @@ async def set_document_access(
     return await _document_out(doc, service, user, rag)
 
 
+@router.patch("/documents/{document_id}/freshness", response_model=DocumentOut)
+async def set_document_freshness(
+    document_id: uuid.UUID, payload: DocumentFreshnessRequest, service: Documents, user: CurrentUser, rag: Rag
+) -> DocumentOut:
+    """Owner-set review date, expiry, or replacement document. Only fields
+    explicitly sent are changed; an explicit null clears the field."""
+    doc = await service.set_freshness(
+        document_id,
+        **{field: getattr(payload, field) for field in payload.model_fields_set},
+    )
+    return await _document_out(doc, service, user, rag)
+
+
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(document_id: uuid.UUID, service: Documents) -> Response:
     await service.delete(document_id)
@@ -925,20 +976,50 @@ async def delete_document(document_id: uuid.UUID, service: Documents) -> Respons
 
 @router.post("/chat", response_model=RagChatResponse)
 async def knowledge_chat(
-    payload: RagChatRequest, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings, rag: Rag
+    payload: RagChatRequest, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings, rag: Rag,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=256)] = None,
 ) -> RagChatResponse:
-    """Stateless single question (client-supplied context). Persistent chats use /api/conversations."""
+    """Stateless single question (client-supplied context). Persistent chats use /api/conversations.
+
+    Replaying with the same Idempotency-Key returns the original answer instead of
+    running the model again (Step U slice 3)."""
+    record = None
+    key = validate_idempotency_key(idempotency_key)
+    routing_holder: dict[str, RoutingDecision | None] = {"decision": None}
+    answer_started = time.monotonic()
+    # The caller's department and the monthly budget that applies to them,
+    # resolved once per request from the stored routing policy.
+    routing_ctx = await routing_context_for_user(db, user.id)
+
+    async def _routed_llm():
+        client, decision = await resolve_chat_client(
+            request.app.state.llm_runtime, db, payload.question, model_choice=payload.model_choice(),
+            department_id=routing_ctx.department_id,
+            monthly_budget_usd=routing_ctx.monthly_budget_usd,
+            policy_config=routing_ctx.config,
+        )
+        routing_holder["decision"] = decision
+        return client
+
     async with tracing.traced(
         request.app.state.sessionmaker, settings, route="rag_chat", question=payload.question,
         user_id=user.id, request_id=request.state.request_id,
     ):
         try:
+            if key is not None:
+                outcome = await claim_request(
+                    db, user_id=user.id, key=key, endpoint="rag_chat",
+                    request_hash=canonical_request_hash({"endpoint": "rag_chat", **payload.model_dump(mode="json")}),
+                )
+                if outcome.replayed:
+                    return RagChatResponse.model_validate(outcome.response_body)
+                record = outcome.record
             response = await rag_respond(
                 db,
                 user,
                 rag,
                 settings,
-                lambda: request.app.state.llm_runtime.get_client(db, payload.model_choice()),
+                _routed_llm,
                 payload.question,
                 history=[Turn(t.question, t.answer) for t in payload.history[-3:]],
                 document_ids=payload.document_ids,
@@ -949,10 +1030,33 @@ async def knowledge_chat(
             )
             # Trace persistence uses a separate session. End retrieval/memory's request transaction first
             # so concurrent traces cannot exhaust the pool while every request holds its own connection.
+            if routing_holder["decision"] is not None:
+                response.routing = routing_info(routing_holder["decision"])
+                try:
+                    await record_routing(
+                        db,
+                        routing_holder["decision"],
+                        status=(
+                            "downgraded"
+                            if routing_holder["decision"].budget_action == "downgrade"
+                            else "ok"
+                        ),
+                        latency_ms=int((time.monotonic() - answer_started) * 1000),
+                        request_id=getattr(request.state, "request_id", None),
+                        user_id=user.id,
+                        department_id=routing_ctx.department_id,
+                        settings=settings,
+                    )
+                except Exception:
+                    logger.warning("Could not record routing", exc_info=True)
             await db.commit()
+            if record is not None:
+                await complete_request(db, record, response_status=200, response_body=response.model_dump(mode="json"))
             return response
         except BaseException:
             await db.rollback()
+            if record is not None:
+                await fail_request(db, record)
             raise
 
 
@@ -983,10 +1087,15 @@ async def spoken_knowledge_question(
         raise InvalidInputError("Choose both a provider and model, or use the organization's default.")
     model_choice = (provider, model) if provider is not None and model is not None else None
     # This helper enforces the route/media limits and deletes the staged audio before returning.
-    transcript, suffix, byte_count = await transcribe_voice_upload(
+    # It also tags the transcript with its detected language (Step Z slice 6),
+    # from the same shared detector typed chat uses.
+    transcribed = await transcribe_voice_upload(
         audio,
         max_bytes=max_bytes,
     )
+    transcript = transcribed.text
+    suffix = transcribed.suffix
+    byte_count = transcribed.byte_count
     try:
         # No trace, history or memory service is attached to this endpoint. Disabling query analysis also
         # prevents its correction cache from retaining transcript-derived text.
@@ -1009,7 +1118,8 @@ async def spoken_knowledge_question(
             db,
             audit_context(request, user),
             "rag.voice_question_answered",
-            details={"audio_suffix": suffix, "audio_bytes": byte_count, "transcript_chars": len(transcript)},
+            details={"audio_suffix": suffix, "audio_bytes": byte_count, "transcript_chars": len(transcript),
+                     "detected_language": transcribed.language},
         )
         await db.commit()
     except BaseException:
@@ -1018,7 +1128,7 @@ async def spoken_knowledge_question(
 
     response.headers["Cache-Control"] = "no-store, max-age=0"
     response.headers["Pragma"] = "no-cache"
-    return RagVoiceQuestionResponse(transcript=transcript, answer=answer)
+    return RagVoiceQuestionResponse(transcript=transcript, detected_language=transcribed.language, answer=answer)
 
 
 @router.post("/research", response_model=ResearchReport)

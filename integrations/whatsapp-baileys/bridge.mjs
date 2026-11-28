@@ -1,9 +1,13 @@
 // Private stdin/stdout protocol. No HTTP listener and no plaintext auth files.
 import readline from 'node:readline';
-import makeWASocket, { BufferJSON, DisconnectReason, initAuthCreds, jidNormalizedUser, proto } from '@whiskeysockets/baileys';
+import makeWASocket, { BufferJSON, DisconnectReason, downloadMediaMessage, initAuthCreds, jidNormalizedUser, proto } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
-import { activationFor } from './activation.mjs';
+import { activationFor, FOLLOWUP_WINDOW_MS } from './activation.mjs';
+
+// Same bound as the Python voice helpers (app/integrations/whatsapp_voice.py):
+// a downloaded voice note larger than this is reported, not forwarded.
+const MAX_VOICE_BYTES = 8 * 1024 * 1024;
 
 console.log = () => {}; // Libraries must not leak session material into application logs.
 const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -87,7 +91,7 @@ async function connect() {
       }
     }
   });
-  socket.ev.on('messages.upsert', ({ type, messages }) => {
+  socket.ev.on('messages.upsert', async ({ type, messages }) => {
     if (type !== 'notify' || stopped || current !== generation) return;
     const self = new Set([socket.user?.id, socket.user?.lid].filter(Boolean).map(jidNormalizedUser));
     for (const message of messages) {
@@ -97,7 +101,31 @@ async function connect() {
       if (!message.key.fromMe || !self.has(jidNormalizedUser(remote))) continue;
       if (Number(message.messageTimestamp || 0) < startedAt - 5) continue;
       const body = message.message?.conversation || message.message?.extendedTextMessage?.text || '';
+      const audioMessage = message.message?.audioMessage;
       if (!message.key.id || recent.has(message.key.id)) continue;
+      if (audioMessage && audioMessage.ptt === true) {
+        // Step F slice 4: voice notes carry no text, so they cannot match
+        // the wake word. They are commands only inside an active follow-up
+        // window (the user said "/agent" or "irfanix" by text first). The
+        // audio is downloaded here and forwarded as base64; Python
+        // transcribes it and the transcript becomes the task.
+        if (Date.now() >= activeUntil) continue;
+        activeUntil = Date.now() + FOLLOWUP_WINDOW_MS;
+        recent.add(message.key.id);
+        if (recent.size > 2000) recent.delete(recent.values().next().value);
+        try {
+          const buffer = await downloadMediaMessage(message, 'buffer');
+          if (buffer.length > MAX_VOICE_BYTES) {
+            emit({ type: 'message', id: message.key.id, jid: remote, text: '', audioTooLarge: true });
+          } else {
+            emit({ type: 'message', id: message.key.id, jid: remote, text: '', audio: buffer.toString('base64'), mime: audioMessage.mimetype || 'audio/ogg' });
+          }
+        } catch {
+          // A download failure stays silent: the note goes unanswered
+          // rather than crashing the bridge.
+        }
+        continue;
+      }
       const activation = activationFor(body, Date.now(), activeUntil);
       if (!activation) continue;
       activeUntil = activation.activeUntil;

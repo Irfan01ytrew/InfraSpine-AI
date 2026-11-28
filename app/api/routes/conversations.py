@@ -2,14 +2,22 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AppSettings, CurrentUser, DbSession, audit_context, get_current_user
 from app.core.errors import AppError
+from app.platform.idempotency import (
+    canonical_request_hash,
+    claim_request,
+    complete_request,
+    fail_request,
+    validate_idempotency_key,
+)
 from app.rag import tracing
 from app.rag.components import RagComponents
 from app.rag.respond import rag_respond
@@ -26,7 +34,11 @@ from app.schemas.conversations import (
 )
 from app.services.conversations import ConversationService
 from app.services.chat_stream import conversation_events
+from app.services.llm_runtime import resolve_chat_client, routing_info
 from app.services.memory import MemoryService
+from app.services.model_router import RoutingDecision
+from app.services.routing_records import record_routing
+from app.services.routing_policy import routing_context_for_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"], dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
@@ -88,10 +100,11 @@ async def send_message(
     user: CurrentUser,
     settings: AppSettings,
     service: Conversations,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=256)] = None,
 ) -> SendMessageResponse:
     """Answer a question in a saved conversation. Context comes from the stored conversation (bounded),
     never from the client; retrieval uses the user's *current* document permissions."""
-    return await _answer_message(conversation_id, payload, request, db, user, settings, service)
+    return await _answer_message(conversation_id, payload, request, db, user, settings, service, idempotency_key=idempotency_key)
 
 
 @router.post("/{conversation_id}/messages/stream")
@@ -103,6 +116,7 @@ async def stream_message(
     user: CurrentUser,
     settings: AppSettings,
     service: Conversations,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=256)] = None,
 ) -> StreamingResponse:
     """Stream provider text deltas as SSE, then send the authoritative, evidence-checked saved response."""
     queue: asyncio.Queue[tuple[str, object] | None] = asyncio.Queue(maxsize=64)
@@ -115,7 +129,7 @@ async def stream_message(
             # Stream provider tokens while the message is still being composed. The UI treats
             # these as provisional and swaps to the single, persisted answer at `done`; after
             # that point neither hydration nor a background poll may replace the completed row.
-            result = await _answer_message(conversation_id, payload, request, db, user, settings, service, on_token=emit)
+            result = await _answer_message(conversation_id, payload, request, db, user, settings, service, on_token=emit, idempotency_key=idempotency_key)
             await queue.put(("done", result.model_dump(mode="json")))
         except asyncio.CancelledError:
             raise
@@ -149,9 +163,38 @@ async def _answer_message(
     service: ConversationService,
     *,
     on_token=None,
+    idempotency_key: str | None = None,
 ) -> SendMessageResponse:
     conversation = await service.get(conversation_id)
+    record = None
+    key = validate_idempotency_key(idempotency_key)
+    if key is not None:
+        outcome = await claim_request(
+            db, user_id=user.id, key=key, endpoint="conversation_message",
+            request_hash=canonical_request_hash(
+                {"endpoint": "conversation_message", "conversation_id": str(conversation_id), **payload.model_dump(mode="json")}
+            ),
+        )
+        if outcome.replayed:
+            return SendMessageResponse.model_validate(outcome.response_body)
+        record = outcome.record
     rag: RagComponents = request.app.state.rag
+    answer_started = time.monotonic()
+    routing_holder: dict[str, RoutingDecision | None] = {"decision": None}
+    # The caller's department and the monthly budget that applies to them,
+    # resolved once per request from the stored routing policy.
+    routing_ctx = await routing_context_for_user(db, user.id)
+
+    async def _routed_llm():
+        client, decision = await resolve_chat_client(
+            request.app.state.llm_runtime, db, payload.question, model_choice=payload.model_choice(),
+            department_id=routing_ctx.department_id,
+            monthly_budget_usd=routing_ctx.monthly_budget_usd,
+            policy_config=routing_ctx.config,
+        )
+        routing_holder["decision"] = decision
+        return client
+
     async with tracing.traced(
         request.app.state.sessionmaker, settings, route="conversation", question=payload.question,
         user_id=user.id, request_id=request.state.request_id, conversation_id=conversation.id,
@@ -163,7 +206,7 @@ async def _answer_message(
                 user,
                 rag,
                 settings,
-                lambda: request.app.state.llm_runtime.get_client(db, payload.model_choice()),
+                _routed_llm,
                 payload.question,
                 history=history,
                 document_ids=payload.document_ids,
@@ -175,6 +218,25 @@ async def _answer_message(
                 get_web_llm=lambda: request.app.state.llm_runtime.get_web_research_client(db),
                 route_web=True,
             )
+            if routing_holder["decision"] is not None:
+                response.routing = routing_info(routing_holder["decision"])
+                try:
+                    await record_routing(
+                        db,
+                        routing_holder["decision"],
+                        status=(
+                            "downgraded"
+                            if routing_holder["decision"].budget_action == "downgrade"
+                            else "ok"
+                        ),
+                        latency_ms=int((time.monotonic() - answer_started) * 1000),
+                        request_id=getattr(request.state, "request_id", None),
+                        user_id=user.id,
+                        department_id=routing_ctx.department_id,
+                        settings=settings,
+                    )
+                except Exception:
+                    logger.warning("Could not record routing", exc_info=True)
             conversation, user_message, assistant_message = await service.append(
                 conversation_id, payload.question, response
             )
@@ -184,10 +246,15 @@ async def _answer_message(
             await db.commit()
         except BaseException:
             await db.rollback()
+            if record is not None:
+                await fail_request(db, record)
             raise
     user_out, assistant_out = await service.messages_out([user_message, assistant_message])
-    return SendMessageResponse(
+    result = SendMessageResponse(
         conversation=service.summary(conversation, await service.count(conversation)),
         user_message=user_out,
         assistant_message=assistant_out,
     )
+    if record is not None:
+        await complete_request(db, record, response_status=200, response_body=result.model_dump(mode="json"))
+    return result

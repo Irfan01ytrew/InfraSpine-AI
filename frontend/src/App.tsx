@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, onUnauthorized } from "./api";
 import { initials, setRegionalSettings } from "./format";
+import { restoreLanguage } from "./i18n.mjs";
 import { IconLogOut, IconLogo, Spinner } from "./icons";
 import type { CompanyProfile, User } from "./types";
 
@@ -61,7 +62,13 @@ function InternalApp() {
     onUnauthorized(() => setUser(null));
     api
       .me()
-      .then(setUser)
+      .then((signedInUser) => {
+        setUser(signedInUser);
+        // Load the stored language (Step Z slice 4): navigation labels
+        // follow it, and Urdu script switches the page right-to-left.
+        // A hand-chosen direction from the user chip is respected.
+        void api.languagePreference().then((preference) => restoreLanguage(preference.language)).catch(() => undefined);
+      })
       .catch(() => setUser(null))
       .finally(() => setChecking(false));
     void refreshCompanyProfile();
@@ -187,7 +194,7 @@ export function UserChip({ user, onSignOut }: { user: User; onSignOut: () => voi
         onClick={toggleDirection}
         aria-label={isRTL ? "Switch to Left-to-Right layout" : "Switch to Right-to-Left (Arabic/Urdu) layout"}
         title={isRTL ? "Switch to LTR" : "Switch to RTL"}
-        style={{ fontSize: "10px", fontWeight: "bold" }}
+        style={{ fontSize: "12px", fontWeight: "bold" }}
       >
         {isRTL ? "LTR" : "RTL"}
       </button>

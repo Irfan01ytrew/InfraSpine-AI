@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
 import { Dialog as D } from "radix-ui";
 import {
   BarChart3, BookOpen, Home, Bot, Boxes, Briefcase, Building2, ChevronDown, ChevronsLeft, ChevronsRight, ClipboardCheck, Cloud,
-  Cpu, FileSearch, FileText, GraduationCap, Handshake, KeyRound, Languages, LayoutList, LifeBuoy, LogOut, Mic, Network,
-  Receipt, ScrollText, UserPlus, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, UserCog, Users, Workflow, X, Brain, Globe2, Sun, Moon, Monitor, Wallet, ClipboardList, Webhook,
+  Cpu, Database, FileSearch, FileText, GraduationCap, Handshake, KeyRound, Languages, LayoutList, LifeBuoy, LogOut, Mic, Network,
+  Receipt, ScrollText, UserPlus, Search, Settings2, ShieldCheck, Sparkles, TrendingUp, UserCog, Users, Workflow, X, Brain, Globe2, Sun, Moon, Monitor, Wallet, ClipboardList, Webhook, Activity,
 } from "lucide-react";
 import { initials } from "../format";
 import { savedTheme, setTheme, type ThemeChoice } from "../theme";
@@ -20,8 +20,13 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
       id: "workspace", label: "Workspace", items: [
         ...(isAdmin ? [{ view: "module-control-center", label: "Module control", icon: Boxes, keywords: "master command dashboard infraspine modules performance" }] : []),
         ...(isAdmin ? [{ view: "home", label: "Home", icon: Home, keywords: "start setup getting started checklist" }] : []),
-        { view: "knowledge", label: "Knowledge", icon: BookOpen, keywords: "chat ask documents" },
-        { view: "agent-studio", label: "AI Agents", icon: Bot, keywords: "langgraph autonomous tools whatsapp" },
+        // Admins already reach Knowledge and AI Agents as modules 01/02 below;
+        // showing them twice (here and in "InfraSpine modules") is confusing.
+        ...(!isAdmin ? [
+          { view: "knowledge", label: "Knowledge", icon: BookOpen, keywords: "chat ask documents" },
+          { view: "agent-studio", label: "AI Agents", icon: Bot, keywords: "langgraph autonomous tools whatsapp" },
+        ] : []),
+        { view: "foundry", label: "Software Foundry", icon: Sparkles, keywords: "foundry generate app build deploy preview" },
         { view: "my-work", label: "My work", icon: Briefcase, keywords: "tasks calendar" },
         { view: "meetings", label: "Meeting minutes", icon: Mic },
         { view: "memory", label: "Memory", icon: Brain },
@@ -32,15 +37,18 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "knowledge", label: "01 · Knowledge & AI Brain", icon: BookOpen },
         { view: "agent-studio", label: "02 · IRFANIX AI Agent", icon: Bot },
         { view: "company-graph", label: "03 · Company intelligence", icon: Network },
+        { view: "digital-twin", label: "Digital twin", icon: Network },
         { view: "process-intelligence", label: "04 · Process intelligence", icon: Workflow },
         { view: "workflow-engine", label: "05 · Workflow engine", icon: Workflow },
         { view: "governance", label: "06 · Governance & security", icon: ShieldCheck },
         { view: "recovery", label: "07 · Exception & recovery", icon: LifeBuoy },
         { view: "continuity", label: "08 · Business continuity", icon: ShieldCheck },
+        { view: "resilience", label: "08 · Company resilience", icon: ShieldCheck },
         { view: "frontend-ux", label: "09 · Frontend & UX", icon: Sparkles },
         { view: "integrations", label: "10 · Integrations", icon: Cloud },
         { view: "infrastructure", label: "11 · Infrastructure", icon: Cpu },
         { view: "quality", label: "12 · QA & benchmarking", icon: ClipboardCheck },
+        { view: "foundry", label: "13 · Software Foundry", icon: Sparkles },
       ],
     }] : []),
     {
@@ -48,6 +56,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "research", label: "Company data research", icon: FileSearch },
         { view: "proposals", label: "Tender & RFP coverage", icon: FileText },
         { view: "forecasts", label: "What-if forecasts", icon: TrendingUp },
+        { view: "predictive-continuity", label: "Predictive continuity", icon: TrendingUp },
         { view: "market-research", label: "Market research", icon: Globe2, keywords: "competitor" },
       ],
     },
@@ -63,9 +72,13 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
     {
       id: "operations", label: "Operations", items: [
         { view: "approvals", label: "Approvals", icon: ClipboardCheck },
+        { view: "control-room", label: "Control room", icon: BarChart3, keywords: "control room agents runs blockers pause resume reassign live dashboard charts alerts health" },
+        { view: "decisions", label: "Decisions", icon: ScrollText, keywords: "decision memory review why supersede rationale" },
         { view: "finance", label: "Invoices & payments", icon: Receipt, keywords: "finance invoice verification payment spend vendor" },
+        { view: "hr", label: "HR & leave", icon: Users, keywords: "hr leave attendance payroll salary" },
         { view: "claims", label: "Claims", icon: Receipt },
-        { view: "process-intelligence", label: "Process intelligence", icon: Workflow },
+        // Admins reach this as module 04; non-admins keep the Operations entry.
+        ...(!isAdmin ? [{ view: "process-intelligence", label: "Process intelligence", icon: Workflow }] : []),
         { view: "automation", label: "Workflows & tasks", icon: Workflow },
         { view: "agents", label: "Agent profiles", icon: Bot },
         { view: "requests", label: "Help & requests", icon: LifeBuoy },
@@ -81,16 +94,20 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
     groups.push({
       id: "admin", label: "Administration", items: [
         { view: "people", label: "People & access", icon: UserCog },
+        { view: "workforce", label: "AI Workforce", icon: Bot, keywords: "agents registry lifecycle delegation budget spend" },
         { view: "partner-workspaces", label: "Partner access", icon: KeyRound, keywords: "external" },
         { view: "workspaces", label: "Client workspaces", icon: Boxes, keywords: "project" },
         { view: "connectors", label: "Cloud connectors", icon: Cloud },
         { view: "webhooks", label: "Webhooks", icon: Webhook },
         { view: "providers", label: "AI providers", icon: Cpu, keywords: "model llm" },
+        { view: "agent-controls", label: "Agent controls", icon: ShieldCheck, keywords: "kill switch spend limit agent controls" },
         { view: "settings", label: "Settings", icon: Settings2, keywords: "ocr parser vector embedding" },
+        { view: "database", label: "Database operations", icon: Database, keywords: "backup restore health" },
         { view: "deployment", label: "Company setup", icon: Building2, keywords: "brand license" },
         { view: "reports", label: "Usage reports", icon: BarChart3 },
         { view: "traces", label: "Knowledge Quality", icon: LayoutList },
         { view: "logs", label: "Audit logs", icon: ScrollText },
+        { view: "self-healing", label: "Self-healing", icon: Activity, keywords: "incidents escalations auto-test watchdog" },
       ],
     });
   }
@@ -148,7 +165,7 @@ export function AppSidebar({ groups, view, onNavigate, brandName, user, onSignOu
                   type="button"
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={open}
-                  className="group flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-muted uppercase hover:text-foreground-2"
+                  className="group flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-xs font-semibold tracking-[0.08em] text-muted uppercase hover:text-foreground-2"
                 >
                   {group.label}
                   <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} />
@@ -176,7 +193,7 @@ export function AppSidebar({ groups, view, onNavigate, brandName, user, onSignOu
               {aiStatus.ok && <span className="absolute inset-0 animate-ping rounded-full bg-success opacity-60" />}
             </span>
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold tracking-wider text-muted uppercase">AI service</p>
+              <p className="text-xs font-semibold tracking-wider text-muted uppercase">AI service</p>
               <p className="truncate text-xs font-medium text-foreground" title={aiStatus.label}>{aiStatus.label}</p>
             </div>
           </div>
@@ -196,7 +213,7 @@ export function AppSidebar({ groups, view, onNavigate, brandName, user, onSignOu
 
   return (
     <>
-      <aside className={cn("hidden h-full min-h-0 shrink-0 border-r border-border bg-sidebar transition-[width] duration-200 lg:block rtl:border-r-0 rtl:border-l", collapsed ? "w-[68px]" : "w-[252px]")}>
+      <aside className={cn("hidden h-full min-h-0 shrink-0 border-r border-border bg-sidebar transition-[width] duration-200 lg:block rtl:border-r-0 rtl:border-l", collapsed ? "w-[68px]" : "w-[264px]")}>
         {content(collapsed)}
       </aside>
       <D.Root open={mobileOpen} onOpenChange={onMobileOpenChange}>
@@ -225,7 +242,7 @@ function NavButton({ item, active, rail, onClick }: { item: NavEntry; active: bo
       aria-current={active ? "page" : undefined}
       aria-label={rail ? item.label : undefined}
       className={cn(
-        "relative flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md text-[13px] font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring",
+        "relative flex h-10 w-full cursor-pointer items-center gap-2.5 rounded-md text-[13.5px] font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring",
         rail ? "justify-center px-0" : "px-2.5",
         active ? "bg-primary-soft text-primary" : "text-foreground-2 hover:bg-surface-2 hover:text-foreground",
       )}
@@ -252,7 +269,7 @@ function CommandTrigger({ rail, onClick }: { rail: boolean; onClick: () => void 
     <button type="button" onClick={onClick} className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-muted shadow-xs hover:border-border-strong hover:text-foreground-2">
       <Search className="size-4" />
       <span className="flex-1 text-left">Search pages…</span>
-      <kbd className="rounded border border-border bg-surface-2 px-1.5 font-sans text-[10px] font-medium text-muted">Ctrl K</kbd>
+      <kbd className="rounded border border-border bg-surface-2 px-1.5 font-sans text-xs font-medium text-muted">Ctrl K</kbd>
     </button>
   );
 }
@@ -285,7 +302,7 @@ function UserMenu({ user, rail, onSignOut, onNavigate }: { user: User; rail: boo
           {!rail && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-medium text-foreground" title={user.email}>{user.email}</span>
-              <span className="block truncate text-[11px] text-muted">{roleLabel(user.role)}</span>
+              <span className="block truncate text-xs text-muted">{roleLabel(user.role)}</span>
             </span>
           )}
           {!rail && <ChevronDown className="size-4 shrink-0 text-muted" />}
@@ -294,7 +311,7 @@ function UserMenu({ user, rail, onSignOut, onNavigate }: { user: User; rail: boo
       <DropdownMenuContent side="top" align={rail ? "start" : "end"} className="w-60">
         <DropdownMenuLabel className="normal-case tracking-normal">
           <span className="block truncate text-[13px] font-medium text-foreground">{user.email}</span>
-          <span className="block text-[11px] font-normal text-muted">{roleLabel(user.role)}</span>
+          <span className="block text-xs font-normal text-muted">{roleLabel(user.role)}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => onNavigate("security")}><ShieldCheck /> Account security</DropdownMenuItem>
@@ -309,7 +326,7 @@ function UserMenu({ user, rail, onSignOut, onNavigate }: { user: User; rail: boo
               role="radio"
               aria-checked={theme === value}
               onClick={() => chooseTheme(value)}
-              className={cn("flex cursor-pointer flex-col items-center gap-1 rounded-md border px-1 py-1.5 text-[11px] font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-4", theme === value ? "border-primary bg-primary-soft text-primary" : "border-transparent text-foreground-2 hover:bg-surface-2")}
+              className={cn("flex cursor-pointer flex-col items-center gap-1 rounded-md border px-1 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring [&_svg]:size-4", theme === value ? "border-primary bg-primary-soft text-primary" : "border-transparent text-foreground-2 hover:bg-surface-2")}
             >
               <Icon />{label}
             </button>
@@ -372,7 +389,7 @@ export function CommandPalette({ groups, onNavigate }: { groups: NavGroup[]; onN
               aria-label="Search pages"
               className="h-12 flex-1 border-0 bg-transparent text-sm text-foreground shadow-none outline-none placeholder:text-muted focus:shadow-none"
             />
-            <kbd className="rounded border border-border bg-surface-2 px-1.5 text-[10px] text-muted">Esc</kbd>
+            <kbd className="rounded border border-border bg-surface-2 px-1.5 text-xs text-muted">Esc</kbd>
           </div>
           <ul ref={listRef} className="scrollbar-thin max-h-[50vh] overflow-y-auto p-1.5" role="listbox">
             {results.length === 0 && <li className="px-3 py-8 text-center text-[13px] text-muted">No pages match “{query}”.</li>}
@@ -388,7 +405,7 @@ export function CommandPalette({ groups, onNavigate }: { groups: NavGroup[]; onN
                   >
                     <Icon className="size-4 shrink-0" />
                     <span className="flex-1 truncate font-medium">{item.label}</span>
-                    <span className="text-[11px] text-muted">{item.group}</span>
+                    <span className="text-xs text-muted">{item.group}</span>
                   </button>
                 </li>
               );
