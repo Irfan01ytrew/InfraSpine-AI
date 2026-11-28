@@ -22,6 +22,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         ...(isAdmin ? [{ view: "home", label: "Home", icon: Home, keywords: "start setup getting started checklist" }] : []),
         { view: "knowledge", label: "Knowledge", icon: BookOpen, keywords: "chat ask documents" },
         { view: "agent-studio", label: "AI Agents", icon: Bot, keywords: "langgraph autonomous tools whatsapp" },
+        { view: "foundry", label: "Software Foundry", icon: Sparkles, keywords: "foundry generate app build deploy preview" },
         { view: "my-work", label: "My work", icon: Briefcase, keywords: "tasks calendar" },
         { view: "meetings", label: "Meeting minutes", icon: Mic },
         { view: "memory", label: "Memory", icon: Brain },
@@ -41,6 +42,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "integrations", label: "10 · Integrations", icon: Cloud },
         { view: "infrastructure", label: "11 · Infrastructure", icon: Cpu },
         { view: "quality", label: "12 · QA & benchmarking", icon: ClipboardCheck },
+        { view: "foundry", label: "13 · Software Foundry", icon: Sparkles },
       ],
     }] : []),
     {

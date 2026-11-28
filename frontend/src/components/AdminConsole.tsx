@@ -48,6 +48,7 @@ const CompanySetupPage = lazyNamedPage(() => import("./CompanySetupPage"), "Comp
 const AutomationPage = lazyNamedPage(() => import("./AutomationPage"), "AutomationPage");
 const AgentCatalogPage = lazyNamedPage(() => import("./AgentCatalogPage"), "AgentCatalogPage");
 const AgentStudioPage = lazyNamedPage(() => import("./AgentStudioPage"), "AgentStudioPage");
+const FoundryPage = lazyNamedPage(() => import("./FoundryPage"), "FoundryPage");
 const ServiceRequestsPage = lazyNamedPage(() => import("./ServiceRequestsPage"), "ServiceRequestsPage");
 const ExpertisePage = lazyNamedPage(() => import("./ExpertisePage"), "ExpertisePage");
 const ForecastsPage = lazyNamedPage(() => import("./ForecastsPage"), "ForecastsPage");
@@ -76,7 +77,7 @@ const WorkspacesPage = lazy(async () => {
   return { default: module.WorkspacesPage };
 });
 
-type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
+type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "foundry" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
 
 // The view lives in the URL hash so a refresh keeps the page and it can be linked (#/logs).
 function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = false, canInvite = false): View {
@@ -91,7 +92,7 @@ function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = fal
   if (view === "departments") return isManager ? view : "knowledge";
   if (view === "budgets") return isAdmin || isManager ? view : "knowledge";
   if (view === "request-forms" || view === "webhooks") return isAdmin ? view : "knowledge";
-  if (view === "memory" || view === "claims" || view === "org" || view === "research" || view === "proposals" || view === "forecasts" || view === "market-research" || view === "training" || view === "approvals" || view === "handoffs" || view === "meetings" || view === "requests" || view === "expertise" || view === "my-work" || view === "automation" || view === "agents" || view === "agent-studio" || view === "interviews" || view === "security") return view;
+  if (view === "memory" || view === "claims" || view === "org" || view === "research" || view === "proposals" || view === "forecasts" || view === "market-research" || view === "training" || view === "approvals" || view === "handoffs" || view === "meetings" || view === "requests" || view === "expertise" || view === "my-work" || view === "automation" || view === "agents" || view === "agent-studio" || view === "foundry" || view === "interviews" || view === "security") return view;
   if (view.startsWith("c/")) return "knowledge"; // a saved conversation link (#/c/<id>)
   if (view === "home") return isAdmin ? view : "knowledge";
   if (view === "knowledge" || !isAdmin) return "knowledge";
@@ -272,6 +273,8 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <AgentCatalogPage user={user} />
         ) : view === "agent-studio" ? (
           <AgentStudioPage />
+        ) : view === "foundry" ? (
+          <FoundryPage />
         ) : view === "people" ? (
           <PeoplePage />
         ) : view === "workspaces" ? (

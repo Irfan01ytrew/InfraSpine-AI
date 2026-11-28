@@ -15,6 +15,11 @@ import type {
   LibraryPosition,
   OrgChartPerson,
   OrgHistoryEntry,
+  FoundryAppDetail,
+  FoundryAppSummary,
+  FoundryDeployRequest,
+  FoundryFeedbackResult,
+  FoundryScope,
   Position,
   Claim,
   ClaimDetail,
@@ -1174,4 +1179,11 @@ export const api = {
   orgChart: () => request<{ people: OrgChartPerson[] }>("GET", "/api/org/chart"),
   auditLogs: (limit = 25) =>
     request<{ entries: AuditEntry[] }>("GET", `/api/admin/audit-logs?limit=${limit}`),
+  foundryScopes: () => request<{ scopes: FoundryScope[] }>("GET", "/api/foundry/scopes"),
+  foundryApps: (scopeId: string) => request<{ apps: FoundryAppSummary[] }>("GET", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps`),
+  foundryApp: (scopeId: string, slug: string) => request<FoundryAppDetail>("GET", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(slug)}`),
+  foundryDeployRequest: (scopeId: string, slug: string, buildFingerprint: string, target: string) =>
+    request<FoundryDeployRequest>("POST", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(slug)}/deploy-request`, { build_fingerprint: buildFingerprint, target }),
+  foundryFeedback: (scopeId: string, slug: string, input: { build_fingerprint: string; kind: string; note: string; changes: Array<{ action: string; name?: string | null; path?: string | null; method?: string | null; table?: string | null; columns?: string[][]; endpoints?: string[]; new_name?: string | null; purpose?: string | null }> }) =>
+    request<FoundryFeedbackResult>("POST", `/api/foundry/scopes/${encodeURIComponent(scopeId)}/apps/${encodeURIComponent(slug)}/feedback`, input),
 };

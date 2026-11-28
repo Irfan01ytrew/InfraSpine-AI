@@ -20,6 +20,7 @@ from app.api.routes import (
     workflow_engine,
     finance,
     approvals as approval_routes,
+    foundry as foundry_routes,
     integrations,
     infrastructure,
     quality,
@@ -389,6 +390,7 @@ def create_app() -> FastAPI:
     app.include_router(workflow_engine.router)
     app.include_router(finance.router)
     app.include_router(approval_routes.router)
+    app.include_router(foundry_routes.router)
     app.include_router(recovery_router)
     app.include_router(continuity_router)
     app.include_router(integrations.router)

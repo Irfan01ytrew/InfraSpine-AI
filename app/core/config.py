@@ -59,6 +59,10 @@ class Settings(DatabaseSettings):
     provider_trusted_private_origins: str = ""
     # Webhook destinations follow the same rule: public HTTPS only, unless the exact origin is listed here.
     webhook_trusted_private_origins: str = ""
+    # Step AM Foundry: comma-separated deploy targets the owner allows generated
+    # apps to deploy to (plan §5, decision 1). Empty = no target configured and
+    # every deploy request is refused with `no_deploy_target_configured`.
+    foundry_deploy_targets: str = ""
 
     # Authentication
     session_ttl_minutes: int = Field(default=480, ge=5, le=10080)

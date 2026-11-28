@@ -2522,3 +2522,73 @@ export interface OrgSettings {
   local_time: string;
   default_time_zone: string;
 }
+
+export interface FoundryScope {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+export interface FoundryAppSummary {
+  slug: string;
+  name: string;
+  builds: number;
+  latest_version: number | null;
+  latest_gate: string | null;
+  latest_deploy_state: string | null;
+  feedback_count: number;
+}
+
+export interface FoundryBuild {
+  id: string;
+  spec_version: number;
+  spec_fingerprint: string;
+  build_fingerprint: string;
+  gate: string;
+  preview_token: string;
+  preview_expires_in_seconds: number;
+  health: string;
+  tests_passed: number;
+  tests_failed: number;
+  deploy_state: string;
+  deploy_target: string | null;
+  approval_id: string | null;
+  created_at: string | null;
+}
+
+export interface FoundryFeedback {
+  id: string;
+  build_fingerprint: string;
+  kind: string;
+  note: string;
+  changes: string[];
+  author_id: string | null;
+  created_at: string | null;
+}
+
+export interface FoundryAppDetail {
+  slug: string;
+  name: string;
+  builds: FoundryBuild[];
+  feedback: FoundryFeedback[];
+}
+
+export interface FoundryDeployRequest {
+  approval_id: string;
+  action_hash: string;
+  action_type: string;
+  build_fingerprint: string;
+  target: string;
+}
+
+export interface FoundryRevisionPreview {
+  new_version: number;
+  new_fingerprint: string;
+  status: string;
+  live_build_fingerprint: string;
+}
+
+export interface FoundryFeedbackResult {
+  feedback: FoundryFeedback;
+  revision: FoundryRevisionPreview | null;
+}
