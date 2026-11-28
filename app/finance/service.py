@@ -467,6 +467,20 @@ class FinanceService:
                 'rows': [{'month': r[0], 'department': r[1], 'currency': r[2], 'amount': money(r[3]), 'count': r[4]}
                          for r in rows]}
 
+    async def status_counts(self) -> dict:
+        """Invoice counts by status across the groups the caller may read.
+
+        Step AF (control room): the live "invoices by status" chart. Uses the
+        same `finance.read` filter as `spend()` — a caller with no readable
+        group sees an empty result, never another group's invoices.
+        """
+        groups = await self.readable_groups()
+        if not groups:
+            return {'total': 0, 'by_status': {}}
+        rows = dict((await self.db.execute(select(FinInvoice.status, func.count()).where(
+            FinInvoice.group_id.in_(groups)).group_by(FinInvoice.status))).all())
+        return {'total': sum(rows.values()), 'by_status': rows}
+
     # ------------------------------------------------------------------ finance roles (platform memberships)
 
     async def roles(self, group_id) -> list[dict]:

@@ -19,6 +19,7 @@ from app import __version__
 from app.api.routes import (
     workflow_engine,
     finance,
+    control_room,
     approvals as approval_routes,
     integrations,
     infrastructure,
@@ -388,6 +389,7 @@ def create_app() -> FastAPI:
     app.include_router(company_graph.router)
     app.include_router(workflow_engine.router)
     app.include_router(finance.router)
+    app.include_router(control_room.router)
     app.include_router(approval_routes.router)
     app.include_router(recovery_router)
     app.include_router(continuity_router)

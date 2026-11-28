@@ -151,6 +151,15 @@ async def _run(args: argparse.Namespace) -> int:
             while completed_batch := await process_service_request_slas(sessionmaker):
                 sla_escalations += completed_batch
             approval_reminders = await process_approval_reminders(sessionmaker)
+            # Step AF slice 4: control-room alert dispatch (one pass). Guarded so
+            # an alert failure never blocks the rest of the worker run.
+            try:
+                from app.control_room.dispatch import process_control_room_alerts
+
+                control_room_alerts = await process_control_room_alerts(sessionmaker, settings)
+                log.info("Control room alerts: %s", control_room_alerts)
+            except Exception as exc:  # noqa: BLE001 - worker must not die on alerts
+                log.warning("Control room alert dispatch failed (%s)", type(exc).__name__)
             await cleanup_orphans(sessionmaker, settings=settings)
             await deliver_due(sessionmaker, settings=settings)
             folder_sync_runs = await process_due_folder_syncs(sessionmaker, settings, batch_size=10)
@@ -189,6 +198,7 @@ async def _run(args: argparse.Namespace) -> int:
         from app.services.automation_worker import run_automation_worker
         from app.services.service_request_worker import run_service_request_sla_worker
         from app.services.approval_reminders import run_approval_reminders
+        from app.control_room.dispatch import run_alert_dispatch
         from app.services.request_attachments import run_attachment_cleanup
         from app.services.webhooks import run_webhook_worker
         from app.services.folder_sync import run_folder_sync_worker
@@ -216,6 +226,7 @@ async def _run(args: argparse.Namespace) -> int:
             run_automation_worker(sessionmaker, stop),
             run_service_request_sla_worker(sessionmaker, stop),
             run_approval_reminders(sessionmaker, stop),
+            run_alert_dispatch(sessionmaker, settings, stop),
             run_attachment_cleanup(sessionmaker, stop),
             run_webhook_worker(sessionmaker, stop),
             run_folder_sync_worker(sessionmaker, settings, stop),
