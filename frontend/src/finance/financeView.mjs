@@ -37,13 +37,6 @@ export function shortHash(hash) {
   return typeof hash === "string" && hash.length >= 12 ? `${hash.slice(0, 6)}…${hash.slice(-6)}` : String(hash ?? "");
 }
 
-/** Plain-language summary of documents skipped during Knowledge intake, for the toast body. */
-export function skippedSummary(skipped) {
-  const rows = skipped ?? [];
-  if (!rows.length) return "";
-  return rows.map((row) => `${row.filename}: ${row.reason}`).join("; ");
-}
-
 /** Which workflow step the current person can take now, given their finance permissions. */
 export function actionableStep(run, permissions) {
   if (!run || !Array.isArray(run.steps) || !["running", "queued"].includes(run.status)) return null;
