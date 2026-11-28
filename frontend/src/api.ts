@@ -39,6 +39,7 @@ import type {
   RagAnswer,
   RagDocument,
   RagDocumentList,
+  ReviewQueueResponse,
   DocumentVersionInfo,
   DocumentVersionDiff,
   DocumentObligation,
@@ -495,6 +496,9 @@ export const api = {
   saveOrgTimeZone: (time_zone: string) => request<OrgSettings>("PUT", "/api/admin/platform/org-settings", { time_zone }),
   testOcrEngine: () => request<OcrEngineTestResult>("POST", "/api/admin/ocr-engine/test"),
   documents: () => request<RagDocumentList>("GET", "/api/rag/documents"),
+  documentReviewQueue: () => request<ReviewQueueResponse>("GET", "/api/rag/documents/review-queue"),
+  setDocumentFreshness: (id: string, input: { review_date?: string | null; expires_at?: string | null; superseded_by?: string | null }) =>
+    request<RagDocument>("PATCH", `/api/rag/documents/${encodeURIComponent(id)}/freshness`, input),
   downloadDocumentFile: (documentId: string) => download(`/api/rag/documents/${encodeURIComponent(documentId)}/file`),
   documentVersions: (documentId: string) =>
     request<DocumentVersionInfo[]>("GET", `/api/rag/documents/${encodeURIComponent(documentId)}/versions`),

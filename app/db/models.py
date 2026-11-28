@@ -554,6 +554,9 @@ class Document(Base):
         ),
         CheckConstraint("acl_status IN ('active', 'quarantined')", name="acl_status_valid"),
         CheckConstraint("(acl_status = 'active') = (acl_quarantine_reason IS NULL)", name="quarantine_has_reason"),
+        CheckConstraint(
+            "superseded_by IS NULL OR superseded_by <> id", name="ck_documents_superseded_by_not_self"
+        ),
         # Synced documents are never private to their (technical) owner and never organization-wide.
         CheckConstraint("source_system = 'upload' OR visibility = 'restricted'", name="synced_is_restricted"),
         Index("ix_documents_job_queue", "status", "next_attempt_at"),
@@ -603,6 +606,15 @@ class Document(Base):
     descriptor_version: Mapped[int | None] = mapped_column(SmallInteger)
     embedding_model: Mapped[str | None] = mapped_column(String(200))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Step AI freshness metadata: owner-set, never derived from document text.
+    # `review_date` is when the content should next be reviewed, `expires_at`
+    # is when it stops being valid, `superseded_by` points at the document
+    # that replaces this one (set by an owner action, never by ingestion).
+    review_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), index=True
+    )
 
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = mapped_column(
@@ -2179,6 +2191,56 @@ class KnowledgeConflictReview(Base):
     compared_permission_grant_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("permission_grants.id", ondelete="RESTRICT"), nullable=False
     )
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    rationale: Mapped[str] = mapped_column(String(2000), nullable=False)
+    decided_at: Mapped[datetime] = _now()
+
+
+class DocumentConflictCandidate(Base):
+    """A source-backed potential contradiction between two document passages.
+
+    Detection is advisory: it stores chunk ids only (never passage text), never
+    changes publication or retrieval state, and a scoped human reviewer records
+    whether the passages actually conflict. The pair is stored in canonical
+    (smaller, larger) chunk order so one pair is stored once."
+    """
+
+    __tablename__ = "document_conflict_candidates"
+    __table_args__ = (
+        CheckConstraint("left_chunk_id < right_chunk_id", name="ck_document_conflict_candidate_ordered"),
+        CheckConstraint("status IN ('open', 'confirmed', 'dismissed')", name="ck_document_conflict_candidate_status_valid"),
+        UniqueConstraint("left_chunk_id", "right_chunk_id", name="uq_document_conflict_candidate_pair"),
+        Index("ix_document_conflict_candidates_status_detected", "status", "detected_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    left_chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    right_chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
+    detection_source: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'nightly_scan'"))
+    detected_at: Mapped[datetime] = _now()
+
+
+class DocumentConflictReview(Base):
+    """Append-only human decision on one detected document-passage conflict."""
+
+    __tablename__ = "document_conflict_reviews"
+    __table_args__ = (
+        CheckConstraint("decision IN ('confirmed', 'dismissed')", name="ck_document_conflict_reviews_decision_valid"),
+        CheckConstraint("length(btrim(rationale)) BETWEEN 3 AND 2000", name="ck_document_conflict_reviews_rationale_length"),
+        UniqueConstraint("candidate_id", name="uq_document_conflict_review_once"),
+        Index("ix_document_conflict_reviews_reviewer_time", "reviewer_user_id", "decided_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("document_conflict_candidates.id", ondelete="RESTRICT"), nullable=False
+    )
+    reviewer_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
     rationale: Mapped[str] = mapped_column(String(2000), nullable=False)
     decided_at: Mapped[datetime] = _now()

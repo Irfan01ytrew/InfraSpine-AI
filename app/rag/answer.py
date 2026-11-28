@@ -6,9 +6,10 @@ from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
+from app.rag.freshness import CitationFreshness, DocumentMeta, summarize_answer_freshness
 from app.rag.retrieval import RetrievedChunk
 from app.rag.sufficiency import (
     is_company_specific,
@@ -737,6 +738,10 @@ class GroundedAnswer:
     model: str | None
     provider: str | None
     general: bool = False  # answered from the model's general knowledge, not from the user's documents
+    # Step AI slice 4: per-citation freshness + a visible warning when the answer leans on
+    # expired/superseded or only-stale sources. Advisory only — it labels the sources, never hides them.
+    freshness_warning: str | None = None
+    citation_freshness: tuple[CitationFreshness, ...] = ()
 
 
 def _escape(text: str) -> str:
@@ -856,6 +861,20 @@ class PageCiter:
         return "".join(dict.fromkeys(f"[S{n}]" for n in numbers if n is not None))
 
 
+def _attach_freshness(
+    ans: GroundedAnswer, freshness_metas: dict[uuid.UUID, DocumentMeta] | None
+) -> GroundedAnswer:
+    """Attach per-citation freshness + warning to a successful answer.
+
+    No-op when the caller supplied no document metadata (other callers, e.g. the
+    partner portal, keep working unchanged) or when nothing was cited.
+    """
+    if not freshness_metas or not ans.cited:
+        return ans
+    summary = summarize_answer_freshness(ans.cited, freshness_metas)
+    return replace(ans, citation_freshness=summary.citations, freshness_warning=summary.warning)
+
+
 async def answer_question(
     llm: LLMClient | None,
     question: str,
@@ -870,6 +889,7 @@ async def answer_question(
     document_hint: bool = False,
     structured_source_output: bool = False,
     system_prompt_addendum: str | None = None,
+    freshness_metas: dict[uuid.UUID, DocumentMeta] | None = None,
     on_token: Callable[[str], Awaitable[None]] | None = None,
 ) -> GroundedAnswer:
     """`computed`: the only source is an exact calculation over a spreadsheet (`app.rag.tables`), so it is the
@@ -927,7 +947,7 @@ async def answer_question(
             logger.info("Uncited answer repaired with citations")
             response, answer, insufficient, citer, cited = repair, r_answer, r_insufficient, r_citer, r_citer.cited
     if computed and not cited:
-        return _computed_result(chunks[0], response.model, response.provider)
+        return _computed_result(chunks[0], response.model, response.provider, freshness_metas)
     if not cited:
         return await _uncited(
             llm, question, answer, insufficient, response.reply, response.model, response.provider,
@@ -943,7 +963,9 @@ async def answer_question(
         # tags to authorized retrieved passages. The natural-language support checker
         # treats prompt instructions and multiple-choice distractors as factual claims.
         decide("structured_cited")
-        return GroundedAnswer(answer, False, cited, response.model, response.provider)
+        return _attach_freshness(
+            GroundedAnswer(answer, False, cited, response.model, response.provider), freshness_metas
+        )
     evidence = citer.evidence
     overview = whole_document or computed or is_overview_question(question)
     eval_question = question if not is_bare_followup(question) and not is_followup_transform(question) else checked
@@ -960,10 +982,14 @@ async def answer_question(
         if dropped and dropped * 3 <= total and _CITATION.search(pruned):
             if assess_support(checked, pruned, evidence, overview=True) == "supported":
                 decide("supported_pruned")
-                return GroundedAnswer(pruned, False, cited, response.model, response.provider)
+                return _attach_freshness(
+                GroundedAnswer(pruned, False, cited, response.model, response.provider), freshness_metas
+            )
     if verdict in {"supported", "withholding"}:
         decide(verdict)
-        return GroundedAnswer(answer, False, cited, response.model, response.provider)
+        return _attach_freshness(
+            GroundedAnswer(answer, False, cited, response.model, response.provider), freshness_metas
+        )
     verified = None
     evaluative = is_evaluative_question(eval_question) and document_question
     if evaluative and verdict in {"unsupported", "inconclusive"}:
@@ -973,15 +999,19 @@ async def answer_question(
             verified = await verify_support(llm, checked, answer, evidence, evaluative=True)
         if verified:
             decide("verified_evaluation")
-            return GroundedAnswer(answer, False, cited, response.model, response.provider)
+            return _attach_freshness(
+            GroundedAnswer(answer, False, cited, response.model, response.provider), freshness_metas
+        )
     elif verdict == "inconclusive" and document_question and cited_fact_is_linked(checked, evidence):
         with stage("verify"):
             verified = await verify_support(llm, checked, answer, evidence)
         if verified:
             decide("verified")
-            return GroundedAnswer(answer, False, cited, response.model, response.provider)
+            return _attach_freshness(
+            GroundedAnswer(answer, False, cited, response.model, response.provider), freshness_metas
+        )
     if computed:
-        return _computed_result(chunks[0], response.model, response.provider)
+        return _computed_result(chunks[0], response.model, response.provider, freshness_metas)
     if general_answers and not document_question:
         decide(f"general_after_{verdict}")
         return await general_answer(llm, question, history, memory, None, system_prompt_addendum)
@@ -989,14 +1019,22 @@ async def answer_question(
     return GroundedAnswer(UNVERIFIED_FACT, True, [], response.model, response.provider)
 
 
-def _computed_result(chunk: RetrievedChunk, model: str | None, provider: str | None) -> GroundedAnswer:
+def _computed_result(
+    chunk: RetrievedChunk,
+    model: str | None,
+    provider: str | None,
+    freshness_metas: dict[uuid.UUID, DocumentMeta] | None = None,
+) -> GroundedAnswer:
     """The calculation itself, when the model's wording of it did not pass the evidence check. Its numbers are
     exact, so it is shown (cited) rather than refused or replaced by general knowledge."""
     decide("computed_result")
     lines = chunk.content.splitlines()
     table = "\n".join(line for line in lines if line.startswith("|"))
     summary = " ".join(line for line in lines[:2] if line and not line.startswith("|"))
-    return GroundedAnswer(f"{summary} [S1]\n\n{table}", False, [(1, chunk)], model, provider)
+    return _attach_freshness(
+        GroundedAnswer(f"{summary} [S1]\n\n{table}", False, [(1, chunk)], model, provider),
+        freshness_metas,
+    )
 
 
 async def _uncited(

@@ -76,6 +76,7 @@ from app.rag.parsers.registry import limits_from_settings, parse_document
 from app.rag.pdf import PdfError, render_page_png
 from app.rag.respond import rag_respond
 from app.rag.research import SPECIALIST_PROMPTS, research_plan
+from app.services.document_freshness import review_queue_entries
 from app.services.document_versions import (
     compare_extracted_sections,
     source_quote_present_in_sections,
@@ -93,6 +94,7 @@ from app.rag.training import (
 from app.schemas.agents import AgentDepartmentListResponse, AgentDepartmentOut
 from app.schemas.access import DocumentAccessRequest
 from app.schemas.rag import (
+    DocumentFreshnessRequest,
     DocumentListResponse,
     DocumentOut,
     DocumentVersionOut,
@@ -117,6 +119,8 @@ from app.schemas.rag import (
     RagTrainingRequest,
     ResearchFinding,
     ResearchReport,
+    ReviewQueueEntryOut,
+    ReviewQueueResponse,
     TrainingModule,
     TrainingPlan,
     TrainingAssignmentCreateResponse,
@@ -213,6 +217,28 @@ async def list_documents(
         max_upload_mb=settings.rag_max_upload_mb,
         embedding_model=rag.embedder.model_name,
         ingestion=IngestionStatus(mode=settings.rag_ingestion_mode, workers_online=await workers_online(db, settings)),
+    )
+
+
+@router.get("/documents/review-queue", response_model=ReviewQueueResponse)
+async def document_review_queue(
+    service: Documents, user: CurrentUser, rag: Rag, db: DbSession
+) -> ReviewQueueResponse:
+    """Documents needing a human freshness review: stale, expired, or
+    superseded, or with open contradiction candidates. Only documents the
+    caller may already read are ever listed. Flagging is advisory — it
+    never hides a document or changes what is cited."""
+    docs = await service.list()
+    entries = await review_queue_entries(db, docs)
+    return ReviewQueueResponse(
+        entries=[
+            ReviewQueueEntryOut(
+                document=await _document_out(e.document, service, user, rag),
+                open_conflicts=e.open_conflicts,
+                severity=e.severity,
+            )
+            for e in entries
+        ]
     )
 
 
@@ -914,6 +940,19 @@ async def set_document_access(
 ) -> DocumentOut:
     """Who can read an uploaded document. Sharing with users or groups is admin-only, like shared publishing."""
     doc = await service.set_access(document_id, payload.visibility, payload.user_emails, payload.group_ids)
+    return await _document_out(doc, service, user, rag)
+
+
+@router.patch("/documents/{document_id}/freshness", response_model=DocumentOut)
+async def set_document_freshness(
+    document_id: uuid.UUID, payload: DocumentFreshnessRequest, service: Documents, user: CurrentUser, rag: Rag
+) -> DocumentOut:
+    """Owner-set review date, expiry, or replacement document. Only fields
+    explicitly sent are changed; an explicit null clears the field."""
+    doc = await service.set_freshness(
+        document_id,
+        **{field: getattr(payload, field) for field in payload.model_fields_set},
+    )
     return await _document_out(doc, service, user, rag)
 
 

@@ -556,6 +556,13 @@ export interface RagDocument {
   can_modify: boolean;
   created_at: string;
   updated_at: string;
+  /** Step AI slice 2: owner-set freshness metadata + advisory score computed on read. */
+  review_date?: string | null;
+  expires_at?: string | null;
+  superseded_by?: string | null;
+  freshness_status?: string | null;
+  freshness_score?: number | null;
+  freshness_reasons?: string[];
 }
 
 /** Whether queued documents will be processed: in "worker" mode a separate worker process must run. */
@@ -569,6 +576,17 @@ export interface RagDocumentList {
   max_upload_mb: number;
   embedding_model: string;
   ingestion?: IngestionStatus | null;
+}
+
+/** Step AI slice 5: one document needing a human freshness review. */
+export interface ReviewQueueEntry {
+  document: RagDocument;
+  open_conflicts: number;
+  severity: number;
+}
+
+export interface ReviewQueueResponse {
+  entries: ReviewQueueEntry[];
 }
 
 export interface DocumentVersionInfo {
@@ -820,6 +838,10 @@ export interface Citation {
   score: number;
   snippet: string;
   available: boolean;
+  /** Step AI slice 4: advisory freshness of the cited document (owner-set metadata). */
+  freshness_status?: string | null;
+  freshness_score?: number | null;
+  freshness_note?: string | null;
 }
 
 export interface RagAnswer {
@@ -827,6 +849,8 @@ export interface RagAnswer {
   general_knowledge?: boolean; // answered from the model's general knowledge, not from the user's documents
   answer: string;
   insufficient_evidence: boolean;
+  /** Step AI slice 4: warning when the answer leans on expired/superseded or only-stale sources. */
+  freshness_warning?: string | null;
   citations: Citation[];
   retrieved_chunks: number;
   strategy:

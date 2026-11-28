@@ -16,6 +16,7 @@ import type {
   DepartmentGroup,
   FinancialExtraction,
   FinancialFormReviewQueueItem,
+  ReviewQueueEntry,
   User,
 } from "../types";
 
@@ -105,6 +106,9 @@ export function KnowledgePage({ user }: { user: User }) {
   const [financialReview, setFinancialReview] = useState<{ documentId: string; result: FinancialExtraction } | null>(null);
   const [financialBusy, setFinancialBusy] = useState<string | null>(null);
   const [financialQueue, setFinancialQueue] = useState<FinancialFormReviewQueueItem[] | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<ReviewQueueEntry[] | null>(null);
+  const [reviewDateDraft, setReviewDateDraft] = useState<Record<string, string>>({});
+  const [reviewSaving, setReviewSaving] = useState<string | null>(null);
   const [financialReviewedExceptions, setFinancialReviewedExceptions] = useState<number[]>([]);
   const [financialRationale, setFinancialRationale] = useState("");
   const [financialExportBusy, setFinancialExportBusy] = useState(false);
@@ -123,6 +127,7 @@ export function KnowledgePage({ user }: { user: User }) {
       setMaxMb(list.max_upload_mb);
       setIngestion(list.ingestion ?? null);
       void api.financialReviewQueue().then((queue) => setFinancialQueue(queue.records)).catch(() => setFinancialQueue(null));
+      void api.documentReviewQueue().then((queue) => setReviewQueue(queue.entries)).catch(() => setReviewQueue(null));
     } catch (err) {
       if (Date.now() - documentErrorAt.current > 60_000) {
         documentErrorAt.current = Date.now();
@@ -585,6 +590,40 @@ export function KnowledgePage({ user }: { user: User }) {
                           void onExtractFinancialFields(item.document_id, item.profile);
                         }}>Review</Button>
                       ) : <span className="text-muted">Read only</span>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {reviewQueue && reviewQueue.length > 0 && (
+              <section className="rounded-lg border border-warning/30 bg-warning-soft p-3" aria-label="Freshness review queue">
+                <p className="text-xs font-semibold text-warning-text">{reviewQueue.length} document{reviewQueue.length === 1 ? "" : "s"} need{reviewQueue.length === 1 ? "s" : ""} a freshness review</p>
+                <ul className="mt-2 grid gap-1.5">
+                  {reviewQueue.map((entry) => (
+                    <li key={entry.document.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground-2">
+                      <span className="min-w-0 truncate" title={entry.document.freshness_reasons?.[0]}>{entry.document.filename}</span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Badge tone={entry.document.freshness_status === "expired" || entry.document.freshness_status === "superseded" ? "danger" : entry.document.freshness_status === "stale" ? "warning" : "neutral"}>{entry.document.freshness_status ?? "needs review"}</Badge>
+                        {entry.open_conflicts > 0 && <span className="text-muted">· {entry.open_conflicts} open conflict{entry.open_conflicts === 1 ? "" : "s"}</span>}
+                        {entry.document.can_modify ? (
+                          <>
+                            <Input type="date" aria-label={`Review by date for ${entry.document.filename}`} className="h-7 w-[140px] text-xs" value={reviewDateDraft[entry.document.id] ?? entry.document.review_date?.slice(0, 10) ?? ""} onChange={(e) => setReviewDateDraft((d) => ({ ...d, [entry.document.id]: e.target.value }))} />
+                            <Button size="sm" className="h-7" loading={reviewSaving === entry.document.id} onClick={() => {
+                              const value = reviewDateDraft[entry.document.id] ?? entry.document.review_date?.slice(0, 10) ?? "";
+                              setReviewSaving(entry.document.id);
+                              void api.setDocumentFreshness(entry.document.id, { review_date: value ? new Date(`${value}T00:00:00Z`).toISOString() : null })
+                                .then(() => {
+                                  toast("success", "Review date saved");
+                                  setReviewDateDraft((d) => { const next = { ...d }; delete next[entry.document.id]; return next; });
+                                  return load();
+                                })
+                                .catch((err) => toast("error", "Could not save review date", describeError(err)))
+                                .finally(() => setReviewSaving(null));
+                            }}>Save review date</Button>
+                          </>
+                        ) : <span className="text-muted">Read only</span>}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -1365,6 +1404,9 @@ function AnswerBubble({
             {answer.insufficient_evidence && <Badge tone="warning"><AlertTriangle /> {answer.strategy === "web_research" ? "Live lookup unavailable" : answer.strategy.includes("image") ? "Image unavailable" : "Insufficient document evidence"}</Badge>}
           </div>
         ) : null}
+        {answer.freshness_warning && (
+          <Alert tone="warning" title="Some sources may be out of date" className="mb-2">{answer.freshness_warning}</Alert>
+        )}
         <Markdown
           text={answer.answer}
           renderCitation={(tag, key) => {
@@ -1414,6 +1456,9 @@ function AnswerBubble({
                     <FileText className="size-3.5 shrink-0 text-muted" />
                     <span className={cn("truncate font-medium", c.available ? "text-foreground" : "text-muted italic")}>{c.filename}</span>
                     <span className="shrink-0 text-muted">· {c.available ? citationPlace(c) : "no longer available"}</span>
+                    {c.freshness_status && c.freshness_status !== "fresh" && (
+                      <Badge tone={c.freshness_status === "expired" || c.freshness_status === "superseded" ? "danger" : c.freshness_status === "stale" ? "warning" : "neutral"} title={c.freshness_note ?? undefined}>{c.freshness_status}</Badge>
+                    )}
                     {c.available && <ChevronDown className={cn("ml-auto size-3.5 shrink-0 text-muted transition-transform", open === c.source_id && "rotate-180")} />}
                   </button>
                   {open === c.source_id && (

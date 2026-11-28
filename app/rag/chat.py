@@ -58,6 +58,8 @@ from app.rag.answer import (
     wants_page_images,
 )
 from app.rag.charts import Chart, PreviousChart, about_this_visual, asks_about_visual, build_chart, wants_chart
+from app.rag.freshness import DocumentMeta
+from app.services.document_freshness import document_meta
 from app.rag.components import RagComponents
 from app.rag.documents import page_image_withheld
 from app.rag.office_preview import OFFICE_FORMATS, PreviewError, ensure_pdf, find_converter
@@ -420,6 +422,22 @@ class ChatResult:
     chart: Chart | None = None
     memories_applied: int = 0  # personal memories sent to the LLM with this question
     named_documents: list[uuid.UUID] = field(default_factory=list)  # the question's named documents (source state)
+
+
+async def _citation_freshness_metas(
+    db: AsyncSession, passages: list[RetrievedChunk]
+) -> dict[uuid.UUID, DocumentMeta]:
+    """Freshness metadata for the documents behind the retrieved passages.
+
+    Only documents the user may already read can appear here: retrieval only
+    returns readable passages, so no freshness leaks across the ACL. One query;
+    an empty passage list costs nothing. Step AI slice 4.
+    """
+    doc_ids = list(dict.fromkeys(p.document_id for p in passages))
+    if not doc_ids:
+        return {}
+    docs = (await db.execute(select(Document).where(Document.id.in_(doc_ids)))).scalars().all()
+    return {doc.id: document_meta(doc) for doc in docs}
 
 
 async def run_chat(
@@ -1049,6 +1067,8 @@ async def run_chat(
                 web_result.get("model") or internal.answer.model,
                 web_result.get("provider") or internal.answer.provider,
                 general=True,
+                freshness_warning=internal.answer.freshness_warning,
+                citation_freshness=internal.answer.citation_freshness,
             ),
             internal.passages,
             "hybrid_research",
@@ -1519,6 +1539,7 @@ async def run_chat(
 
     llm = await get_llm() if passages or settings.rag_general_answers else None
     media_question = media_kind is not None
+    freshness_metas = await _citation_freshness_metas(db, passages)
     answer = await answer_question(
         llm, question, passages, history, whole_document=strategy in {"whole_document", "library_overview"}, memory=memory,
         general_answers=settings.rag_general_answers, computed=strategy == "table_analysis", check_question=check_question,
@@ -1533,6 +1554,7 @@ async def run_chat(
             or (focus_document_ids and (contextual or points_back))
         ),
         structured_source_output=structured_source_output,
+        freshness_metas=freshness_metas,
         # Do not stream a model's false media refusal and replace it afterward. A cited extraction fallback is
         # streamed once the final media answer is known.
         on_token=None if media_question else on_token,
