@@ -24,7 +24,7 @@ from sqlalchemy import func, or_, select, update
 from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.db.finance_models import FinGoodsReceipt, FinInvoice, FinInvoiceBatch, FinPayment, FinPurchaseOrder, FinVendor
-from app.finance.connectors import ConnectorUnavailable, TransferRequest, resolve_connector
+from app.finance.connectors import ConnectorUnavailable, TransferRequest, get_connector
 from app.finance.verification import InvoiceFacts, PurchaseOrder, Reference, Vendor, invoice_key, name_key, verify_invoice
 from app.platform.approvals import ActionSpec, request_approval
 from app.platform.events import audit, publish
@@ -437,7 +437,7 @@ class ExecutePaymentsHandler:
             batch.status = 'paying'
             await ctx.db.commit()
         try:
-            connector = await resolve_connector(ctx.db)
+            connector = get_connector()
         except ConnectorUnavailable:
             return ActionOutcome('failed', failure_code='connector_unavailable', retryable=True)
         for index, pay in enumerate(open_payments):
@@ -460,7 +460,7 @@ class ExecutePaymentsHandler:
 
     async def verify(self, ctx: ActionContext, output: dict) -> VerifiedResult:
         batch, round_ = await _batch(ctx)
-        connector = await resolve_connector(ctx.db)
+        connector = get_connector()
         paid = 0
         for pay in (await ctx.db.scalars(select(FinPayment).where(FinPayment.batch_id == batch.id, FinPayment.round == round_)
                                          .execution_options(populate_existing=True))).all():

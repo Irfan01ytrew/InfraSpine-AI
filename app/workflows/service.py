@@ -424,9 +424,6 @@ class WorkflowService:
                     step.status, step.claim_token, step.lease_until = 'cancelled', None, None
             for dispatch in dispatches:
                 if dispatch.status == 'pending': dispatch.status = 'cancelled'
-            if run.origin == 'studio':
-                from app.agent_studio.unified import on_workflow_cancelled
-                await on_workflow_cancelled(self.db, self.cipher, run)
         elif command == 'retry' and run.status == 'failed':
             if any(d.status == 'unknown' for d in dispatches):
                 raise ConflictError('Ambiguous external actions require a verified receipt; blind retry is forbidden.')

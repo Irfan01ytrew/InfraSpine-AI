@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.deps import AppSettings, CurrentUser, DbSession
 from app.core.errors import InvalidInputError
 from app.finance import extraction
-from app.finance.connectors import resolve_connector
+from app.finance.connectors import get_connector
 from app.finance.service import FinanceService, batch_out, invoice_out, money, payment_out
 from app.finance.verification import REASONS
 
@@ -96,15 +96,6 @@ class RoleIn(Strict):
     valid_to: datetime | None = None
 
 
-class FromDocumentsIn(Strict):
-    document_ids: list[UUID] = Field(default_factory=list, max_length=200)
-    folder: str | None = Field(default=None, max_length=1024)
-
-
-class ConnectorIn(Strict):
-    mode: Literal['mock', 'http', 'http+mock'] | None = None
-
-
 def svc(request: Request, db, user, settings) -> FinanceService:
     return FinanceService(db, user, settings, request.app.state.cipher)
 
@@ -118,7 +109,7 @@ def vendor_out(v) -> dict:
 async def scopes(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings):
     service = svc(request, db, user, settings)
     try:
-        connector = (await resolve_connector(db, settings)).name
+        connector = get_connector(settings).name
     except Exception:
         connector = 'unavailable'
     return {'scopes': await service.scopes(), 'reasons': REASONS, 'connector': connector}
@@ -217,36 +208,6 @@ async def add_invoices(batch_id: UUID, body: InvoicesIn, request: Request, db: D
     rows = await svc(request, db, user, settings).add_invoices(batch_id, items)
     await db.commit()
     return {'invoices': [invoice_out(r) for r in rows]}
-
-
-@router.get('/knowledge-documents')
-async def knowledge_documents(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
-                              folder: str | None = Query(default=None, max_length=1024),
-                              q: str | None = Query(default=None, max_length=120)):
-    return await svc(request, db, user, settings).knowledge_documents(folder=folder, query=q)
-
-
-@router.post('/batches/{batch_id}/invoices/from-documents', status_code=201)
-async def add_invoices_from_documents(batch_id: UUID, body: FromDocumentsIn, request: Request, db: DbSession,
-                                      user: CurrentUser, settings: AppSettings):
-    if not body.document_ids and not body.folder:
-        raise InvalidInputError('Choose documents or a folder.')
-    rows, skipped = await svc(request, db, user, settings).add_invoices_from_documents(
-        batch_id, document_ids=body.document_ids, folder=body.folder)
-    await db.commit()
-    return {'invoices': [invoice_out(r) for r in rows], 'skipped': skipped}
-
-
-@router.get('/connector')
-async def connector(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings):
-    return await svc(request, db, user, settings).connector_status()
-
-
-@router.put('/connector')
-async def set_connector(body: ConnectorIn, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings):
-    out = await svc(request, db, user, settings).set_connector(body.mode)
-    await db.commit()
-    return out
 
 
 @router.post('/batches/{batch_id}/invoices/upload', status_code=201)

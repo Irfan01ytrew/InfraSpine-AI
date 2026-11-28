@@ -468,13 +468,11 @@ class AgentStudioService:
             return existing
         await self.db.refresh(run)
         if not execute_inline:
-            await self._mirror(run)
             return run, state, None
         if await _paused_now(self.db, agent.id):
             # Pause applies to every entry point (WhatsApp Cloud, Baileys, inline API): the task stays queued and
             # the worker runs it only after the agent is resumed. Callers report it as queued, not completed.
             await self.db.commit()
-            await self._mirror(run)
             return run, state, None
         run.status = "running"
         run.attempt_count = 1
@@ -483,7 +481,6 @@ class AgentStudioService:
         claim_attempt = run.attempt_count
         claim_time = run.claimed_at
         await self.db.commit()
-        await self._mirror(run)  # recorded as running: the runtime waits for this inline attempt, never re-runs it
         return await self._execute(
             run,
             agent,
@@ -493,13 +490,6 @@ class AgentStudioService:
             expected_attempt=claim_attempt,
             expected_claimed_at=claim_time,
         )
-
-    async def _mirror(self, run: AgentStudioRun) -> None:
-        """One runtime (step E): carry the run in a unified workflow run (pause / stop / resume there)."""
-        if getattr(self.settings, "workflow_engine_on", False):
-            from app.agent_studio.unified import mirror_new_run
-            await mirror_new_run(self.db, self.cipher, run, self.settings)
-            await self.db.refresh(run)
 
     async def decide(
         self, run_id: uuid.UUID, decision: str, note: str, user: User
@@ -546,8 +536,6 @@ class AgentStudioService:
         agent = await _require_agent(self.db, user, run.agent_id)
         sealed = _encode_state(self.cipher, run.id, state)
         run.state_ciphertext, run.state_nonce, run.state_key_id = sealed.ciphertext, sealed.nonce, sealed.key_id
-        from app.workflows.unified import wake_origin_run
-        await wake_origin_run(self.db, "studio", run.id)  # the unified run continues now, not at its next poll
         await self.db.commit()
         return run, state, None
 

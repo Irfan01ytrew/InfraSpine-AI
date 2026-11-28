@@ -483,16 +483,6 @@ async def tick(sessionmaker, cipher, *, now=None):
         await mirror_pending_automation_runs(sessionmaker, cipher)
     except Exception as exc:  # a legacy-mirroring problem must never stop the runtime
         log.warning('Automation mirroring skipped (%s)', type(exc).__name__)
-    try:
-        from app.agent_studio.unified import mirror_pending_studio_runs
-        await mirror_pending_studio_runs(sessionmaker, cipher)
-    except Exception as exc:
-        log.warning('Agent Studio mirroring skipped (%s)', type(exc).__name__)
-    try:
-        from app.services.agent_action_runtime import mirror_pending_proposals
-        await mirror_pending_proposals(sessionmaker, cipher)
-    except Exception as exc:
-        log.warning('Agent action mirroring skipped (%s)', type(exc).__name__)
     claim = await claim_next(sessionmaker, cipher, now=now)
     if claim:
         try:

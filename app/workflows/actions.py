@@ -82,8 +82,6 @@ def load_builtin_handlers() -> dict[str, ActionHandler]:
     """Import modules that register handlers (kept lazy to avoid import cycles)."""
     from app.workflows import builtin_actions  # noqa: F401
     from app.finance import handlers  # noqa: F401
-    from app.agent_studio import unified as studio_unified  # noqa: F401
-    from app.services import agent_action_runtime  # noqa: F401
     return HANDLERS
 
 
