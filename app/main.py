@@ -64,6 +64,7 @@ from app.api.routes import (
     legacy_browser,
     memory,
     meetings,
+    offline,
     rag,
     admin_users,
     onboarding,
@@ -433,6 +434,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations.router)
     app.include_router(memory.router)
     app.include_router(meetings.router)
+    app.include_router(offline.router)
     app.include_router(claims.router)
     app.include_router(knowledge.router)
     app.include_router(knowledge_interviews.router)

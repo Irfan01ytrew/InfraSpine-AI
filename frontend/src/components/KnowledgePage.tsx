@@ -38,6 +38,13 @@ import { AlertTriangle, ArrowUp, ArrowUpRight, ChevronDown, Download, ExternalLi
 import { cn } from "../lib/utils";
 import { Alert, Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, EmptyState, Field, Input, Select, Skeleton, Tooltip } from "./ui";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import {
+  clearReadCache,
+  loadKnowledgeAnswers,
+  recordKnowledgeAnswer,
+} from "../lib/offlineReadCache.mjs";
+import type { SavedKnowledgeAnswer } from "../lib/offlineReadCache.mjs";
+import { OfflineReadCachePanel } from "./OfflineReadCachePanel";
 
 const STATUS_LABEL: Record<RagDocument["status"], string> = {
   pending: "Queued",
@@ -895,6 +902,63 @@ function KnowledgeChat({
   // Per-chat model pick. "" = the organization's default (active) model, resolved by the server each time.
   const [models, setModels] = useState<ModelOption[]>([]);
   const [pick, setPick] = useState("");
+
+  // Offline read-model cache (Step U, slice 5): last-known Knowledge
+  // answers, saved on this device and shown read-only while offline.
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [savedAnswers, setSavedAnswers] = useState<SavedKnowledgeAnswer[]>(() => {
+    try {
+      return typeof localStorage === "undefined" ? [] : loadKnowledgeAnswers(localStorage);
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    const refreshSaved = () => {
+      setOnline(typeof navigator === "undefined" ? true : navigator.onLine);
+      try {
+        if (typeof localStorage !== "undefined") setSavedAnswers(loadKnowledgeAnswers(localStorage));
+      } catch {
+        // Best-effort only; the live chat still works without the cache.
+      }
+    };
+    window.addEventListener("online", refreshSaved);
+    window.addEventListener("offline", refreshSaved);
+    window.addEventListener("storage", refreshSaved);
+    return () => {
+      window.removeEventListener("online", refreshSaved);
+      window.removeEventListener("offline", refreshSaved);
+      window.removeEventListener("storage", refreshSaved);
+    };
+  }, []);
+
+  function saveAnswerOffline(question: string, response: RagAnswer): void {
+    try {
+      if (typeof localStorage === "undefined") return;
+      const saved = recordKnowledgeAnswer(localStorage, {
+        question,
+        answer: response.answer,
+        citations: response.citations,
+        model: response.model,
+        provider: response.provider,
+        insufficientEvidence: response.insufficient_evidence,
+      });
+      if (saved) setSavedAnswers(saved);
+    } catch {
+      // The answer is already on screen; the offline copy is best-effort.
+    }
+  }
+
+  function clearSavedAnswers(): void {
+    try {
+      if (typeof localStorage !== "undefined") clearReadCache(localStorage);
+    } catch {
+      // See saveAnswerOffline.
+    }
+    setSavedAnswers([]);
+  }
   const keyOf = (provider: string | null, model: string | null) => (provider && model ? `${provider}\u0000${model}` : "");
 
   useEffect(() => {
@@ -1018,6 +1082,8 @@ function KnowledgeChat({
         ),
       );
       onUpdated(result.conversation);
+      const response = result.assistant_message.response;
+      if (response) saveAnswerOffline(question, response);
     } catch (err) {
       const message =
         err instanceof ApiError && err.code === "llm_not_configured"
@@ -1055,6 +1121,7 @@ function KnowledgeChat({
           ephemeral: true,
         },
       ]);
+      saveAnswerOffline(result.transcript, result.answer);
     } catch (err) {
       toast("error", "Could not answer voice question", describeError(err));
     } finally {
@@ -1165,6 +1232,11 @@ function KnowledgeChat({
         {readyCount > 0 && <Badge className="ml-auto" tone="neutral"><FileText /> {readyCount} doc{readyCount === 1 ? "" : "s"} ready</Badge>}
       </header>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" ref={scroller}>
+        {!online && savedAnswers.length > 0 && (
+          <div className="mx-auto w-full max-w-3xl px-5 pt-6">
+            <OfflineReadCachePanel answers={savedAnswers} onClear={clearSavedAnswers} />
+          </div>
+        )}
         {loading ? (
           <div className="mx-auto grid w-full max-w-3xl gap-4 px-5 py-8">
             <Skeleton className="ml-auto h-10 w-2/5 rounded-2xl" />

@@ -16,7 +16,7 @@ from pathlib import Path as FilePath
 from typing import Annotated, Literal, get_args
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +63,13 @@ from app.db.models import (
     User,
 )
 from app.rag.access import readable_by
+from app.platform.idempotency import (
+    canonical_request_hash,
+    claim_request,
+    complete_request,
+    fail_request,
+    validate_idempotency_key,
+)
 from app.rag import tracing
 from app.rag.answer import Turn
 from app.rag.components import RagComponents
@@ -925,14 +932,28 @@ async def delete_document(document_id: uuid.UUID, service: Documents) -> Respons
 
 @router.post("/chat", response_model=RagChatResponse)
 async def knowledge_chat(
-    payload: RagChatRequest, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings, rag: Rag
+    payload: RagChatRequest, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings, rag: Rag,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=256)] = None,
 ) -> RagChatResponse:
-    """Stateless single question (client-supplied context). Persistent chats use /api/conversations."""
+    """Stateless single question (client-supplied context). Persistent chats use /api/conversations.
+
+    Replaying with the same Idempotency-Key returns the original answer instead of
+    running the model again (Step U slice 3)."""
+    record = None
+    key = validate_idempotency_key(idempotency_key)
     async with tracing.traced(
         request.app.state.sessionmaker, settings, route="rag_chat", question=payload.question,
         user_id=user.id, request_id=request.state.request_id,
     ):
         try:
+            if key is not None:
+                outcome = await claim_request(
+                    db, user_id=user.id, key=key, endpoint="rag_chat",
+                    request_hash=canonical_request_hash({"endpoint": "rag_chat", **payload.model_dump(mode="json")}),
+                )
+                if outcome.replayed:
+                    return RagChatResponse.model_validate(outcome.response_body)
+                record = outcome.record
             response = await rag_respond(
                 db,
                 user,
@@ -950,9 +971,13 @@ async def knowledge_chat(
             # Trace persistence uses a separate session. End retrieval/memory's request transaction first
             # so concurrent traces cannot exhaust the pool while every request holds its own connection.
             await db.commit()
+            if record is not None:
+                await complete_request(db, record, response_status=200, response_body=response.model_dump(mode="json"))
             return response
         except BaseException:
             await db.rollback()
+            if record is not None:
+                await fail_request(db, record)
             raise
 
 

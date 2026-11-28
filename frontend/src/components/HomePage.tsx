@@ -6,9 +6,15 @@ import {
 import { api } from "../api";
 import { cn } from "../lib/utils";
 import type { User } from "../types";
-import { Badge, Button, Card, Skeleton } from "./ui";
+import { Alert, Badge, Button, Card, Skeleton } from "./ui";
 import { HomeDashboard, type DashboardData } from "./HomeDashboard";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import {
+  loadDashboardSnapshot,
+  recordDashboardSnapshot,
+  staleLabel,
+} from "../lib/offlineReadCache.mjs";
+import type { DashboardSnapshot } from "../lib/offlineReadCache.mjs";
 
 type Navigate = (view: string) => void;
 
@@ -57,44 +63,87 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
   const [loading, setLoading] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
 
+  // Offline read-model cache (Step U, slice 5): the last dashboard
+  // snapshot, served read-only while offline and always labelled stale.
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  const [cachedSnapshot, setCachedSnapshot] = useState<DashboardSnapshot | null>(() => {
+    try {
+      return typeof localStorage === "undefined" ? null : loadDashboardSnapshot(localStorage);
+    } catch {
+      return null;
+    }
+  });
+
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
-    try { setState(await loadSetup()); } finally { setLoading(false); }
+    try {
+      const data = await loadSetup();
+      setState(data);
+      // Record the snapshot only while online. An all-empty load must
+      // never overwrite a good cached snapshot; recordDashboardSnapshot
+      // refuses empty data, so this check is defence in depth.
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        try {
+          const snapshot = recordDashboardSnapshot(localStorage, data);
+          if (snapshot) setCachedSnapshot(snapshot);
+        } catch {
+          // The dashboard is already on screen; the offline copy is best-effort.
+        }
+      }
+    } finally { setLoading(false); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const onOnline = () => {
+      setOnline(true);
+      void refresh(true); // Replace the stale snapshot with live data.
+    };
+    const onOffline = () => setOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, [refresh]);
   useLiveRefresh(() => refresh(true));
 
-  const steps: Step[] = state ? [
+  // While offline, show the last saved dashboard instead of the empty
+  // load — clearly marked stale below, never used for decisions.
+  const displayState = !online && cachedSnapshot ? cachedSnapshot.data : state;
+  const steps: Step[] = displayState ? [
     {
       key: "ai", title: "Connect an AI model", icon: Cpu, view: "providers", action: "Open AI providers",
       why: "Answers, research and agents need one active AI provider.",
-      done: state.aiActive, detail: state.aiLabel,
+      done: displayState.aiActive, detail: displayState.aiLabel,
     },
     {
       key: "departments", title: "Create your departments", icon: Building2, view: "people", action: "Add departments",
       why: "Departments decide who can see which documents, agents and reports.",
-      done: state.departments > 0, detail: `${state.departments} department${state.departments === 1 ? "" : "s"}`,
+      done: displayState.departments > 0, detail: `${displayState.departments} department${displayState.departments === 1 ? "" : "s"}`,
     },
     {
       key: "people", title: "Invite employees", icon: UserPlus, view: "people", action: "Invite people",
       why: "Invite one by one, or upload a CSV to add hundreds at once with their department and role.",
-      done: state.people > 1 || state.pendingInvites > 0,
-      detail: `${state.people} active account${state.people === 1 ? "" : "s"}${state.pendingInvites ? ` · ${state.pendingInvites} invitation${state.pendingInvites === 1 ? "" : "s"} pending` : ""}`,
+      done: displayState.people > 1 || displayState.pendingInvites > 0,
+      detail: `${displayState.people} active account${displayState.people === 1 ? "" : "s"}${displayState.pendingInvites ? ` · ${displayState.pendingInvites} invitation${displayState.pendingInvites === 1 ? "" : "s"} pending` : ""}`,
     },
     {
       key: "docs", title: "Add company documents", icon: FileUp, view: "knowledge", action: "Upload documents",
       why: "PDF, Office, images, audio and video become searchable with page and time citations.",
-      done: state.readyDocs > 0, detail: `${state.readyDocs} document${state.readyDocs === 1 ? "" : "s"} ready`,
+      done: displayState.readyDocs > 0, detail: `${displayState.readyDocs} document${displayState.readyDocs === 1 ? "" : "s"} ready`,
     },
     {
       key: "agents", title: "Create an AI agent", icon: Bot, view: "agents", action: "Create agent",
       why: "Give a department its own assistant with a fixed knowledge scope and allowed tools.",
-      done: state.agents > 0, detail: `${state.agents} active agent${state.agents === 1 ? "" : "s"}`,
+      done: displayState.agents > 0, detail: `${displayState.agents} active agent${displayState.agents === 1 ? "" : "s"}`,
     },
   ] : [];
   const completed = steps.filter((s) => s.done).length;
   const next = steps.find((s) => !s.done);
-  const setupDone = Boolean(state) && completed === steps.length;
+  const setupDone = Boolean(displayState) && completed === steps.length;
 
   const tasks: { title: string; detail: string; view: string; icon: ComponentType<{ className?: string }> }[] = [
     { title: "Ask your documents", detail: "Cited answers from company knowledge", view: "knowledge", icon: MessageSquare },
@@ -118,7 +167,15 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
         <Button variant="ghost" onClick={() => void refresh()} loading={loading}>{!loading && <RefreshCw />} Refresh</Button>
       </header>
 
-      {state && setupDone && <HomeDashboard data={state} onNavigate={onNavigate} />}
+      {!online && cachedSnapshot && (
+        <Alert tone="warning" title="Offline — showing a saved dashboard">
+          Saved {staleLabel(cachedSnapshot.savedAt)}. These numbers may be out of date and are
+          read-only — do not use them for decisions. They refresh automatically when you are
+          back online.
+        </Alert>
+      )}
+
+      {displayState && setupDone && <HomeDashboard data={displayState} onNavigate={onNavigate} />}
 
       {setupDone && !showSetup ? (
         <Card className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
@@ -130,9 +187,9 @@ export function HomePage({ user, brandName, onNavigate }: { user: User; brandNam
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-5 py-4">
           <div>
             <h2 className="text-[15px] font-semibold text-foreground">Set up your workspace</h2>
-            <p className="mt-0.5 text-xs text-muted">{state ? `${completed} of ${steps.length} steps complete` : "Checking your setup…"}</p>
+            <p className="mt-0.5 text-xs text-muted">{displayState ? `${completed} of ${steps.length} steps complete` : "Checking your setup…"}</p>
           </div>
-          {state && (
+          {displayState && (
             <div className="flex min-w-48 flex-1 items-center gap-3 sm:max-w-xs">
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={completed} aria-label="Setup progress">
                 <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${(completed / steps.length) * 100}%` }} />

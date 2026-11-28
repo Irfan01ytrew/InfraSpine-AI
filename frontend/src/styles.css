@@ -210,6 +210,26 @@ input:disabled { background: var(--surface-2); cursor: not-allowed; }
 .banner { margin-bottom: 16px; border: 1px solid transparent; }
 .banner-warning, .inline-alert-warning { background: var(--warning-soft); color: var(--warning-text); }
 .banner-error, .inline-alert-error { background: var(--error-soft); color: var(--error-text); }
+.banner-info { background: var(--primary-soft); color: var(--primary); }
+
+/* ------------------------------------------------- offline banner (Step U) */
+.offline-banner { display: grid; gap: 10px; }
+.offline-banner .banner { margin-bottom: 0; }
+.offline-queue-panel { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.offline-queue-toggle {
+  display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px;
+  border: none; background: transparent; padding: 10px 14px; font-size: 13.5px; font-weight: 600;
+  color: var(--text); cursor: pointer; text-align: left;
+}
+.offline-queue-toggle:hover { background: var(--surface-2); }
+.offline-queue-list { list-style: none; margin: 0; padding: 4px 0; border-top: 1px solid var(--border); }
+.offline-queue-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 14px; font-size: 13px; }
+.offline-queue-item + .offline-queue-item { border-top: 1px solid var(--border); }
+.offline-queue-item .dot { margin-top: 5px; }
+.offline-queue-item-text { flex: 1; min-width: 0; }
+.offline-queue-item-text small { display: block; color: var(--text-2); font-size: 12px; margin-top: 2px; }
+.offline-queue-item-reason { color: var(--error-text); }
+.offline-queue-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .inline-alert { margin-bottom: 16px; }
 
 .toasts { position: fixed; top: 20px; right: 20px; z-index: 60; display: grid; gap: 10px; width: min(380px, calc(100vw - 32px)); }

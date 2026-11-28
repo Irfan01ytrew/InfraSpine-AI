@@ -4,6 +4,7 @@ import { Menu, Plus, RefreshCw, X } from "lucide-react";
 import { api, describeError } from "../api";
 import { cn } from "../lib/utils";
 import { AppSidebar, buildNav, CommandPalette } from "./AppSidebar";
+import { OfflineBanner } from "./OfflineBanner";
 import { Alert, Button, PageHeader, Skeleton, Tabs } from "./ui";
 import type { AuditEntry, ProviderList, ProviderMetadata, ProviderState, User } from "../types";
 import type { WorkspaceView } from "./ModuleWorkspaces";
@@ -198,6 +199,7 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
           <Button variant="ghost" size="icon-sm" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Menu /></Button>
           <span className="truncate text-sm font-semibold text-foreground">{currentLabel || brandName}</span>
         </header>
+      <OfflineBanner />
       <main className={cn("relative min-h-0 min-w-0 flex-1", // Phones stack the Knowledge columns, so the page scrolls; desktops keep each column scrolling on its own.
         wide ? "flex flex-col scrollbar-thin max-lg:overflow-y-auto lg:overflow-hidden" : "scrollbar-thin overflow-x-hidden overflow-y-auto")}>
         <Suspense fallback={wide ? <Skeleton className="h-[34rem] w-full" /> : (

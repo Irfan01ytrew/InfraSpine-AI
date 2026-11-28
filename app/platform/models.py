@@ -166,7 +166,6 @@ class PlatformActionExecution(Base):
         CheckConstraint("status IN ('claimed', 'dispatched', 'verified', 'failed')", name="status_valid"),
         Index("ix_platform_action_executions_subject", "subject"),
     )
-
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     idempotency_key: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     action_type: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -186,6 +185,37 @@ class PlatformActionExecution(Base):
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     trace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+
+class IdempotencyRecord(Base):
+    """Generic Idempotency-Key ledger for lightweight HTTP creates (Step U slice 3).
+
+    One row per (user, key). The raw key is never stored — only its SHA-256 digest — so a
+    leaked row cannot be replayed as a credential. The request hash binds the key to the
+    exact request: the same key with a different request is a 409, never a silent replay.
+    A completed row stores the original response (status + body) so a replay returns it
+    without executing again. This is deliberately separate from PlatformActionExecution /
+    execute_once: that ledger is for privileged, approval-gated dispatches with read-back
+    verification; these creates are synchronous, user-scoped and need no duty or approval.
+    """
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'completed', 'failed')", name="idempotency_status_valid"),
+        UniqueConstraint("user_id", "key_digest", name="uq_idempotency_records_user_key"),
+        Index("ix_idempotency_records_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(120), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    response_body: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = _now()
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PlatformOutbox(Base):
