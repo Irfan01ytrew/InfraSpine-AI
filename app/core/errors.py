@@ -133,6 +133,14 @@ class LLMRateLimitError(AppError):
     message = "The AI provider is busy. Please try again shortly."
 
 
+class RoutingBudgetExceededError(AppError):
+    """The smart router refused a task: it would exceed the monthly AI budget."""
+
+    status_code = status.HTTP_402_PAYMENT_REQUIRED
+    code = "routing_budget_exceeded"
+    message = "The monthly AI budget for this task is exhausted."
+
+
 class LLMUnavailableError(AppError):
     status_code = status.HTTP_502_BAD_GATEWAY
     code = "llm_unavailable"

@@ -1407,6 +1407,93 @@ class RagTrace(Base):
     created_at: Mapped[datetime] = _now()
 
 
+class ModelRoutingRecord(Base):
+    """One routed LLM call: task class, chosen model, fallback chain, token
+    usage, latency and cost. Metadata only -- no prompt, answer, key or
+    endpoint is stored here, so spend can be audited without reading a
+    user's conversation. Written by the chat/RAG routes after a routed call
+    (or with status 'refused' when the budget guard refused it)."""
+
+    __tablename__ = "model_routing_records"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok', 'downgraded', 'refused', 'error')", name="status_valid"
+        ),
+        CheckConstraint(
+            "budget_action IN ('allow', 'downgrade', 'refuse')", name="budget_action_valid"
+        ),
+        Index("ix_model_routing_records_created", "created_at"),
+        Index("ix_model_routing_records_task_created", "task_class", "created_at"),
+        Index("ix_model_routing_records_department_created", "department_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    department_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    task_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    policy: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'cheapest'"))
+    provider: Mapped[str | None] = mapped_column(String(50))
+    model: Mapped[str | None] = mapped_column(String(100))
+    alternates: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    alternates_tried: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'ok'"))
+    budget_action: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'allow'"))
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    actual_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    created_at: Mapped[datetime] = _now()
+
+
+
+class RoutingPolicySetting(Base):
+    """Step T slice 4: the admin-editable routing policy. One row (id = 1)
+    per installation, like OrgSettings. No credentials, keys or endpoints
+    are stored here -- only which model the router picks (default policy,
+    per-task-class overrides, per-model capability tiers) and how much
+    routed calls may spend each month (org-wide budget plus per-department
+    overrides). A missing row means the default policy: cheapest, no
+    overrides, no budget enforced."""
+
+    __tablename__ = "routing_policy_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="single_row"),
+        CheckConstraint(
+            "default_policy IN ('cheapest', 'fastest', 'balanced')",
+            name="default_policy_valid",
+        ),
+        CheckConstraint(
+            "monthly_budget_usd IS NULL OR monthly_budget_usd >= 0",
+            name="monthly_budget_non_negative",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    default_policy: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'cheapest'")
+    )
+    # {"complex": "balanced"} -- task class -> policy. Empty = use the default.
+    task_class_policies: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # {"provider:model": 1|2|3} -- admin reasoning-tier overrides.
+    capability_tiers: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    monthly_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    # {department AccessGroup id: "12.50"} -- a department's own budget wins
+    # over the org-wide one; amounts are stored as strings to keep exact
+    # decimals through JSONB.
+    department_budgets: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    updated_at: Mapped[datetime] = _now()
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
 
 class MemoryItem(Base):
     """A user's personal memory (ADR-004 WP2): a preference, terminology or personal fact the user asked

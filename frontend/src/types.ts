@@ -822,6 +822,17 @@ export interface Citation {
   available: boolean;
 }
 
+export interface RoutingInfo {
+  provider: string;
+  model: string;
+  task_class: string;
+  policy: string;
+  estimated_cost_usd: number | null;
+  reason: string;
+  alternates: string[];
+  budget_action: string;
+}
+
 export interface RagAnswer {
   memories_applied?: number; // personal memories that shaped this answer (never cited)
   general_knowledge?: boolean; // answered from the model's general knowledge, not from the user's documents
@@ -856,6 +867,7 @@ export interface RagAnswer {
   chart: Chart | null;
   model: string | null;
   provider: string | null;
+  routing?: RoutingInfo; // why the router picked this model (ids + cost estimate only)
 }
 
 export type ResearchSpecialist = "evidence_finder" | "policy_analyst" | "exception_checker";
@@ -2521,4 +2533,48 @@ export interface OrgSettings {
   today: string;
   local_time: string;
   default_time_zone: string;
+}
+
+export interface RoutingDepartment {
+  id: string;
+  name: string;
+}
+
+export interface RoutingPolicy {
+  default_policy: string;
+  task_class_policies: Record<string, string>;
+  capability_tiers: Record<string, number>;
+  monthly_budget_usd: string | null;
+  department_budgets: Record<string, string>;
+  departments: RoutingDepartment[];
+  spent_this_month_usd: string;
+  task_classes: string[];
+  policies: string[];
+}
+
+export interface RoutingPolicySave {
+  default_policy: string;
+  task_class_policies: Record<string, string>;
+  capability_tiers: Record<string, number>;
+  monthly_budget_usd: string | null;
+  department_budgets: Record<string, string>;
+}
+
+export interface RoutingTaskClassCost {
+  task_class: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_cost_usd: string;
+  avg_latency_ms: number | null;
+  refused_calls: number;
+}
+
+export interface RoutingReport {
+  days: number;
+  department_id: string | null;
+  spent_this_month_usd: string;
+  monthly_budget_usd: string | null;
+  remaining_usd: string | null;
+  by_task_class: RoutingTaskClassCost[];
 }

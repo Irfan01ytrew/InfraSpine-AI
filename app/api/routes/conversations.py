@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from typing import Annotated
 
@@ -26,7 +27,11 @@ from app.schemas.conversations import (
 )
 from app.services.conversations import ConversationService
 from app.services.chat_stream import conversation_events
+from app.services.llm_runtime import resolve_chat_client, routing_info
 from app.services.memory import MemoryService
+from app.services.model_router import RoutingDecision
+from app.services.routing_records import record_routing
+from app.services.routing_policy import routing_context_for_user
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"], dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
@@ -152,6 +157,22 @@ async def _answer_message(
 ) -> SendMessageResponse:
     conversation = await service.get(conversation_id)
     rag: RagComponents = request.app.state.rag
+    answer_started = time.monotonic()
+    routing_holder: dict[str, RoutingDecision | None] = {"decision": None}
+    # The caller's department and the monthly budget that applies to them,
+    # resolved once per request from the stored routing policy.
+    routing_ctx = await routing_context_for_user(db, user.id)
+
+    async def _routed_llm():
+        client, decision = await resolve_chat_client(
+            request.app.state.llm_runtime, db, payload.question, model_choice=payload.model_choice(),
+            department_id=routing_ctx.department_id,
+            monthly_budget_usd=routing_ctx.monthly_budget_usd,
+            policy_config=routing_ctx.config,
+        )
+        routing_holder["decision"] = decision
+        return client
+
     async with tracing.traced(
         request.app.state.sessionmaker, settings, route="conversation", question=payload.question,
         user_id=user.id, request_id=request.state.request_id, conversation_id=conversation.id,
@@ -163,7 +184,7 @@ async def _answer_message(
                 user,
                 rag,
                 settings,
-                lambda: request.app.state.llm_runtime.get_client(db, payload.model_choice()),
+                _routed_llm,
                 payload.question,
                 history=history,
                 document_ids=payload.document_ids,
@@ -175,6 +196,25 @@ async def _answer_message(
                 get_web_llm=lambda: request.app.state.llm_runtime.get_web_research_client(db),
                 route_web=True,
             )
+            if routing_holder["decision"] is not None:
+                response.routing = routing_info(routing_holder["decision"])
+                try:
+                    await record_routing(
+                        db,
+                        routing_holder["decision"],
+                        status=(
+                            "downgraded"
+                            if routing_holder["decision"].budget_action == "downgrade"
+                            else "ok"
+                        ),
+                        latency_ms=int((time.monotonic() - answer_started) * 1000),
+                        request_id=getattr(request.state, "request_id", None),
+                        user_id=user.id,
+                        department_id=routing_ctx.department_id,
+                        settings=settings,
+                    )
+                except Exception:
+                    logger.warning("Could not record routing", exc_info=True)
             conversation, user_message, assistant_message = await service.append(
                 conversation_id, payload.question, response
             )

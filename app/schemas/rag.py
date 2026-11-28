@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from app.db.models import Document, User
+from app.schemas.chat import RoutingInfo
 from app.rag import access
 
 
@@ -494,6 +495,7 @@ class RagChatResponse(BaseModel):
     page_images: list[PageImageOut] = Field(default_factory=list)
     model: str | None
     provider: str | None
+    routing: RoutingInfo | None = None
     # How many of the user's personal memories shaped this answer (they are never cited as sources).
     memories_applied: int = 0
     # True when (part of) the answer comes from the model's general knowledge, not from the user's documents.

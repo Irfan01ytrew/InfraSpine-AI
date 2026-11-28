@@ -1447,14 +1447,28 @@ function AnswerBubble({
         {(
           <div className="mt-3 flex items-center justify-between gap-3">
             {answer.model ? (
-              <p className="truncate text-[11px] text-muted" title="AI provider and model that produced this answer">
-                {providerLabel ?? answer.provider} · {answer.model?.replace(/^models\//, "")}
-                {!!answer.memories_applied && (
-                  <span title="Your saved preferences and context shaped this answer. They are not sources.">
-                    {" "}· personalised with {answer.memories_applied} {answer.memories_applied === 1 ? "memory" : "memories"}
-                  </span>
+              <div className="min-w-0">
+                <p className="truncate text-[11px] text-muted" title="AI provider and model that produced this answer">
+                  {providerLabel ?? answer.provider} · {answer.model?.replace(/^models\//, "")}
+                  {!!answer.memories_applied && (
+                    <span title="Your saved preferences and context shaped this answer. They are not sources.">
+                      {" "}· personalised with {answer.memories_applied} {answer.memories_applied === 1 ? "memory" : "memories"}
+                    </span>
+                  )}
+                </p>
+                {answer.routing && (
+                  <details className="text-[11px] text-muted">
+                    <summary className="cursor-pointer truncate hover:underline">
+                      Why this model? {answer.routing.task_class.replace(/_/g, " ")} task · {answer.routing.policy} policy
+                      {answer.routing.estimated_cost_usd !== null && answer.routing.estimated_cost_usd !== undefined && (
+                        <> · est. ${answer.routing.estimated_cost_usd.toFixed(4)}</>
+                      )}
+                      {answer.routing.budget_action === "downgrade" && " · downgraded to fit the monthly budget"}
+                    </summary>
+                    <span>{answer.routing.reason}</span>
+                  </details>
                 )}
-              </p>
+              </div>
             ) : <span />}
             <div className="flex shrink-0 items-center gap-1">
             <CopyButton text={answer.answer} compact />

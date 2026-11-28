@@ -6,6 +6,7 @@ import { FolderSyncSection } from "./FolderSyncSection";
 import { MediaTranscriptionSection } from "./MediaTranscriptionSection";
 import { OcrEngineSection } from "./OcrEngineSection";
 import { OrgSettingsSection } from "./OrgSettingsSection";
+import { RoutingPolicySection } from "./RoutingPolicySection";
 import { VectorStoreSection } from "./VectorStoreSection";
 import { BankConnectorSection } from "../finance/BankConnectorSection";
 import { PageHeader, Tabs } from "./ui";
@@ -42,7 +43,7 @@ export function SettingsPage() {
       <p className="mb-5 text-xs text-muted">{current.description}</p>
       <div className="grid gap-5">
         {current.value === "organization" && <OrgSettingsSection />}
-        {current.value === "models" && <EmbeddingModelsPage />}
+        {current.value === "models" && <><EmbeddingModelsPage /><RoutingPolicySection /></>}
         {current.value === "documents" && <><DocumentParsersSection /><OcrEngineSection /></>}
         {current.value === "media" && <MediaTranscriptionSection />}
         {current.value === "index" && <VectorStoreSection />}

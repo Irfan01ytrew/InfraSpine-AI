@@ -40,6 +40,7 @@ from app.api.routes import (
     admin_parsers,
     admin_providers,
     admin_reports,
+    admin_routing,
     admin_agent_runs,
     admin_traces,
     auth,
@@ -416,6 +417,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_ocr.router)
     app.include_router(admin_parsers.router)
     app.include_router(admin_providers.router)
+    app.include_router(admin_routing.router)
     app.include_router(admin_traces.router)
     app.include_router(admin_reports.router)
     app.include_router(admin_agent_runs.router)

@@ -181,6 +181,9 @@ import type {
   LegacyBrowserRun,
   LegacyBrowserStatus,
   OrgSettings,
+  RoutingPolicy,
+  RoutingPolicySave,
+  RoutingReport,
 } from "./types";
 
 export class ApiError extends Error {
@@ -493,6 +496,10 @@ export const api = {
   orgSettings: () => request<OrgSettings>("GET", "/api/admin/platform/org-settings"),
   orgTimeZones: () => request<{ time_zones: string[] }>("GET", "/api/admin/platform/time-zones"),
   saveOrgTimeZone: (time_zone: string) => request<OrgSettings>("PUT", "/api/admin/platform/org-settings", { time_zone }),
+  routingPolicy: () => request<RoutingPolicy>("GET", "/api/admin/routing-policy"),
+  saveRoutingPolicy: (body: RoutingPolicySave) => request<RoutingPolicy>("PUT", "/api/admin/routing-policy", body),
+  routingReport: (days = 30, departmentId?: string) =>
+    request<RoutingReport>("GET", `/api/admin/routing-report?days=${days}${departmentId ? `&department_id=${encodeURIComponent(departmentId)}` : ""}`),
   testOcrEngine: () => request<OcrEngineTestResult>("POST", "/api/admin/ocr-engine/test"),
   documents: () => request<RagDocumentList>("GET", "/api/rag/documents"),
   downloadDocumentFile: (documentId: string) => download(`/api/rag/documents/${encodeURIComponent(documentId)}/file`),

@@ -10,6 +10,7 @@ import logging
 import mimetypes
 import re
 import tempfile
+import time
 import uuid
 from decimal import Decimal, InvalidOperation
 from pathlib import Path as FilePath
@@ -157,6 +158,10 @@ from app.schemas.financial_forms import (
 )
 from app.schemas.database_analysis import DatabaseAnalysisCatalog, DatabaseAnalysisQuery, DatabaseAnalysisResult
 from app.services import audit
+from app.services.llm_runtime import resolve_chat_client, routing_info
+from app.services.model_router import RoutingDecision
+from app.services.routing_records import record_routing
+from app.services.routing_policy import routing_context_for_user
 from app.services.database_analysis import (
     DatabaseAnalysisAccessDenied,
     DatabaseAnalysisConfigurationError,
@@ -928,6 +933,22 @@ async def knowledge_chat(
     payload: RagChatRequest, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings, rag: Rag
 ) -> RagChatResponse:
     """Stateless single question (client-supplied context). Persistent chats use /api/conversations."""
+    routing_holder: dict[str, RoutingDecision | None] = {"decision": None}
+    answer_started = time.monotonic()
+    # The caller's department and the monthly budget that applies to them,
+    # resolved once per request from the stored routing policy.
+    routing_ctx = await routing_context_for_user(db, user.id)
+
+    async def _routed_llm():
+        client, decision = await resolve_chat_client(
+            request.app.state.llm_runtime, db, payload.question, model_choice=payload.model_choice(),
+            department_id=routing_ctx.department_id,
+            monthly_budget_usd=routing_ctx.monthly_budget_usd,
+            policy_config=routing_ctx.config,
+        )
+        routing_holder["decision"] = decision
+        return client
+
     async with tracing.traced(
         request.app.state.sessionmaker, settings, route="rag_chat", question=payload.question,
         user_id=user.id, request_id=request.state.request_id,
@@ -938,7 +959,7 @@ async def knowledge_chat(
                 user,
                 rag,
                 settings,
-                lambda: request.app.state.llm_runtime.get_client(db, payload.model_choice()),
+                _routed_llm,
                 payload.question,
                 history=[Turn(t.question, t.answer) for t in payload.history[-3:]],
                 document_ids=payload.document_ids,
@@ -949,6 +970,25 @@ async def knowledge_chat(
             )
             # Trace persistence uses a separate session. End retrieval/memory's request transaction first
             # so concurrent traces cannot exhaust the pool while every request holds its own connection.
+            if routing_holder["decision"] is not None:
+                response.routing = routing_info(routing_holder["decision"])
+                try:
+                    await record_routing(
+                        db,
+                        routing_holder["decision"],
+                        status=(
+                            "downgraded"
+                            if routing_holder["decision"].budget_action == "downgrade"
+                            else "ok"
+                        ),
+                        latency_ms=int((time.monotonic() - answer_started) * 1000),
+                        request_id=getattr(request.state, "request_id", None),
+                        user_id=user.id,
+                        department_id=routing_ctx.department_id,
+                        settings=settings,
+                    )
+                except Exception:
+                    logger.warning("Could not record routing", exc_info=True)
             await db.commit()
             return response
         except BaseException:
