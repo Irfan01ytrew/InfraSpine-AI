@@ -3,6 +3,7 @@ import { RunsPanel } from "../workflows/RunsPanel";
 import { Activity, ArrowRight, Boxes, Check, CircleAlert, Clock3, Database, Gauge, Layers3, Network, RefreshCw, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import { describeError, request } from "../api";
 import { graphApi } from "../company-graph/api";
+import { DigitalTwinWorkspace } from "../digital-twin/TwinWorkspace";
 import { GraphMap } from "../company-graph/GraphMap";
 import type { Graph, GraphRecord, Quality, Tenant } from "../company-graph/types";
 import { workflowApi } from "../workflows/api";
@@ -11,12 +12,13 @@ import { bc } from "../continuity/api";
 import type { Dashboard as ContinuityDashboard, Workspace } from "../continuity/types";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Input, PageHeader, Skeleton, Stat, Textarea } from "./ui";
 
-export type WorkspaceView = "company-graph" | "workflow-engine" | "governance" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality";
+export type WorkspaceView = "company-graph" | "digital-twin" | "workflow-engine" | "governance" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality";
 type Navigate = (view: string) => void;
 
 export function ModuleWorkspacesPage({ view, onNavigate }: { view: WorkspaceView; onNavigate: Navigate }) {
   switch (view) {
     case "company-graph": return <CompanyGraphWorkspace />;
+    case "digital-twin": return <DigitalTwinWorkspace />;
     case "workflow-engine": return <WorkflowEngineWorkspace />;
     case "governance": return <GovernanceWorkspace onNavigate={onNavigate} />;
     case "continuity": return <ContinuityWorkspace />;
@@ -294,6 +296,7 @@ export function FrontendUxWorkspace({ onNavigate }: { onNavigate: Navigate }) {
     { label: "Knowledge & AI Brain", detail: "Documents, citations and conversation workbench", view: "knowledge" },
     { label: "AI Agent Studio", detail: "Agent tools, approvals and run histories", view: "agent-studio" },
     { label: "Company graph", detail: "Entity and relationship map", view: "company-graph" },
+    { label: "Digital twin", detail: "Live model of teams, money flow, and what breaks", view: "digital-twin" },
     { label: "Operations and workflows", detail: "Process discovery and workflow runs", view: "process-intelligence" },
     { label: "Quality evidence", detail: "Reviewed tests and release blockers", view: "quality" },
     { label: "Platform health", detail: "Read-only infrastructure telemetry", view: "infrastructure" },

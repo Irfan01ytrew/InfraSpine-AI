@@ -76,12 +76,12 @@ const WorkspacesPage = lazy(async () => {
   return { default: module.WorkspacesPage };
 });
 
-type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
+type View = "process-intelligence" | "finance" | "module-control-center" | "company-graph" | "digital-twin" | "workflow-engine" | "governance" | "recovery" | "continuity" | "frontend-ux" | "integrations" | "infrastructure" | "quality" | "home" | "invite" | "knowledge" | "interviews" | "my-work" | "research" | "proposals" | "forecasts" | "market-research" | "training" | "org" | "claims" | "approvals" | "handoffs" | "meetings" | "requests" | "expertise" | "departments" | "workspaces" | "partner-workspaces" | "memory" | "automation" | "agents" | "agent-studio" | "security" | "settings" | "providers" | "traces" | "logs" | "people" | "reports" | "deployment" | "connectors" | "budgets" | "request-forms" | "webhooks";
 
 // The view lives in the URL hash so a refresh keeps the page and it can be linked (#/logs).
 function viewFromHash(isAdmin: boolean, isManager: boolean, canViewReports = false, canInvite = false): View {
   const view = window.location.hash.replace(/^#\/?/, "").split("?", 1)[0] as View;
-  if (["company-graph", "workflow-engine", "governance", "recovery", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view)) return isAdmin ? view : "knowledge";
+  if (["company-graph", "digital-twin", "workflow-engine", "governance", "recovery", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view)) return isAdmin ? view : "knowledge";
   if (view === "process-intelligence") return view;
   if (view === "finance") return view; // the finance API decides per department
   if (view === "module-control-center") return isAdmin ? view : "knowledge";
@@ -208,7 +208,7 @@ export function Console({ user, onSignOut, brandName = "InfraSpine AI", onCompan
         <div className={wide ? "contents" : "page-container mx-auto w-full max-w-[1240px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"}>
         {view === "module-control-center" ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><ModuleControlCenterPage /></Suspense>
-        ) : ["company-graph", "workflow-engine", "governance", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view) ? (
+        ) : ["company-graph", "digital-twin", "workflow-engine", "governance", "continuity", "frontend-ux", "integrations", "infrastructure", "quality"].includes(view) ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><ModuleWorkspacesPage view={view as WorkspaceView} onNavigate={(v) => setView(v as View)} /></Suspense>
         ) : view === "recovery" ? (
           <Suspense fallback={<Skeleton className="h-[34rem] w-full" />}><RecoveryPage user={user} /></Suspense>

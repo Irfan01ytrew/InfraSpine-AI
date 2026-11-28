@@ -32,6 +32,7 @@ export function buildNav(isAdmin: boolean, isManager: boolean, canViewReports = 
         { view: "knowledge", label: "01 · Knowledge & AI Brain", icon: BookOpen },
         { view: "agent-studio", label: "02 · IRFANIX AI Agent", icon: Bot },
         { view: "company-graph", label: "03 · Company intelligence", icon: Network },
+        { view: "digital-twin", label: "Digital twin", icon: Network },
         { view: "process-intelligence", label: "04 · Process intelligence", icon: Workflow },
         { view: "workflow-engine", label: "05 · Workflow engine", icon: Workflow },
         { view: "governance", label: "06 · Governance & security", icon: ShieldCheck },
