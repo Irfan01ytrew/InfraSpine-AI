@@ -92,6 +92,11 @@ from app.rag.tables import (
 from app.rag.tracing import decide, stage
 from app.rag.sufficiency import credential_values_in, is_company_specific, is_evaluative_question, redact_credentials
 from app.services.llm import LLMClient
+from app.services.live_data import (
+    LiveAnswer,
+    PublicWebLiveSearchProvider,
+    answer_live_question,
+)
 from app.services.public_web import (
     _query_terms,
     is_current_cricket_request,
@@ -385,6 +390,7 @@ def _format_web_answer(result: dict) -> str:
         str(result.get("answer") or "").strip(),
     )
     sources = result.get("sources") or []
+    checked_at = ""
     if sources:
         lines = []
         for index, source in enumerate(sources[:20], 1):
@@ -399,9 +405,38 @@ def _format_web_answer(result: dict) -> str:
                     f" · Retrieved: {retrieved_at}" if retrieved_at else ""
                 )
                 lines.append(f"- [W{index}] [{title or 'Web source'}](<{url}>){timestamp}")
+                if retrieved_at:
+                    checked_at = max(checked_at, retrieved_at)
         if lines:
             answer += "\n\n### Web sources\n" + "\n".join(lines)
+            answer += f"\n\nChecked live at {checked_at}."
     return answer
+
+
+def _live_answer_to_web_answer(live_answer: LiveAnswer) -> str:
+    """Render a live answer's findings in the chat's web-answer shape.
+
+    Live answers cite [S#] under "### Live sources"; the Knowledge chat renders
+    [W#] chips from the "### Web sources" block, so the citations are renamed
+    and the sources block is left to ``_format_web_answer``, which rebuilds it
+    from the source records (with the "Checked live at" line). Only the
+    findings part is returned here, so the sources block is never duplicated.
+    Follow-up actions (Step P slice 4) are offered as plain text; offering one
+    never creates it - the user must ask for it and approve it first.
+    """
+    findings = live_answer.text.split("### Live sources", 1)[0].rstrip()
+    converted = re.sub(
+        r"\[S\d+(?:\s*[,;]\s*S\d+)*\]",
+        lambda match: match.group().replace("S", "W"),
+        findings,
+    )
+    if live_answer.followup_actions:
+        offers = "\n".join(
+            f"- {action.label} (needs your approval first)"
+            for action in live_answer.followup_actions
+        )
+        converted += f"\n\nFollow-ups you can ask for:\n{offers}"
+    return converted
 
 
 @dataclass(frozen=True)
@@ -947,14 +982,36 @@ async def run_chat(
                     native_error = exc
                     logger.info("Native live web grounding unavailable (%s); trying public search fallback", type(exc).__name__)
 
-                    try:
-                        # Public search extracts bounded, SSRF-safe passages before synthesis.
-                        web_result = await public_web_research(await get_llm(), settings, web_prompt, urls=urls)
-                    except (LLMUnavailableError, LLMTimeoutError, LLMRateLimitError, Exception) as fallback_exc:
+                    # Step P slice 2: the fallback answers through the live-data
+                    # provider seam (the same public search underneath), so the
+                    # answer is cited from retrieved sources only and a failed or
+                    # irrelevant lookup becomes an insufficient answer that never
+                    # guesses. Lookup failures are converted inside
+                    # ``answer_live_question`` instead of being raised.
+                    live_provider = PublicWebLiveSearchProvider(
+                        await get_llm(), settings, prompt=web_prompt, urls=urls
+                    )
+                    live_answer = await answer_live_question(live_provider, question)
+                    if live_answer.insufficient:
                         logger.info(
-                            "Public web fallback unavailable native_error=%s fallback_error=%s",
-                            type(native_error).__name__, type(fallback_exc).__name__,
+                            "Public web fallback returned no verifiable live sources native_error=%s",
+                            type(native_error).__name__,
                         )
+                    else:
+                        web_result = {
+                            "answer": _live_answer_to_web_answer(live_answer),
+                            "sources": [
+                                {
+                                    "title": source.title,
+                                    "url": source.url,
+                                    "published_at": source.published_at,
+                                    "retrieved_at": source.retrieved_at,
+                                }
+                                for source in live_answer.sources
+                            ],
+                            "model": live_provider.model,
+                            "provider": live_provider.provider,
+                        }
         if web_result is None:
             return ChatResult(
                 GroundedAnswer(

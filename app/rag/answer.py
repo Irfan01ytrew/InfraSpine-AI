@@ -244,7 +244,14 @@ _UPLOAD_REFERENCE = re.compile(
     r"\b(?:my|meri?|mere|hamari?)\s+(?:uploaded\s+)?(?:files?|docs?|documents?|uploads?|cv|resume|résumé)\b"
     r"|\b(?:uploaded\s+)?(?:files?|docs?|documents?)\s+(?:i\s+)?(?:have\s+)?uploaded\b"
     r"|\bjo\s+(?:files?|docs?|documents?|upload\w*)\b"
-    r"|\b(?:upload\s+kiya|upload\s+kia|upload\s+ki\s+hoi|upload\s+ki\s+hui|upload\s+ki\s+th[iy])\b",
+    r"|\b(?:upload\s+kiya|upload\s+kia|upload\s+ki\s+hoi|upload\s+ki\s+hui|upload\s+ki\s+th[iy])\b"
+    # Step P slice 2: bare upload references, not only possessive ones.
+    # "the next match in the uploaded report" is a document question, not a
+    # live lookup - the old guard only caught "my uploaded document".
+    r"|\bthe\s+uploaded\s+(?:files?|docs?|documents?|uploads?|report|pdf|spreadsheet|sheet|presentation|slides?|cv|resume|résumé)\b"
+    r"|\buploaded\s+(?:report|pdf|file|document|doc|spreadsheet|sheet|presentation|slides?|cv|resume|résumé)\b"
+    r"|\bupload\s+ki\s+(?:hoi|hui|gai)\s+(?:file|report|document|doc|pdf|sheet)\b"
+    r"|\b(?:file|report|document|doc)\s+(?:jo\s+)?upload\s+ki\s+(?:hoi|hui|gai)\b",
     re.IGNORECASE,
 )
 
@@ -381,6 +388,17 @@ _LIVE_FACT_REQUEST = re.compile(
     r"|\b(?:aaj|aj)\s+(?:ka|ki)\s+(?:rate|mausam|news)\b",
     re.IGNORECASE,
 )
+# Step P: future-schedule questions are live-data questions too. "pak a ka next
+# match kb hai?" has no present-tense live word, so it used to fall through to
+# RAG and die at the evidence gate. A bare "when" stays out: "When was the
+# 1992 world cup final?" is historical, not live. The schedule pattern needs a
+# dated event plus a next/upcoming/when word (either order).
+_LIVE_SCHEDULE_REQUEST = re.compile(
+    r"\b(?:next|upcoming|agla|agli|aane|aanay)\b.{0,40}\b(?:match|matches|game|games|fixture|fixtures|series|tournament|tournaments|concert|event|election|launch|release)\b"
+    r"|\b(?:match|matches|game|games|fixture|fixtures|series)\b.{0,40}\b(?:kb|kab|when|kis\s+din|kis\s+tarikh|kis\s+date|what\s+time|what\s+date)\b"
+    r"|\bwhen\s+is\s+the\s+next\b",
+    re.IGNORECASE,
+)
 _LIVE_LOCATION_RU = re.compile(
     r"^\s*(?P<subject>.+?)\s+(?:ki\s+)?(?:kahan|kha|kidhar|kidr)\s+(?:hai|hain|he|h)\s*[?!.]*\s*$",
     re.IGNORECASE,
@@ -444,8 +462,19 @@ def is_web_lookup_request(question: str) -> bool:
         live_location = False
     return bool(
         requested_web_urls(question)
-        or _WEB_LOOKUP_REQUEST.search(question)
-        or _LIVE_FACT_REQUEST.search(question)
+        or (
+            not refers_to_uploads(question)
+            and _WEB_LOOKUP_REQUEST.search(question)
+        )
+        or (
+            not refers_to_uploads(question)
+            and _LIVE_FACT_REQUEST.search(question)
+        )
+        or (
+            not refers_to_uploads(question)
+            and not is_company_specific(question)
+            and _LIVE_SCHEDULE_REQUEST.search(question)
+        )
         or live_location
         or (
             not refers_to_uploads(question)

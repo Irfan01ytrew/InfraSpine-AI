@@ -48,6 +48,20 @@ test("web citations support both standard and angle-bracket source URLs", () => 
   assert.equal(sources.has("W3"), false);
 });
 
+test("web citation targets keep published and retrieved timestamps, never inventing a missing date", () => {
+  const sources = webCitationTargets(
+    "- [W1] [Official score page](<https://scores.example.com/live>) · Published: 2026-11-21T05:15:00Z\n"
+    + "- [W2] [Live results](<https://scores.example.com/results>) · Retrieved: 2026-11-21T05:16:00Z\n"
+    + "- [W3] [Undated page](<https://example.com/undated>)",
+  );
+  assert.equal(sources.get("W1").published, "2026-11-21T05:15:00Z");
+  assert.equal(sources.get("W1").retrieved, null);
+  assert.equal(sources.get("W2").published, null);
+  assert.equal(sources.get("W2").retrieved, "2026-11-21T05:16:00Z");
+  assert.equal(sources.get("W3").published, null);
+  assert.equal(sources.get("W3").retrieved, null);
+});
+
 test("unsafe destinations, tracking images and raw HTML cannot execute", () => {
   for (const url of ["javascript:alert(1)", "data:text/html,x", "//evil.test/x", "/\\evil.test", "/api/%5cevil", "https://a:b@example.com", "https://example.com\n"]) {
     assert.equal(safeAnswerUrl(url), "", url);

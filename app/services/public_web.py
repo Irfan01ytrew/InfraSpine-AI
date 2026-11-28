@@ -544,10 +544,11 @@ def is_current_cricket_request(prompt: str) -> bool:
         prompt, re.I | re.S,
     )
     question = match.group(1) if match else prompt
-    cricket = bool(re.search(r"\bcricket\b|کرکٹ", question, re.I))
+    cricket = bool(re.search(r"\bcricket\b|کرکٹ|\bmatch\b|\bscorecard\b", question, re.I))
     current = bool(re.search(
         r"\b(?:live|current|currently|now|today|score|scores|status|ongoing|right\s+now|"
-        r"is+s?\s+wa[qk]t|abhi|aaj|aj|ho\s+rah[aeiy]+|chal\s+raha)\b|اس\s+وقت|آج", question, re.I,
+        r"is+s?\s+wa[qk]t|abhi|aaj|aj|ho\s+rah[aeiy]+|chal\s+raha|next|upcoming|scheduled|"
+        r"fixture|fixtures|kb|kab|agla|agli|aane)\b|اس\s+وقت|آج", question, re.I,
     ))
     return cricket and current
 

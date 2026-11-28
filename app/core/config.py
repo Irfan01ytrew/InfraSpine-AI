@@ -132,6 +132,10 @@ class Settings(DatabaseSettings):
     # Google Search grounding is preferred when the active Gemini credential/model supports it; otherwise
     # choose this SSRF-protected public HTML/RSS search provider first, then fall back to the others.
     rag_public_search_provider: Literal["auto", "duckduckgo", "bing_rss", "yahoo"] = "auto"
+    # Live-answer freshness window (Step P slice 2): when at least one live source was published within
+    # this many days, dated sources older than the window are dropped from a live answer. Undated
+    # sources are always kept and shown as undated; when nothing is fresh, nothing is dropped.
+    rag_live_freshness_days: int = Field(default=14, ge=1, le=365)
     # Legacy-browser capture is disabled unless an operator explicitly allowlists exact origins and a browser binary.
     rag_legacy_browser_enabled: bool = False
     rag_legacy_browser_allowed_origins: str = ""
