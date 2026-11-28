@@ -32,6 +32,19 @@ export function spendSeries(spend, currency) {
   return { months, departments, series, max: Math.max(0, ...series.map((point) => point.total)) };
 }
 
+/** Cash-flow forecast months -> chart points for one currency: { months, series:[{month, expected, closing, confidence}] }.
+ *  Amounts stay strings in the API; the chart needs numbers, rounded to 2 decimals.
+ *  Every point is a forecast — the caller must label it as such in the UI. */
+export function cashFlowSeries(cashFlow) {
+  const months = (cashFlow?.months ?? []).map((m) => ({
+    month: m.month,
+    expected: Math.round(Number(m.expected_outflow) * 100) / 100,
+    closing: Math.round(Number(m.closing_balance) * 100) / 100,
+    confidence: m.confidence,
+  }));
+  return { months, max: Math.max(0, ...months.map((m) => m.expected)) };
+}
+
 /** Short, human hash for display; the full hash is what the approver presents. */
 export function shortHash(hash) {
   return typeof hash === "string" && hash.length >= 12 ? `${hash.slice(0, 6)}…${hash.slice(-6)}` : String(hash ?? "");

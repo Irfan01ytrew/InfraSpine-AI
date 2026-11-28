@@ -5,10 +5,10 @@ import { describeError } from "../api";
 import { useFeedback } from "../components/Feedback";
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Input, PageHeader, SelectInput, Skeleton, Stat, Table, Tabs, Textarea } from "../components/ui";
 import { financeApi } from "./api";
-import type { Batch, BatchSummary, FinanceScope, Invoice, KnowledgeDocument, Payment, PaymentApproval, Spend } from "./api";
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "./financeView.mjs";
+import type { Batch, BatchSummary, CashFlow, FinanceScope, Invoice, KnowledgeDocument, Payment, PaymentApproval, Spend, TaxReport } from "./api";
+import { actionableStep, cashFlowSeries, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "./financeView.mjs";
 
-type Tab = "batches" | "exceptions" | "approvals" | "spend";
+type Tab = "batches" | "exceptions" | "approvals" | "spend" | "cashflow" | "tax";
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger";
 
 const STATUS_TONE: Record<string, Tone> = {
@@ -62,11 +62,14 @@ export function FinancePage() {
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)} items={[
         { value: "batches", label: "Batches" }, { value: "exceptions", label: "Exceptions queue" },
         { value: "approvals", label: "Payment approvals" }, { value: "spend", label: "Spend chart" },
+        { value: "cashflow", label: "Cash flow" }, { value: "tax", label: "Tax report" },
       ]} />
       {tab === "batches" && <BatchesTab group={group} can={can} reasons={reasons} revision={revision} toast={toast} />}
       {tab === "exceptions" && <ExceptionsTab group={group} can={can} revision={revision} toast={toast} />}
       {tab === "approvals" && <ApprovalsTab revision={revision} toast={toast} />}
       {tab === "spend" && <SpendTab group={group} revision={revision} />}
+      {tab === "cashflow" && <CashFlowTab group={group} revision={revision} toast={toast} />}
+      {tab === "tax" && <TaxReportTab group={group} revision={revision} toast={toast} />}
     </>}
   </div>;
 }
@@ -188,6 +191,11 @@ function BatchDetail({ id, group, can, reasons, revision, toast, onChanged }: {
               <FileUp className="size-4" /> Upload PDF/DOC
               <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg"
                 onChange={(event) => { const file = event.target.files?.[0]; if (file) void act("Invoice uploaded", () => financeApi.upload(id, file)); event.target.value = ""; }} />
+            </label>
+            <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-surface-2" title="A photographed receipt becomes a pending invoice in the approval queue. It is read with local OCR and checked like any other invoice.">
+              <FileUp className="size-4" /> Upload receipt photo
+              <input type="file" className="hidden" accept=".png,.jpg,.jpeg,.webp"
+                onChange={(event) => { const file = event.target.files?.[0]; if (file) void act("Receipt photo added", () => financeApi.uploadReceiptPhoto(id, file)); event.target.value = ""; }} />
             </label>
           </div>
         </div>}
@@ -320,6 +328,111 @@ function ApprovalsTab({ revision, toast }: { revision: number; toast: ToastFn })
       {item.own_request && <Alert tone="warning" title="You requested this payment">Another person must decide it.</Alert>}
     </CardBody>
   </Card>)}</div>;
+}
+
+function CashFlowTab({ group, revision, toast }: { group: string; revision: number; toast: ToastFn }) {
+  const [data, setData] = useState<CashFlow | null>(null);
+  const [scopeAll, setScopeAll] = useState(true);
+  const [currency, setCurrency] = useState("PKR");
+  const [months, setMonths] = useState(3);
+  const [opening, setOpening] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setBusy(true);
+    financeApi.cashFlow(currency, months, scopeAll ? undefined : group, opening || undefined)
+      .then((result) => setData(result))
+      .catch((err) => toast("error", "Cash-flow forecast could not be loaded", describeError(err)))
+      .finally(() => setBusy(false));
+  }, [currency, months, scopeAll, group, opening, toast]);
+  useEffect(() => { void load(); }, [load, revision]);
+  const chart = cashFlowSeries(data);
+  return <Card>
+    <CardHeader title="Cash-flow forecast" description="Forward projection — every number is a forecast, never money already spent. Inflows are not recorded anywhere, so the projection covers outflows only."
+      actions={<div className="flex flex-wrap items-center gap-2">
+        <Badge tone="warning">forecast</Badge>
+        <SelectInput value={scopeAll ? "all" : "one"} onChange={(e) => setScopeAll(e.target.value === "all")} aria-label="Scope">
+          <option value="all">All my departments</option><option value="one">This department</option></SelectInput>
+        <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} aria-label="Currency" className="w-20" maxLength={3} />
+        <SelectInput value={String(months)} onChange={(e) => setMonths(Number(e.target.value))} aria-label="Months">
+          <option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></SelectInput>
+        <Input value={opening} onChange={(e) => setOpening(e.target.value)} placeholder="Opening balance" aria-label="Opening balance" className="w-36" inputMode="decimal" />
+        <Button variant="secondary" disabled={busy} onClick={load}>Refresh</Button>
+        <Button variant="secondary" disabled={!data} onClick={() => void financeApi.downloadCsv(
+          `/cash-flow.csv?currency=${currency}&months=${months}${scopeAll ? "" : `&group_id=${group}`}${opening ? `&opening_balance=${encodeURIComponent(opening)}` : ""}`,
+          `cash-flow-${data?.as_of ?? "forecast"}.csv`)}>Download CSV</Button>
+      </div>} />
+    <CardBody>
+      {!data ? <Skeleton className="h-40 w-full" /> : <>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span>Opening balance: <b>{data.currency} {data.opening_balance}</b></span>
+          <span>Expected outflow ({data.months.length} mo, forecast): <b>{data.currency} {data.total_expected_outflow}</b></span>
+          <span>Closing balance (forecast): <b>{data.currency} {data.closing_balance}</b></span>
+          <span className="text-muted">History used: {data.history_months_used} month(s) · as of {data.as_of}</span>
+        </div>
+        {data.warnings.length > 0 && <Alert tone="warning" title="Forecast warnings">{data.warnings.map((w) => w.detail ?? w.code).join(" ")}</Alert>}
+        <div className="flex h-48 items-end gap-2" role="img" aria-label="Forecast expected outflow by month">
+          {chart.months.map((point) => <div key={point.month} className="flex h-full flex-1 flex-col justify-end" title={`${point.month} (forecast): ${data.currency} ${point.expected.toLocaleString()} · closing ${point.closing.toLocaleString()} · ${point.confidence} confidence`}>
+            <div className="rounded-t bg-warning" style={{ height: `${chart.max ? (point.expected / chart.max) * 100 : 0}%` }} />
+            <div className="mt-1 text-center text-[10px] text-muted">{point.month.slice(2)}</div>
+          </div>)}
+        </div>
+        <Table>
+          <thead><tr><th>Month</th><th>Scheduled (forecast)</th><th>Recurring estimate (forecast)</th><th>Expected outflow (forecast)</th><th>Net (forecast)</th><th>Closing (forecast)</th><th>Basis</th><th>Confidence</th></tr></thead>
+          <tbody>{data.months.map((m) => <tr key={m.month}>
+            <td>{m.month}</td><td>{data.currency} {m.scheduled_outflow}</td><td>{data.currency} {m.recurring_estimate}</td>
+            <td>{data.currency} {m.expected_outflow}</td><td>{data.currency} {m.net}</td><td>{data.currency} {m.closing_balance}</td>
+            <td>{m.basis}</td><td><Badge tone={m.confidence === "high" ? "success" : m.confidence === "medium" ? "primary" : "warning"}>{m.confidence}</Badge></td>
+          </tr>)}</tbody>
+        </Table>
+      </>}
+    </CardBody>
+  </Card>;
+}
+
+function TaxReportTab({ group, revision, toast }: { group: string; revision: number; toast: ToastFn }) {
+  const [data, setData] = useState<TaxReport | null>(null);
+  const [scopeAll, setScopeAll] = useState(true);
+  const [months, setMonths] = useState(12);
+  const [currency, setCurrency] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setBusy(true);
+    financeApi.taxReport(months, scopeAll ? undefined : group, currency || undefined)
+      .then((result) => setData(result))
+      .catch((err) => toast("error", "Tax report could not be loaded", describeError(err)))
+      .finally(() => setBusy(false));
+  }, [months, scopeAll, group, currency, toast]);
+  useEffect(() => { void load(); }, [load, revision]);
+  return <Card>
+    <CardHeader title="Tax report" description="Totals by month, department and currency over verified and paid invoices."
+      actions={<div className="flex flex-wrap items-center gap-2">
+        <SelectInput value={scopeAll ? "all" : "one"} onChange={(e) => setScopeAll(e.target.value === "all")} aria-label="Scope">
+          <option value="all">All my departments</option><option value="one">This department</option></SelectInput>
+        <SelectInput value={String(months)} onChange={(e) => setMonths(Number(e.target.value))} aria-label="Months">
+          <option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></SelectInput>
+        <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} placeholder="Currency (all)" aria-label="Currency filter" className="w-28" maxLength={3} />
+        <Button variant="secondary" disabled={busy} onClick={load}>Refresh</Button>
+        <Button variant="secondary" disabled={!data} onClick={() => void financeApi.downloadCsv(
+          `/tax-report.csv?months=${months}${scopeAll ? "" : `&group_id=${group}`}${currency ? `&currency=${currency}` : ""}`,
+          `tax-report-${data?.to ?? "report"}.csv`)}>Download CSV</Button>
+      </div>} />
+    <CardBody>
+      {!data ? <Skeleton className="h-40 w-full" /> : <>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <span>Period: <b>{data.from} → {data.to}</b></span>
+          {data.totals.map((t) => <span key={t.currency}>Total {t.currency}: <b>{t.amount}</b> ({t.count} invoices)</span>)}
+        </div>
+        {data.warnings.length > 0 && <Alert tone="warning" title="Report warnings">{data.warnings.map((w) => `${w.detail ?? w.code}${w.count !== undefined ? ` (${w.count})` : ""}`).join(" ")}</Alert>}
+        {data.rows.length === 0 ? <EmptyState icon={<Wallet />} title="No verified or paid invoices in this period" />
+          : <Table>
+            <thead><tr><th>Month</th><th>Department</th><th>Currency</th><th>Amount</th><th>Invoices</th></tr></thead>
+            <tbody>{data.rows.map((row, index) => <tr key={`${row.month}-${row.department}-${row.currency}-${index}`}>
+              <td>{row.month}</td><td>{row.department}</td><td>{row.currency}</td><td>{row.amount}</td><td>{row.count}</td>
+            </tr>)}</tbody>
+          </Table>}
+      </>}
+    </CardBody>
+  </Card>;
 }
 
 function SpendTab({ group, revision }: { group: string; revision: number }) {

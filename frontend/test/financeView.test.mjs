@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { actionableStep, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "../src/finance/financeView.mjs";
+import { actionableStep, cashFlowSeries, headline, reasonCounts, shortHash, skippedSummary, spendSeries } from "../src/finance/financeView.mjs";
 
 test("headline reads like the founder scenario", () => {
   assert.equal(headline({ verified: 32, total: 50 }), "32 of 50 verified");
@@ -48,4 +48,21 @@ test("only the step the person may perform is offered", () => {
   assert.equal(actionableStep(run, ["funds.transfer"]), null);
   assert.equal(actionableStep({ ...run, status: "paused" }, ["invoice.verify"]), null);
   assert.equal(shortHash("a".repeat(64)), "aaaaaa…aaaaaa");
+});
+
+test("cash-flow series turns forecast months into chart points", () => {
+  const cashFlow = {
+    months: [
+      { month: "2026-11", expected_outflow: "125000.00", closing_balance: "75000.00", confidence: "low" },
+      { month: "2026-12", expected_outflow: "100000.00", closing_balance: "-25000.00", confidence: "low" },
+    ],
+  };
+  const result = cashFlowSeries(cashFlow);
+  assert.deepEqual(result.months, [
+    { month: "2026-11", expected: 125000, closing: 75000, confidence: "low" },
+    { month: "2026-12", expected: 100000, closing: -25000, confidence: "low" },
+  ]);
+  assert.equal(result.max, 125000);
+  assert.deepEqual(cashFlowSeries(null), { months: [], max: 0 });
+  assert.deepEqual(cashFlowSeries({ months: [] }), { months: [], max: 0 });
 });

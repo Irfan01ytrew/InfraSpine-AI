@@ -11,6 +11,11 @@ export function spendSeries(spend: Spend | null | undefined, currency?: string):
   months: string[]; departments: string[]; max: number;
   series: { month: string; total: number; parts: { department: string; amount: number }[] }[];
 };
+export interface CashFlowMonth { month: string; expected_outflow: string; closing_balance: string; confidence: string }
+export interface CashFlowLike { months: CashFlowMonth[] }
+export function cashFlowSeries(cashFlow: CashFlowLike | null | undefined): {
+  months: { month: string; expected: number; closing: number; confidence: string }[]; max: number;
+};
 export function shortHash(hash: string | null | undefined): string;
 export interface SkippedDocument { filename: string; reason: string }
 export function skippedSummary(skipped: readonly SkippedDocument[] | null | undefined): string;

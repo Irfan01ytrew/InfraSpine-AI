@@ -24,6 +24,23 @@ export interface PaymentApproval {
   vendor_name: string; payee_account: string; invoice_numbers: (string | null)[]; requested_by: string; own_request: boolean;
 }
 export interface SpendRow { month: string; department: string; currency: string; amount: string; count: number }
+export interface CashFlowMonth {
+  month: string; kind: string; scheduled_outflow: string; recurring_estimate: string; expected_outflow: string;
+  expected_inflow: string; net: string; closing_balance: string; basis: string; confidence: string;
+}
+export interface CashFlowWarning { code: string; detail?: string }
+export interface CashFlow {
+  kind: string; currency: string; as_of: string; opening_balance: string; closing_balance: string;
+  total_expected_outflow: string; total_expected_inflow: string; history_months_used: number;
+  warnings: CashFlowWarning[]; months: CashFlowMonth[];
+}
+export interface TaxReportRow { month: string; department: string; currency: string; amount: string; count: number }
+export interface TaxReportTotal { currency: string; amount: string; count: number }
+export interface TaxReportWarning { code: string; detail?: string; count?: number }
+export interface TaxReport {
+  kind: string; from: string; to: string; statuses: string[]; months: string[]; departments: string[];
+  currencies: string[]; rows: TaxReportRow[]; totals: TaxReportTotal[]; warnings: TaxReportWarning[];
+}
 export type ConnectorMode = "mock" | "http" | "http+mock";
 export interface ConnectorStatus {
   source: string; admin_mode: string | null; environment_mode: string; modes: string[];
@@ -69,6 +86,31 @@ export const financeApi = {
   decide: (id: string, decision: "approve" | "reject", presented_hash: string, note = "") =>
     call<{ approval_id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, presented_hash, note }),
   spend: (months = 12, group?: string) => call<Spend>("GET", `/spend?months=${months}${group ? `&group_id=${group}` : ""}`),
+  cashFlow: (currency: string, months = 3, group?: string, openingBalance?: string) => {
+    const params = new URLSearchParams({ currency, months: String(months) });
+    if (group) params.set("group_id", group);
+    if (openingBalance !== undefined && openingBalance !== "") params.set("opening_balance", openingBalance);
+    return call<CashFlow>("GET", `/cash-flow?${params.toString()}`);
+  },
+  uploadReceiptPhoto: (id: string, file: File) => { const form = new FormData(); form.append("file", file); return call<{ invoices: Invoice[] }>("POST", `/batches/${id}/invoices/receipt-photo`, form); },
+  taxReport: (months = 12, group?: string, currency?: string) => {
+    const params = new URLSearchParams({ months: String(months) });
+    if (group) params.set("group_id", group);
+    if (currency) params.set("currency", currency);
+    return call<TaxReport>("GET", `/tax-report?${params.toString()}`);
+  },
+  downloadCsv: async (path: string, filename: string) => {
+    const response = await fetch(root + path, {
+      headers: { Accept: "text/csv", "X-Requested-With": "InfraSpineAdmin" },
+      credentials: "same-origin", cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = filename; link.click();
+    URL.revokeObjectURL(url);
+  },
   connector: () => call<ConnectorStatus>("GET", "/connector"),
   setConnector: (mode: ConnectorMode | null) => call<ConnectorStatus>("PUT", "/connector", { mode }),
   perform: (group: string, run: string, step: string) =>

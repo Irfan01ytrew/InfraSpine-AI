@@ -13,13 +13,15 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import AppSettings, CurrentUser, DbSession
 from app.core.errors import InvalidInputError
 from app.finance import extraction
 from app.finance.connectors import resolve_connector
-from app.finance.service import FinanceService, batch_out, invoice_out, money, payment_out
+from app.finance.service import (FinanceService, batch_out, cash_flow_csv, cash_flow_out, invoice_out, money,
+                                 payment_out, tax_report_csv, tax_report_out)
 from app.finance.verification import REASONS
 
 router = APIRouter(prefix='/api/finance', tags=['finance'])
@@ -262,6 +264,23 @@ async def upload_invoice(batch_id: UUID, request: Request, db: DbSession, user: 
     return {'invoices': [invoice_out(r) for r in rows]}
 
 
+@router.post('/batches/{batch_id}/invoices/receipt-photo', status_code=201)
+async def upload_receipt_photo(batch_id: UUID, request: Request, db: DbSession, user: CurrentUser,
+                               settings: AppSettings, file: UploadFile = File(...)):
+    """Receipt photo -> `pending` invoice in the approval queue (Step AC slice 2).
+
+    The photo is read with local OCR and run through the same extractor as text/file
+    intake; the same 17 verification checks run when the batch starts. A photo OCR
+    cannot read is an error, never a guessed invoice. Never pays.
+    """
+    content = await file.read(10 * 1024 * 1024 + 1)
+    name = (file.filename or 'receipt.jpg')[:200]
+    service = svc(request, db, user, settings)
+    rows = await service.add_receipt_photo(batch_id, name, content)
+    await db.commit()
+    return {'invoices': [invoice_out(r) for r in rows]}
+
+
 @router.post('/batches/{batch_id}/start', status_code=202)
 async def start_batch(batch_id: UUID, request: Request, db: DbSession, user: CurrentUser, settings: AppSettings):
     batch, run = await svc(request, db, user, settings).start(batch_id)
@@ -305,6 +324,50 @@ async def decide(approval_id: UUID, body: DecisionIn, request: Request, db: DbSe
 async def spend(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
                 months: int = Query(12, ge=1, le=36), group_id: UUID | None = None):
     return await svc(request, db, user, settings).spend(months=months, group_id=group_id)
+
+
+@router.get('/cash-flow')
+async def cash_flow(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                    currency: str = Query(pattern=CURRENCY), months: int = Query(3, ge=1, le=12),
+                    group_id: UUID | None = None, opening_balance: Decimal | None = Query(default=None, ge=0)):
+    """Cash-flow forecast (Step AC slice 3): forward projection, every month labelled
+    `forecast`. Read-only — it never pays, approves or changes anything."""
+    result = await svc(request, db, user, settings).cash_flow(
+        months=months, currency=currency, group_id=group_id, opening_balance=opening_balance)
+    return cash_flow_out(result)
+
+
+@router.get('/cash-flow.csv')
+async def cash_flow_csv_export(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                               currency: str = Query(pattern=CURRENCY), months: int = Query(3, ge=1, le=12),
+                               group_id: UUID | None = None, opening_balance: Decimal | None = Query(default=None, ge=0)):
+    """One-click CSV export of the same cash-flow projection."""
+    result = await svc(request, db, user, settings).cash_flow(
+        months=months, currency=currency, group_id=group_id, opening_balance=opening_balance)
+    return Response(content=cash_flow_csv(result), media_type='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename="cash-flow-{result.as_of.isoformat()}.csv"'})
+
+
+@router.get('/tax-report')
+async def tax_report(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                     months: int = Query(12, ge=1, le=36), group_id: UUID | None = None,
+                     currency: str | None = Query(default=None, pattern=CURRENCY)):
+    """Tax report (Step AC slice 4): totals by period + department + currency over
+    verified/paid invoices. Read-only — it totals DB rows, never pays or approves."""
+    result = await svc(request, db, user, settings).tax_report(
+        months=months, group_id=group_id, currency=currency)
+    return tax_report_out(result)
+
+
+@router.get('/tax-report.csv')
+async def tax_report_csv_export(request: Request, db: DbSession, user: CurrentUser, settings: AppSettings,
+                                months: int = Query(12, ge=1, le=36), group_id: UUID | None = None,
+                                currency: str | None = Query(default=None, pattern=CURRENCY)):
+    """One-click CSV download of the same tax report."""
+    result = await svc(request, db, user, settings).tax_report(
+        months=months, group_id=group_id, currency=currency)
+    return Response(content=tax_report_csv(result), media_type='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename="tax-report-{result["to"]}.csv"'})
 
 
 __all__ = ['router', 'payment_out']

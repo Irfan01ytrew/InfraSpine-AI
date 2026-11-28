@@ -5,7 +5,9 @@ department's platform scope; a record from another department is "not found".
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -16,7 +18,7 @@ from app.db.finance_models import (FinGoodsReceipt, FinInvoice, FinInvoiceBatch,
                                    FinVendor)
 from app.db.models import AccessGroup, User
 from app.db.workflow_engine_models import WorkflowRun, WorkflowStep
-from app.finance import extraction
+from app.finance import cashflow, extraction, receipts
 from app.finance.verification import name_key
 from app.finance.workflow import TEMPLATE_DESCRIPTION, TEMPLATE_NAME, TEMPLATE_REF, invoice_spec
 from app.platform.access import (effective_permissions, ensure_role, grant_membership, principal_for, require,
@@ -41,6 +43,8 @@ FINANCE_PERMISSIONS = ('finance.read', 'finance.manage', 'invoice.ingest', 'invo
                        'funds.transfer')
 ACTIVE_RUN = ('queued', 'running', 'paused', 'compensating')
 SPEND_STATUSES = ('verified', 'approved', 'paid')
+UNPAID_STATUSES = ('pending', 'verified', 'exception', 'approved')
+TAX_STATUSES = ('verified', 'paid')
 
 
 def batch_subject(batch_id) -> str:
@@ -259,6 +263,27 @@ class FinanceService:
                                'updated_at': d.updated_at.isoformat() if getattr(d, 'updated_at', None) else None}
                               for d in docs], 'folders': folders}
 
+    async def add_receipt_photo(self, batch_id, filename: str, content: bytes, *, ocr_provider=None) -> list[FinInvoice]:
+        """Receipt photo -> `pending` invoice in the approval queue (Step AC slice 2).
+
+        Permission (`invoice.ingest`) is checked before the photo is read or parsed.
+        OCR text is untrusted data: it fills fields through the same deterministic
+        extractor as every other intake path; the same 17 verification checks run
+        when the batch starts. A photo OCR cannot read creates nothing. Never pays.
+        """
+        await self.batch(batch_id, 'invoice.ingest')
+        facts = await asyncio.to_thread(receipts.extract_receipt_facts, content, filename,
+                                        date_order=self.settings.rag_date_order, ocr_provider=ocr_provider)
+        # source_kind 'file': the fin_invoices check constraint only allows
+        # json/text/file/document. The photo origin is recorded in the extraction
+        # JSON instead, so the queue can still tell a receipt photo apart.
+        facts = {**facts, 'extraction': {**(facts.get('extraction') or {}), 'receipt_photo': True}}
+        rows = await self.add_invoices(batch_id, [('file', facts, filename[:255],
+                                                   receipts.receipt_digest(content))])
+        audit(self.db, self.p, 'finance.receipt_photo_ingested', target=str(batch_id),
+              details={'count': len(rows), 'filename': filename[:120]})
+        return rows
+
     async def connector_status(self) -> dict:
         from app.finance.connectors import connector_status
         from app.platform.side_effects import org_scope_id
@@ -467,6 +492,134 @@ class FinanceService:
                 'rows': [{'month': r[0], 'department': r[1], 'currency': r[2], 'amount': money(r[3]), 'count': r[4]}
                          for r in rows]}
 
+    # ------------------------------------------------------------------ cash-flow forecast (Step AC slice 3)
+
+    async def cash_flow(self, *, months: int = 3, currency: str, group_id=None, opening_balance=None,
+                        payment_terms_days: int = cashflow.DEFAULT_TERMS_DAYS):
+        """Forward cash-flow projection for one currency (Step AC slice 3).
+
+        History comes from `spend()` (verified/approved/paid invoices only); pending
+        invoices come from the departments this person can read (`finance.read`).
+        FinInvoice has no due-date column, so the forecaster derives due dates
+        (invoice_date + payment terms; no date at all -> month 1 with a warning).
+        A forecast is a forecast: every month is labelled `forecast` with a basis
+        and confidence. This never pays, never approves, never changes a payee.
+        No inflow history is recorded anywhere, so expected inflow is 0 with a
+        warning rather than a number presented as certain.
+        """
+        if not currency or len(currency.strip()) != 3:
+            raise InvalidInputError('Currency must be a 3-letter code.')
+        currency = currency.strip().upper()
+        if not 1 <= months <= cashflow.MAX_MONTHS:
+            raise InvalidInputError(f'Months must be between 1 and {cashflow.MAX_MONTHS}.')
+        groups = await self.readable_groups()
+        if group_id is not None:
+            if group_id not in groups:
+                await self.require(group_id, 'finance.read')  # raises 404/403 with the right reason
+            groups = [group_id]
+        today = await org_today(self.db)
+        warnings = []
+        if not groups:
+            warnings.append({'code': 'no_readable_departments',
+                             'detail': 'You cannot read finance in any department; the projection is empty.'})
+        history: dict[str, Decimal] = {}
+        if groups:
+            spend_rows = await self.spend(months=36, group_id=group_id)
+            for row in spend_rows['rows']:
+                if row['currency'] != currency:
+                    continue
+                history[row['month']] = history.get(row['month'], Decimal('0')) + Decimal(row['amount'])
+        pending = []
+        if groups:
+            rows = (await self.db.scalars(select(FinInvoice).where(
+                FinInvoice.group_id.in_(groups), FinInvoice.status.in_(UNPAID_STATUSES),
+                FinInvoice.currency == currency))).all()
+            pending = [cashflow.PendingInvoice(amount=row.amount, currency=currency, due_date=None,
+                                               invoice_date=row.invoice_date) for row in rows if row.amount]
+        result = cashflow.forecast_cash_flow(
+            history=[cashflow.HistoryMonth(month=month, outflow=amount) for month, amount in sorted(history.items())],
+            pending=pending, opening_balance=opening_balance, currency=currency, months=months, today=today,
+            payment_terms_days=payment_terms_days)
+        warnings.append({'code': 'no_inflow_history',
+                         'detail': 'No inflow history is recorded; expected inflow is 0 and the projection '
+                                   'covers outflows only.'})
+        return replace(result, warnings=[*result.warnings, *warnings])
+
+    # ------------------------------------------------------------------ tax report (Step AC slice 4)
+
+    async def tax_report(self, *, months: int = 12, group_id=None, currency: str | None = None) -> dict:
+        """Totals by period + department + currency over verified/paid invoices.
+
+        Read-only: it totals DB rows, never pays, approves or changes anything.
+        Only departments this person can read (`finance.read`) are included.
+        The invoice schema has no separate expense-category column, so the
+        department (falling back to the department group's name, as `spend()`
+        does) is the breakdown dimension — no category is invented. Invoices
+        with no date or no amount cannot be bucketed or totalled; they are
+        counted in warnings, never silently dropped.
+        """
+        if currency is not None:
+            currency = currency.strip().upper()
+            if len(currency) != 3:
+                raise InvalidInputError('Currency must be a 3-letter code.')
+        groups = await self.readable_groups()
+        if group_id is not None:
+            if group_id not in groups:
+                await self.require(group_id, 'finance.read')  # raises 404/403 with the right reason
+            groups = [group_id]
+        today = await org_today(self.db)
+        months = max(1, min(months, 36))
+        first = date(today.year, today.month, 1)
+        for _ in range(months - 1):
+            first = date(first.year - 1, 12, 1) if first.month == 1 else date(first.year, first.month - 1, 1)
+        labels, cursor = [], first
+        while cursor <= today:
+            labels.append(cursor.strftime('%Y-%m'))
+            cursor = date(cursor.year + 1, 1, 1) if cursor.month == 12 else date(cursor.year, cursor.month + 1, 1)
+        warnings: list[dict] = []
+        if not groups:
+            warnings.append({'code': 'no_readable_departments',
+                             'detail': 'You cannot read finance in any department; the report is empty.'})
+            return {'kind': 'tax_report', 'from': first.isoformat(), 'to': today.isoformat(),
+                    'statuses': list(TAX_STATUSES), 'months': labels, 'departments': [], 'currencies': [],
+                    'rows': [], 'totals': [], 'warnings': warnings}
+        base = [FinInvoice.group_id.in_(groups), FinInvoice.status.in_(TAX_STATUSES)]
+        if currency is not None:
+            base.append(FinInvoice.currency == currency)
+        department = func.coalesce(FinInvoice.department, AccessGroup.name)
+        month = func.to_char(FinInvoice.invoice_date, 'YYYY-MM')
+        rows = (await self.db.execute(
+            select(month.label('month'), department.label('department'), FinInvoice.currency,
+                   func.sum(FinInvoice.amount), func.count())
+            .join(AccessGroup, AccessGroup.id == FinInvoice.group_id)
+            .where(*base, FinInvoice.invoice_date >= first, FinInvoice.invoice_date <= today,
+                   FinInvoice.amount.is_not(None))
+            .group_by(month, department, FinInvoice.currency).order_by(month, department))).all()
+        skipped_no_date = await self.db.scalar(select(func.count()).select_from(FinInvoice).where(
+            *base, FinInvoice.invoice_date.is_(None))) or 0
+        if skipped_no_date:
+            warnings.append({'code': 'skipped_no_date', 'count': int(skipped_no_date),
+                             'detail': 'Invoices with no date cannot be placed in a period and are not totalled.'})
+        skipped_no_amount = await self.db.scalar(select(func.count()).select_from(FinInvoice).where(
+            *base, FinInvoice.invoice_date >= first, FinInvoice.invoice_date <= today,
+            FinInvoice.amount.is_(None))) or 0
+        if skipped_no_amount:
+            warnings.append({'code': 'skipped_no_amount', 'count': int(skipped_no_amount),
+                             'detail': 'Invoices with no amount cannot be totalled.'})
+        totals: dict[str, dict] = {}
+        for r in rows:
+            entry = totals.setdefault(r[2], {'currency': r[2], 'amount': Decimal('0'), 'count': 0})
+            entry['amount'] += r[3] or Decimal('0')
+            entry['count'] += r[4]
+        return {'kind': 'tax_report', 'from': first.isoformat(), 'to': today.isoformat(),
+                'statuses': list(TAX_STATUSES), 'months': labels,
+                'departments': sorted({r[1] for r in rows}),
+                'currencies': sorted({r[2] for r in rows if r[2]}),
+                'rows': [{'month': r[0], 'department': r[1], 'currency': r[2], 'amount': r[3], 'count': r[4]}
+                         for r in rows],
+                'totals': [totals[c] for c in sorted(totals)],
+                'warnings': warnings}
+
     # ------------------------------------------------------------------ finance roles (platform memberships)
 
     async def roles(self, group_id) -> list[dict]:
@@ -536,4 +689,56 @@ def batch_out(row: FinInvoiceBatch) -> dict:
             'currency': row.currency, 'tolerance_pct': money(row.tolerance_pct), 'tolerance_abs': money(row.tolerance_abs),
             'round': row.round, 'wf_run_id': str(row.wf_run_id) if row.wf_run_id else None,
             'created_at': row.created_at.isoformat() if row.created_at else None}
+
+
+def cash_flow_out(result) -> dict:
+    """Serialise a `ForecastResult`: every month is labelled `forecast`, amounts are strings."""
+    return {'kind': result.kind, 'currency': result.currency, 'as_of': result.as_of.isoformat(),
+            'opening_balance': money(result.opening_balance), 'closing_balance': money(result.closing_balance),
+            'total_expected_outflow': money(result.total_expected_outflow),
+            'total_expected_inflow': money(result.total_expected_inflow),
+            'history_months_used': result.history_months_used, 'warnings': result.warnings,
+            'months': [{'month': m.month, 'kind': 'forecast', 'scheduled_outflow': money(m.scheduled_outflow),
+                        'recurring_estimate': money(m.recurring_estimate),
+                        'expected_outflow': money(m.expected_outflow),
+                        'expected_inflow': money(m.expected_inflow), 'net': money(m.net),
+                        'closing_balance': money(m.closing_balance), 'basis': m.basis, 'confidence': m.confidence}
+                       for m in result.months]}
+
+
+def cash_flow_csv(result) -> str:
+    """One-click CSV export of the projection (same numbers as the JSON view)."""
+    import csv
+    import io
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(['month', 'kind', 'scheduled_outflow', 'recurring_estimate', 'expected_outflow',
+                     'expected_inflow', 'net', 'closing_balance', 'basis', 'confidence', 'currency'])
+    for m in result.months:
+        writer.writerow([m.month, 'forecast', money(m.scheduled_outflow), money(m.recurring_estimate),
+                         money(m.expected_outflow), money(m.expected_inflow), money(m.net),
+                         money(m.closing_balance), m.basis, m.confidence, result.currency])
+    return out.getvalue()
+
+
+def tax_report_out(report: dict) -> dict:
+    """Serialise a `tax_report()` dict: amounts are strings, structure unchanged."""
+    return {**report,
+            'rows': [{**row, 'amount': money(row['amount'])} for row in report['rows']],
+            'totals': [{**total, 'amount': money(total['amount'])} for total in report['totals']]}
+
+
+def tax_report_csv(report: dict) -> str:
+    """One-click CSV download of the tax report (same rows as the JSON view)."""
+    import csv
+    import io
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(['month', 'department', 'currency', 'amount', 'count'])
+    for row in report['rows']:
+        writer.writerow([row['month'], row['department'], row['currency'], money(row['amount']), row['count']])
+    return out.getvalue()
+
 
