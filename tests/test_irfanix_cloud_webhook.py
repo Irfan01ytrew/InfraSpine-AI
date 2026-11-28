@@ -17,7 +17,9 @@ from tests.conftest import ADMIN_EMAIL, run_db
 
 
 def test_cloud_webhook_bounds_and_authenticates_the_inbound_queue(monkeypatch):
-    async def disable_outbound_worker(*_args):
+    # The lifespan starts the worker with baileys_sessions=... (slice 3);
+    # the stub must accept that keyword.
+    async def disable_outbound_worker(*_args, **_kwargs):
         return
 
     monkeypatch.setattr(cloud_integration, "run_whatsapp_agent_worker", disable_outbound_worker)

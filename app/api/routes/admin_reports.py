@@ -4,10 +4,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy import func, select
 
-from app.api.deps import AppSettings, DbSession, require_admin, require_reports_viewer
+from app.api.deps import AppSettings, DbSession, PlatformAdminUser, audit_context, require_platform_admin, require_reports_viewer
 from app.api.routes.admin_traces import _summary
 from app.db.models import ConversationMessage, RagTrace
 from app.schemas.deployment import CompanyProfile
@@ -21,6 +21,7 @@ from app.schemas.reports import (
     QuotaAlert,
     UsageReport,
 )
+from app.services import audit
 from app.services.deployment import get_company_profile
 from app.services.operational_health import (
     get_department_quotas,
@@ -136,10 +137,13 @@ async def department_quotas(
     return quotas
 
 
-@router.put("/quotas/{department_id}", dependencies=[Depends(require_admin)])
+@router.put("/quotas/{department_id}", dependencies=[Depends(require_platform_admin)])
 async def update_department_quota(
     department_id: Annotated[uuid.UUID, Path()],
     update: DepartmentQuotaUpdate,
+    request: Request,
+    db: DbSession,
+    admin: PlatformAdminUser,
 ) -> dict[str, str]:
     """Configure or update the monthly token quota and alert threshold for a department."""
     set_department_quota(
@@ -147,5 +151,14 @@ async def update_department_quota(
         monthly_token_quota=update.monthly_token_quota,
         alert_threshold_percent=update.alert_threshold_percent,
     )
+    audit.record(
+        db,
+        audit_context(request, admin),
+        "admin.department_quota_updated",
+        target=str(department_id),
+        details={"monthly_token_quota": update.monthly_token_quota,
+                 "alert_threshold_percent": update.alert_threshold_percent},
+    )
+    await db.commit()
     return {"status": "ok", "message": f"Quota updated for department {department_id}"}
 

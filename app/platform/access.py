@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InvalidInputError, NotFoundError, PermissionDeniedError
 from app.core.security import hash_session_token
+from app.db.agent_controls_models import AgentControlRecord
 from app.db.agent_studio_models import AgentStudioAgent
 from app.db.models import ROLE_ADMIN, User, UserSession
 from app.platform.models import (
@@ -33,9 +34,24 @@ BASELINE_SOURCE = "legacy:users"
 # funds.transfer, ...) are never implied by the legacy admin role.
 ADMIN_BRIDGE_PERMISSIONS = frozenset({"identity.revoke", "org.settings.manage", "platform.manage"})
 # Exercising these permissions needs an approval of the given permission first.
-APPROVAL_REQUIRED = {"funds.transfer": "payment.approve"}
-# Separation of duties: one person may perform at most one of these duties on the same subject (e.g. one invoice).
-SEPARATED_DUTIES = frozenset({"invoice.verify", "payment.approve", "funds.transfer"})
+APPROVAL_REQUIRED = {
+    "funds.transfer": "payment.approve",
+    # Twin proposal actions (Step K v2 slice 6): dispatching a twin
+    # proposal needs the same approver permission the proposal's
+    # approval was requested with — the graph owner for owner-class
+    # actions, a graph approver for coverage-class actions.
+    "twin.apply": "company_graph.role.owner",
+    "twin.apply.coverage": "company_graph.role.approver",
+    "companion.digest.send": "companion.digest.approve",
+    # Step L slice 6: executing an approved forecast proposal needs
+    # an approval of the given permission first (owner class for
+    # supplier/money actions, coverage class for backup actions).
+    "forecast.apply": "company_graph.role.owner",
+    "forecast.apply.coverage": "company_graph.role.approver",
+}
+# Separation of duties: one person may perform at most one of these duties on the same subject (e.g. one invoice,
+# one leave request).
+SEPARATED_DUTIES = frozenset({"invoice.verify", "payment.approve", "funds.transfer", "hr.leave.approve"})
 
 
 @dataclass(frozen=True)
@@ -120,6 +136,16 @@ async def resolve_principal(
         if row is None or not row[1].enabled or row[1].paused:
             raise PermissionDeniedError("This agent is not available to act.")
         user, agent = row
+        # Step AK: a control record in a non-active status refuses the agent
+        # everywhere at once. Agents without a record keep previous behaviour.
+        control_status = await db.scalar(select(AgentControlRecord.status).where(
+            AgentControlRecord.agent_id == agent.id))
+        if control_status == "killed":
+            raise PermissionDeniedError("This agent was killed by an administrator and cannot act.")
+        if control_status == "disabled":
+            raise PermissionDeniedError("This agent is disabled by its controls.")
+        if control_status == "paused":
+            raise PermissionDeniedError("This agent is paused by its controls.")
         return Principal(user.id, user.email, "agent", "agent", user.auth_version, trace, agent_id=agent.id)
     if not channel or not external_id:
         raise InvalidInputError("Both the channel and the external identity are required.")
@@ -217,6 +243,16 @@ async def _principal_current(db: AsyncSession, p: Principal) -> tuple[User | Non
         agent = await db.get(AgentStudioAgent, p.agent_id, populate_existing=True)
         if agent is None or not agent.enabled or agent.paused:
             return None, "agent_unavailable"
+        # Step AK re-check: a principal resolved earlier is refused again here
+        # when its control record has since stopped it.
+        control_status = await db.scalar(select(AgentControlRecord.status).where(
+            AgentControlRecord.agent_id == p.agent_id))
+        if control_status == "killed":
+            return None, "agent_killed"
+        if control_status == "disabled":
+            return None, "agent_disabled"
+        if control_status == "paused":
+            return None, "agent_paused"
     return user, None
 
 
@@ -350,4 +386,28 @@ async def revoke_user_access(db: AsyncSession, actor: Principal, user_id: uuid.U
                   actor.trace_id)
     audit(db, actor, "platform.access_revoked", target=str(user_id), details={"reason": reason, **counts})
     await db.commit()
+    # Step J slice 5: the revoked owner's workforce agents are paused and
+    # their verified skills frozen. This runs after the commit above, in
+    # its own transaction, and never fails the revocation itself: even if
+    # the hook errors, the registry read view already derives "paused"
+    # from the revoked owner, and an administrator can re-run the hook
+    # from POST /api/workforce/owner-revocations. Local import: the
+    # workforce package imports this module.
+    try:
+        from app.services.audit import AuditContext
+        from app.workforce.registry_service import apply_owner_revocation_for_platform
+
+        hook_ctx = AuditContext(actor_user_id=actor.user_id, actor_email=actor.email,
+                                ip_address=None, request_id=str(actor.trace_id))
+        hook_counts = await apply_owner_revocation_for_platform(
+            db, actor, hook_ctx, user_id, reason=f"access revoked: {reason}")
+        counts["workforce_agents_paused"] = hook_counts["agents_paused"]
+        counts["workforce_skills_frozen"] = hook_counts["skills_frozen"]
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Workforce owner-revocation hook failed for %s; the registry "
+            "still derives the pause from the revoked owner.",
+            user_id, exc_info=True)
     return counts

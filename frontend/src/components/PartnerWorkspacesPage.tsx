@@ -235,7 +235,7 @@ export function PartnerWorkspacesPage() {
               </form>
               {invitations.length === 0 ? <p className="empty">No invitations created for this workspace.</p> : <ul className="partner-admin-list">
                 {invitations.map((invitation) => <li key={invitation.id}>
-                  <div><strong>{invitation.email}</strong><small>{invitation.accepted_at ? "Accepted" : invitation.revoked_at ? "Revoked" : Date.parse(invitation.expires_at) <= Date.now() ? "Expired" : "Pending"} · expires {formatDate(invitation.expires_at)}</small></div>
+                  <div><strong>{invitation.email}</strong><small className="text-xs">{invitation.accepted_at ? "Accepted" : invitation.revoked_at ? "Revoked" : Date.parse(invitation.expires_at) <= Date.now() ? "Expired" : "Pending"} · expires {formatDate(invitation.expires_at)}</small></div>
                   {!invitation.accepted_at && !invitation.revoked_at && Date.parse(invitation.expires_at) > Date.now() && <button className="btn btn-sm btn-ghost" type="button" onClick={() => void revokeInvitation(invitation)} disabled={busy}>Revoke</button>}
                 </li>)}
               </ul>}
@@ -244,7 +244,7 @@ export function PartnerWorkspacesPage() {
             <section className="card partner-admin-section">
               <div className="card-title"><div><h2>Partner identities</h2><p className="muted">Deactivation revokes existing partner sessions.</p></div><span className="pill pill-sm">{identities.length}</span></div>
               {identities.length === 0 ? <p className="empty">No partner accounts have accepted invitations.</p> : <ul className="partner-admin-list">
-                {identities.map((identity) => <li key={identity.id}><div><strong>{identity.email}</strong><small>{identity.is_active ? "Active" : "Deactivated"} · created {formatDate(identity.created_at)}</small></div>
+                {identities.map((identity) => <li key={identity.id}><div><strong>{identity.email}</strong><small className="text-xs">{identity.is_active ? "Active" : "Deactivated"} · created {formatDate(identity.created_at)}</small></div>
                   <button className="btn btn-sm btn-ghost" type="button" onClick={() => void toggleIdentity(identity)} disabled={busy}>{identity.is_active ? "Deactivate" : "Reactivate"}</button></li>)}
               </ul>}
             </section>
@@ -264,7 +264,7 @@ export function PartnerWorkspacesPage() {
               <button className="btn" type="submit" disabled={busy || !selected || !sourceFile}>Import file</button>
             </form>
             {sources.length === 0 ? <p className="empty">No partner sources have been added.</p> : <ul className="partner-admin-list partner-source-list">
-              {sources.map((source) => <li key={source.id}><div><strong>{source.title}</strong><small>{source.status} · {source.source_format} · {source.index_status} · SHA-256 {source.content_sha256} · {formatDate(source.created_at)}</small></div>
+              {sources.map((source) => <li key={source.id}><div><strong>{source.title}</strong><small className="text-xs">{source.status} · {source.source_format} · {source.index_status} · SHA-256 {source.content_sha256} · {formatDate(source.created_at)}</small></div>
                 {source.status === "active" && <div>{source.index_status === "failed" && <button className="btn btn-sm btn-ghost" type="button" onClick={() => void retrySource(source)} disabled={busy}>Retry processing</button>}
                 <button className="btn btn-sm btn-ghost" type="button" onClick={() => void archiveSource(source)} disabled={busy}>Archive</button></div>}</li>)}
             </ul>}

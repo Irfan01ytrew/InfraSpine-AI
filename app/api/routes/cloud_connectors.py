@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import delete, select, update
 
 from app.api.deps import AdminUser, AppSettings, DbSession, audit_context, get_current_user
-from app.core.crypto import CredentialCipher, EncryptedValue
+from app.core.crypto import EncryptedValue, rotating_cipher_from_settings
 from app.core.errors import ConflictError, InvalidInputError, NotFoundError
 from app.db.models import (
     ACL_QUARANTINED,
@@ -88,7 +88,7 @@ async def create_connector(
         "drive_id": payload.drive_id,
         "folder_id": payload.folder_id,
     }
-    cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+    cipher = rotating_cipher_from_settings(settings)
     encrypted = cipher.encrypt(
         json.dumps(credentials, separators=(",", ":")),
         associated_data=f"infraspine:cloud-connector:{connector_id}".encode(),
@@ -157,7 +157,7 @@ async def sync_connector(
             or department.lifecycle_status != "active"
         ):
             raise InvalidInputError("The cloud connector department scope is unavailable.")
-        cipher = CredentialCipher(settings.master_key_bytes, settings.master_encryption_key_id)
+        cipher = rotating_cipher_from_settings(settings)
         credentials = json.loads(
             cipher.decrypt(
                 EncryptedValue(

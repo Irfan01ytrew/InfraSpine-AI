@@ -69,7 +69,7 @@ export function ConversationSidebar({ conversations, activeId, onSelect, onNew, 
         ) : (
           groups.map(([label, items]) => (
             <section key={label} className="mt-2 first:mt-0">
-              <h4 className="px-2.5 pt-2 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-muted uppercase">{label}</h4>
+              <h4 className="px-2.5 pt-2 pb-1 text-xs font-semibold tracking-[0.08em] text-muted uppercase">{label}</h4>
               <ul className="grid gap-px">
                 {items.map((c) => {
                   const active = c.id === activeId;

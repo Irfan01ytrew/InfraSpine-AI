@@ -142,7 +142,7 @@ export function ResearchPage({ user }: { user: User }) {
                   {finding.citations.map((citation) => (
                     <div key={`${citation.document_id}-${citation.chunk_index}`} className="research-source">
                       <span className="source-tag">{citation.source_id}</span>
-                      <span><strong>{citation.filename}</strong><small>{citation.location ?? `Page ${citation.page_number}`}</small><small>{citation.snippet}</small>{citation.available && mediaPreviewHref(citation) && <a className="source-page-link" href={mediaPreviewHref(citation) ?? undefined} target="_blank" rel="noopener noreferrer">Open original media at {citationPlace(citation)}</a>}</span>
+                      <span><strong>{citation.filename}</strong><small className="text-xs">{citation.location ?? `Page ${citation.page_number}`}</small><small className="text-xs">{citation.snippet}</small>{citation.available && mediaPreviewHref(citation) && <a className="source-page-link" href={mediaPreviewHref(citation) ?? undefined} target="_blank" rel="noopener noreferrer">Open original media at {citationPlace(citation)}</a>}</span>
                     </div>
                   ))}
                 </div>
@@ -187,7 +187,7 @@ export function ResearchPage({ user }: { user: User }) {
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge tone={run.status === "completed" ? "success" : run.status === "failed" ? "danger" : run.status === "pending_approval" ? "warning" : "neutral"} dot>{run.status.replaceAll("_", " ")}</Badge>
                   <Badge>{run.attempts}/2 attempts</Badge>
-                  <code className="text-[11px] text-muted">{run.id.slice(0, 8)}</code>
+                  <code className="text-xs text-muted">{run.id.slice(0, 8)}</code>
                 </div>
                 <h4 className="text-[13px] font-semibold text-foreground">{run.label}</h4>
                 <p className="text-[13px] text-foreground-2">{run.reason}</p>

@@ -73,7 +73,7 @@ function AgentRunOutput({ result }: { result: AgentRunResponse["result"] }) {
 function RunCitationList({ citations }: { citations: Citation[] }) {
   if (!citations.length) return null;
   return <div className="research-sources"><strong>Sources</strong>{citations.map((citation) => <div className="research-source" key={`${citation.document_id}-${citation.chunk_index}`}>
-    <span className="source-tag">{citation.source_id}</span><span><strong>{citation.filename}</strong><small>{citation.location ?? `Page ${citation.page_number}`}</small><small>{citation.snippet}</small>
+    <span className="source-tag">{citation.source_id}</span><span><strong>{citation.filename}</strong><small className="text-xs">{citation.location ?? `Page ${citation.page_number}`}</small><small className="text-xs">{citation.snippet}</small>
       {citation.available && mediaPreviewHref(citation) && <a className="source-page-link" href={mediaPreviewHref(citation) ?? undefined} target="_blank" rel="noopener noreferrer">Open original media at {citationPlace(citation)}</a>}
       {citation.available && (citation.locator?.kind === "page" || citation.locator?.kind === "image") && <a className="source-page-link" href={`/api/rag/documents/${encodeURIComponent(citation.document_id)}/pages/${citation.page_number}/image`} target="_blank" rel="noopener noreferrer">Open cited source ↗</a>}
     </span>

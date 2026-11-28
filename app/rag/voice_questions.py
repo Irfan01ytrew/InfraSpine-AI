@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from app.core.errors import FileRejectedError, FileTooLargeError, InvalidInputError
 from app.core.config import get_settings
+from app.language.detect import detect_language
 from app.rag.parsers.base import ParseError, ParseLimits
 from app.rag.parsers.media_parser import AudioParser
 
@@ -17,6 +19,23 @@ MAX_VOICE_QUESTION_BYTES = 8 * 1024 * 1024
 MAX_VOICE_QUESTION_SECONDS = 120
 MAX_VOICE_QUESTION_CHARS = 4000
 VOICE_QUESTION_SECTION_CHARS = 1000
+
+
+@dataclass(frozen=True)
+class TranscribedVoiceQuestion:
+    """A bounded voice transcript plus the language it was spoken in.
+
+    The language tag is metadata only: it never changes authorization,
+    permissions, approvals, or what the asker may read. It lets the
+    reply path (and the UI) treat a Roman Urdu voice note the same way
+    as a typed Roman Urdu question, and lets the caller offer the
+    matching reply language.
+    """
+
+    text: str
+    language: str  # one of app.language.detect's languages: en/roman_urdu/urdu/mixed/unknown
+    suffix: str
+    byte_count: int
 
 
 class AudioUpload(Protocol):
@@ -57,6 +76,17 @@ def transcribe_spoken_question(path: Path) -> str:
     return transcript[:MAX_VOICE_QUESTION_CHARS].strip()
 
 
+def tag_transcript_language(transcript: str) -> str:
+    """Detect the language of a voice transcript (Step Z slice 6).
+
+    Pure: the same shared detector typed chat uses, so a Roman Urdu
+    voice note and a typed Roman Urdu question are classified the same
+    way. Empty text is ``"unknown"`` — a transcript is never empty in
+    practice (empty audio is rejected before this runs).
+    """
+    return detect_language(transcript)
+
+
 async def transcribe_voice_upload(
     audio: AudioUpload,
     *,
@@ -64,8 +94,12 @@ async def transcribe_voice_upload(
     transcriber: Callable[[Path], str] | None = None,
     temporary_directory: Callable[..., tempfile.TemporaryDirectory] = tempfile.TemporaryDirectory,
     run_in_thread: Callable[..., Awaitable[str]] = asyncio.to_thread,
-) -> tuple[str, str, int]:
-    """Stage a bounded audio upload, transcribe it locally, and discard all staged audio."""
+) -> TranscribedVoiceQuestion:
+    """Stage a bounded audio upload, transcribe it locally, and discard all staged audio.
+
+    Returns the transcript together with its detected language tag.
+    The staged audio is deleted before returning, as before.
+    """
     suffix = supported_audio_suffix(audio.filename)
     if suffix is None:
         await audio.close()
@@ -99,4 +133,9 @@ async def transcribe_voice_upload(
     transcript = transcript[:MAX_VOICE_QUESTION_CHARS].strip()
     if not transcript:
         raise FileRejectedError("No speech could be recognized in this recording.")
-    return transcript, suffix, byte_count
+    return TranscribedVoiceQuestion(
+        text=transcript,
+        language=tag_transcript_language(transcript),
+        suffix=suffix,
+        byte_count=byte_count,
+    )

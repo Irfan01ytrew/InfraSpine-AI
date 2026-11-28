@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request
 
-from app.api.deps import AdminUser, DbSession, audit_context
+from app.api.deps import DbSession, PlatformAdminUser, audit_context
 from app.schemas.agent_run_retention import (
     AgentRunRetentionPreviewRequest,
     AgentRunRetentionPreviewResponse,
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/admin/agent-runs/retention", tags=["agent-run-re
 async def preview_agent_run_content_retention(
     payload: AgentRunRetentionPreviewRequest,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
 ) -> AgentRunRetentionPreviewResponse:
     cutoff = retention_cutoff(payload.retention_days)
     eligible = await count_eligible_run_content(db, cutoff)
@@ -39,7 +39,7 @@ async def purge_agent_run_content_retention(
     payload: AgentRunRetentionPurgeRequest,
     request: Request,
     db: DbSession,
-    admin: AdminUser,
+    admin: PlatformAdminUser,
 ) -> AgentRunRetentionPurgeResponse:
     purged, cutoff = await purge_expired_run_content(
         db,

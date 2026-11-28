@@ -1,7 +1,7 @@
 import { request } from "../api";
 
 export interface FinanceScope { id: string; name: string; permissions: string[] }
-export interface Reason { code: string; message: string; fields?: string[] }
+export interface Reason { code: string; message: string; fields?: string[]; details?: Record<string, string | number | null> }
 export interface Invoice {
   id: string; batch_id: string; group_id: string; seq: number; revision: number; invoice_number: string | null;
   vendor_name: string | null; vendor_id: string | null; po_number: string | null; department: string | null;
@@ -24,7 +24,32 @@ export interface PaymentApproval {
   vendor_name: string; payee_account: string; invoice_numbers: (string | null)[]; requested_by: string; own_request: boolean;
 }
 export interface SpendRow { month: string; department: string; currency: string; amount: string; count: number }
+export interface CashFlowMonth {
+  month: string; kind: string; scheduled_outflow: string; recurring_estimate: string; expected_outflow: string;
+  expected_inflow: string; net: string; closing_balance: string; basis: string; confidence: string;
+}
+export interface CashFlowWarning { code: string; detail?: string }
+export interface CashFlow {
+  kind: string; currency: string; as_of: string; opening_balance: string; closing_balance: string;
+  total_expected_outflow: string; total_expected_inflow: string; history_months_used: number;
+  warnings: CashFlowWarning[]; months: CashFlowMonth[];
+}
+export interface TaxReportRow { month: string; department: string; currency: string; amount: string; count: number }
+export interface TaxReportTotal { currency: string; amount: string; count: number }
+export interface TaxReportWarning { code: string; detail?: string; count?: number }
+export interface TaxReport {
+  kind: string; from: string; to: string; statuses: string[]; months: string[]; departments: string[];
+  currencies: string[]; rows: TaxReportRow[]; totals: TaxReportTotal[]; warnings: TaxReportWarning[];
+}
 export type ConnectorMode = "mock" | "http" | "http+mock";
+export interface AutopilotPolicy {
+  enabled: boolean; dry_run: boolean; max_payment_amount: string | null; daily_cap: string | null;
+}
+export interface AutopilotSweepDecision { batch_id: string; action: string; reason: string }
+export interface AutopilotStatus {
+  policy: AutopilotPolicy;
+  last_sweep: { at: string; actor_email: string | null; decisions: AutopilotSweepDecision[] } | null;
+}
 export interface ConnectorStatus {
   source: string; admin_mode: string | null; environment_mode: string; modes: string[];
   http_configured: boolean; http_host: string | null; http_token_set: boolean;
@@ -34,6 +59,13 @@ export interface ConnectorStatus {
 }
 export interface Spend { months: string[]; from: string; departments: string[]; currencies: string[]; rows: SpendRow[] }
 export interface Vendor { id: string; name: string; bank_account: string; currency: string; tax_id: string | null; status: string }
+export interface VendorHistoryInvoice extends Invoice { bank_account_masked: string | null }
+export interface VendorHistory { vendor: Vendor; invoices: VendorHistoryInvoice[] }
+export interface AnomalySettings {
+  group_id: string;
+  thresholds: { min_history: number; outlier_mad_multiplier: string; outlier_ratio_when_flat: string; near_duplicate_days: number; velocity_window_days: number; velocity_max_prior: number };
+  customized: string[];
+}
 export interface KnowledgeDocument { id: string; filename: string; folder: string | null; indexed: boolean; updated_at: string | null }
 export interface SkippedDocument { document_id: string; filename: string; reason: string }
 export interface InvoiceInput {
@@ -63,14 +95,46 @@ export const financeApi = {
     call<{ invoices: Invoice[]; skipped: SkippedDocument[] }>("POST", `/batches/${id}/invoices/from-documents`, { document_ids: documentIds, folder: folder ?? null }),
   start: (id: string) => call<{ batch: Batch; run_id: string }>("POST", `/batches/${id}/start`),
   exceptions: (group?: string) => call<{ invoices: Invoice[] }>("GET", `/exceptions${group ? `?group_id=${group}` : ""}`),
-  resolve: (id: string, action: "correct" | "reject", fields: InvoiceInput | null, note: string) =>
+  vendorHistory: (group: string, vendorId: string) =>
+    call<VendorHistory>("GET", `/scopes/${group}/vendors/${vendorId}/history`),
+  anomalySettings: (group: string) => call<AnomalySettings>("GET", `/scopes/${group}/anomaly-settings`),
+  setAnomalySettings: (group: string, thresholds: Record<string, number>) =>
+    call<AnomalySettings>("PUT", `/scopes/${group}/anomaly-settings`, { thresholds }),
+  resolve: (id: string, action: "correct" | "reject" | "approve", fields: InvoiceInput | null, note: string) =>
     call<Invoice>("POST", `/invoices/${id}/resolve`, { action, fields, note }),
   approvals: () => call<{ approvals: PaymentApproval[] }>("GET", "/approvals"),
   decide: (id: string, decision: "approve" | "reject", presented_hash: string, note = "") =>
     call<{ approval_id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, presented_hash, note }),
   spend: (months = 12, group?: string) => call<Spend>("GET", `/spend?months=${months}${group ? `&group_id=${group}` : ""}`),
+  cashFlow: (currency: string, months = 3, group?: string, openingBalance?: string) => {
+    const params = new URLSearchParams({ currency, months: String(months) });
+    if (group) params.set("group_id", group);
+    if (openingBalance !== undefined && openingBalance !== "") params.set("opening_balance", openingBalance);
+    return call<CashFlow>("GET", `/cash-flow?${params.toString()}`);
+  },
+  uploadReceiptPhoto: (id: string, file: File) => { const form = new FormData(); form.append("file", file); return call<{ invoices: Invoice[] }>("POST", `/batches/${id}/invoices/receipt-photo`, form); },
+  taxReport: (months = 12, group?: string, currency?: string) => {
+    const params = new URLSearchParams({ months: String(months) });
+    if (group) params.set("group_id", group);
+    if (currency) params.set("currency", currency);
+    return call<TaxReport>("GET", `/tax-report?${params.toString()}`);
+  },
+  downloadCsv: async (path: string, filename: string) => {
+    const response = await fetch(root + path, {
+      headers: { Accept: "text/csv", "X-Requested-With": "InfraSpineAdmin" },
+      credentials: "same-origin", cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = filename; link.click();
+    URL.revokeObjectURL(url);
+  },
   connector: () => call<ConnectorStatus>("GET", "/connector"),
   setConnector: (mode: ConnectorMode | null) => call<ConnectorStatus>("PUT", "/connector", { mode }),
+  autopilotStatus: () => call<AutopilotStatus>("GET", "/autopilot/status"),
+  setAutopilotPolicy: (policy: AutopilotPolicy) => call<AutopilotStatus>("PUT", "/autopilot/policy", policy),
   perform: (group: string, run: string, step: string) =>
     request<unknown>("POST", `/api/workflow-engine/scopes/${group}/runs/${run}/steps/${step}/perform`),
 };

@@ -152,7 +152,7 @@ export function DatabaseAnalysisPanel() {
         <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary-soft text-primary"><Database className="size-4" /></span>
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-medium text-foreground">Analyze business database</span>
-          <span className="block text-[11px] text-muted">Read-only calculations on allowlisted tables</span>
+          <span className="block text-xs text-muted">Read-only calculations on allowlisted tables</span>
         </span>
         <ChevronDown className={cn("size-4 shrink-0 text-muted transition-transform", open && "rotate-180")} />
       </button>

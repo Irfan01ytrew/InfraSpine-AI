@@ -383,7 +383,7 @@ export function MyWorkPage({ user }: { user: User }) {
             />
             <CardBody className="grid gap-4">
               <div className="grid grid-cols-7 gap-1" role="group" aria-label="Due dates by day">
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => <span className="py-1 text-center text-[11px] font-semibold text-muted" key={day}>{day}</span>)}
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => <span className="py-1 text-center text-xs font-semibold text-muted" key={day}>{day}</span>)}
                 {calendarDays.map((day) => {
                   const key = localDayKey(day);
                   const entries = calendarItemsByDay.get(key) ?? [];
@@ -401,8 +401,8 @@ export function MyWorkPage({ user }: { user: User }) {
                     key={key}
                     onClick={() => setSelectedCalendarDay(key)}
                   >
-                    <span className={cn("font-medium", isToday && "grid size-5 place-items-center rounded-full bg-primary text-[11px] text-primary-foreground")}>{day.getDate()}</span>
-                    {entries.length > 0 && <span className="work-calendar-count max-w-full truncate rounded-full bg-warning-soft px-1.5 text-[10px] font-medium text-warning-text">{entries.length} due</span>}
+                    <span className={cn("font-medium", isToday && "grid size-5 place-items-center rounded-full bg-primary text-xs text-primary-foreground")}>{day.getDate()}</span>
+                    {entries.length > 0 && <span className="work-calendar-count max-w-full truncate rounded-full bg-warning-soft px-1.5 text-xs font-medium text-warning-text">{entries.length} due</span>}
                   </button>;
                 })}
               </div>

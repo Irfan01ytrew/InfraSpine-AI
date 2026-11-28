@@ -1,7 +1,7 @@
 """ORM models. Critical invariants are enforced by the database, not only by code."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -9,9 +9,11 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Float,
     Identity,
     Index,
     Integer,
@@ -20,6 +22,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -554,11 +557,15 @@ class Document(Base):
         ),
         CheckConstraint("acl_status IN ('active', 'quarantined')", name="acl_status_valid"),
         CheckConstraint("(acl_status = 'active') = (acl_quarantine_reason IS NULL)", name="quarantine_has_reason"),
+        CheckConstraint(
+            "superseded_by IS NULL OR superseded_by <> id", name="ck_documents_superseded_by_not_self"
+        ),
         # Synced documents are never private to their (technical) owner and never organization-wide.
         CheckConstraint("source_system = 'upload' OR visibility = 'restricted'", name="synced_is_restricted"),
         Index("ix_documents_job_queue", "status", "next_attempt_at"),
         Index("ix_documents_sha256", "sha256"),
         Index("ix_documents_source_uri", "source_uri"),
+        Index("ix_documents_expiry_date", "expiry_date"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -603,11 +610,59 @@ class Document(Base):
     descriptor_version: Mapped[int | None] = mapped_column(SmallInteger)
     embedding_model: Mapped[str | None] = mapped_column(String(200))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Step AB derived metadata (app/rag/auto_enrich.py): tags, an extractive
+    # summary and expiry dates pulled from the document text. Metadata only -
+    # they never change the document and can never grant permissions or change
+    # what an approval covers. `expiry_date` is the earliest extracted date.
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    summary: Mapped[str | None] = mapped_column(Text)
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    expiry_dates: Mapped[list[dict] | None] = mapped_column(JSONB)
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Step AI freshness metadata: owner-set, never derived from document text.
+    # `review_date` is when the content should next be reviewed, `expires_at`
+    # is when it stops being valid, `superseded_by` points at the document
+    # that replaces this one (set by an owner action, never by ingestion).
+    review_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), index=True
+    )
 
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class KnowledgeExpiryAlert(Base):
+    """Step AB slice 3 — one row per (document, expiry date, checked day) for
+    documents that are expired or due soon. Read-only notices: Step AA includes
+    pending rows in its digest; nothing here sends anything or takes any action."""
+
+    __tablename__ = "knowledge_expiry_alerts"
+    __table_args__ = (
+        CheckConstraint("urgency IN ('expired', 'due_soon')", name="ck_knowledge_expiry_alerts_urgency_valid"),
+        CheckConstraint(
+            "status IN ('pending', 'delivered', 'dismissed')", name="ck_knowledge_expiry_alerts_status_valid"
+        ),
+        UniqueConstraint(
+            "document_id", "expiry_date", "checked_on", name="uq_knowledge_expiry_alerts_doc_date_day"
+        ),
+        Index("ix_knowledge_expiry_alerts_checked_status", "checked_on", "status"),
+        Index("ix_knowledge_expiry_alerts_document", "document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )  # indexed by ix_knowledge_expiry_alerts_document in __table_args__
+    expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    urgency: Mapped[str] = mapped_column(String(16), nullable=False)  # expired | due_soon
+    days_left: Mapped[int] = mapped_column(Integer, nullable=False)
+    checked_on: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    created_at: Mapped[datetime] = _now()
 
 
 class IngestionWorkerHeartbeat(Base):
@@ -1408,6 +1463,94 @@ class RagTrace(Base):
 
 
 
+class ModelRoutingRecord(Base):
+    """One routed LLM call: task class, chosen model, fallback chain, token
+    usage, latency and cost. Metadata only -- no prompt, answer, key or
+    endpoint is stored here, so spend can be audited without reading a
+    user's conversation. Written by the chat/RAG routes after a routed call
+    (or with status 'refused' when the budget guard refused it)."""
+
+    __tablename__ = "model_routing_records"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok', 'downgraded', 'refused', 'error')", name="status_valid"
+        ),
+        CheckConstraint(
+            "budget_action IN ('allow', 'downgrade', 'refuse')", name="budget_action_valid"
+        ),
+        Index("ix_model_routing_records_created", "created_at"),
+        Index("ix_model_routing_records_task_created", "task_class", "created_at"),
+        Index("ix_model_routing_records_department_created", "department_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    department_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    task_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    policy: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'cheapest'"))
+    provider: Mapped[str | None] = mapped_column(String(50))
+    model: Mapped[str | None] = mapped_column(String(100))
+    alternates: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    alternates_tried: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'ok'"))
+    budget_action: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'allow'"))
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    actual_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    created_at: Mapped[datetime] = _now()
+
+
+
+class RoutingPolicySetting(Base):
+    """Step T slice 4: the admin-editable routing policy. One row (id = 1)
+    per installation, like OrgSettings. No credentials, keys or endpoints
+    are stored here -- only which model the router picks (default policy,
+    per-task-class overrides, per-model capability tiers) and how much
+    routed calls may spend each month (org-wide budget plus per-department
+    overrides). A missing row means the default policy: cheapest, no
+    overrides, no budget enforced."""
+
+    __tablename__ = "routing_policy_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="single_row"),
+        CheckConstraint(
+            "default_policy IN ('cheapest', 'fastest', 'balanced')",
+            name="default_policy_valid",
+        ),
+        CheckConstraint(
+            "monthly_budget_usd IS NULL OR monthly_budget_usd >= 0",
+            name="monthly_budget_non_negative",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    default_policy: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'cheapest'")
+    )
+    # {"complex": "balanced"} -- task class -> policy. Empty = use the default.
+    task_class_policies: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # {"provider:model": 1|2|3} -- admin reasoning-tier overrides.
+    capability_tiers: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    monthly_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    # {department AccessGroup id: "12.50"} -- a department's own budget wins
+    # over the org-wide one; amounts are stored as strings to keep exact
+    # decimals through JSONB.
+    department_budgets: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    updated_at: Mapped[datetime] = _now()
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
 class MemoryItem(Base):
     """A user's personal memory (ADR-004 WP2): a preference, terminology or personal fact the user asked
     InfraSpine to remember. Owner-only (no admin read path), never embedded in the knowledge index,
@@ -1449,6 +1592,179 @@ class MemoryItem(Base):
     )
     created_at: Mapped[datetime] = _now()
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+# ------------------------------------------------- personal companion (Step AN)
+
+
+class CompanionProject(Base):
+    """A personal project that groups a user's goals. Owner-only; nothing here is shared."""
+
+    __tablename__ = "companion_projects"
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived')", name="ck_companion_projects_status_valid"),
+        CheckConstraint("length(btrim(name)) BETWEEN 1 AND 120", name="ck_companion_projects_name_length"),
+        Index("ix_companion_projects_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionGoal(Base):
+    """One personal goal. Owner-only; another user's goals return 404, never 403-with-existence."""
+
+    __tablename__ = "companion_goals"
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived','completed')", name="ck_companion_goals_status_valid"),
+        CheckConstraint("priority IN ('low','medium','high')", name="ck_companion_goals_priority_valid"),
+        CheckConstraint("length(btrim(title)) BETWEEN 1 AND 180", name="ck_companion_goals_title_length"),
+        Index("ix_companion_goals_user_status", "user_id", "status"),
+        Index("ix_companion_goals_user_project", "user_id", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("companion_projects.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'active'"))
+    priority: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'medium'"))
+    deadline: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionTask(Base):
+    """A personal task inside one goal. The planner's TaskInput; ``action_kind`` decides approval need."""
+
+    __tablename__ = "companion_tasks"
+    __table_args__ = (
+        CheckConstraint("status IN ('todo','in_progress','done','cancelled')", name="ck_companion_tasks_status_valid"),
+        CheckConstraint("priority IN ('low','medium','high')", name="ck_companion_tasks_priority_valid"),
+        CheckConstraint(
+            "action_kind IN ('internal','send','book','pay','share','publish','deploy')",
+            name="ck_companion_tasks_action_kind_valid",
+        ),
+        CheckConstraint("length(btrim(title)) BETWEEN 1 AND 180", name="ck_companion_tasks_title_length"),
+        CheckConstraint("estimated_hours >= 0", name="ck_companion_tasks_hours_valid"),
+        Index("ix_companion_tasks_user_status", "user_id", "status"),
+        Index("ix_companion_tasks_goal_due", "goal_id", "due"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companion_goals.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'todo'"))
+    priority: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'medium'"))
+    due: Mapped[date | None] = mapped_column(Date)
+    estimated_hours: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("'0'"))
+    action_kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'internal'"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionPreference(Base):
+    """One row per user: language, working hours, quiet hours, capacity, retention. PK is the user."""
+
+    __tablename__ = "companion_preferences"
+    __table_args__ = (
+        CheckConstraint("language IN ('en','ur','roman_urdu')", name="ck_companion_prefs_language_valid"),
+        CheckConstraint(
+            "weekly_capacity_hours > 0 AND weekly_capacity_hours <= 168",
+            name="ck_companion_prefs_capacity_valid",
+        ),
+        CheckConstraint("retention_days >= 1", name="ck_companion_prefs_retention_valid"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    language: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'en'"))
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("'Asia/Karachi'"))
+    weekly_capacity_hours: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("'40'"))
+    quiet_start: Mapped[time] = mapped_column(Time, nullable=False, server_default=text("'22:00'"))
+    quiet_end: Mapped[time] = mapped_column(Time, nullable=False, server_default=text("'07:00'"))
+    retention_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("'90'"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionProgress(Base):
+    """Append-only progress evidence for a goal (and optionally one task). No update/delete API."""
+
+    __tablename__ = "companion_progress"
+    __table_args__ = (
+        CheckConstraint("percent BETWEEN 0 AND 100", name="ck_companion_progress_percent_valid"),
+        CheckConstraint("length(btrim(note)) <= 1000", name="ck_companion_progress_note_length"),
+        Index("ix_companion_progress_user_goal_created", "user_id", "goal_id", "created_at"),
+        Index("ix_companion_progress_task_created", "task_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companion_goals.id", ondelete="CASCADE"), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("companion_tasks.id", ondelete="SET NULL"))
+    percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str] = mapped_column(String(1000), nullable=False, server_default=text("''"))
+    on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+
+class CompanionConsent(Base):
+    """Per-integration personal consent: separate, revocable, expiring. No consent -> no call, no data sent."""
+
+    __tablename__ = "companion_consents"
+    __table_args__ = (
+        CheckConstraint("integration IN ('email_digest')", name="ck_companion_consents_integration_valid"),
+        CheckConstraint("length(btrim(scope)) BETWEEN 1 AND 64", name="ck_companion_consents_scope_length"),
+        Index(
+            "uq_companion_consents_active", "user_id", "integration", unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+        Index("ix_companion_consents_user_integration", "user_id", "integration"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    integration: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    granted_at: Mapped[datetime] = _now()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CompanionDigestOutbox(Base):
+    """One daily-digest email for one user: queued only with consent, sent only after an exact-action approval."""
+
+    __tablename__ = "companion_digest_outbox"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','sent','cancelled','failed')", name="ck_companion_digest_status_valid"
+        ),
+        Index(
+            "uq_companion_digest_user_date", "user_id", "digest_date", unique=True,
+            postgresql_where=text("status IN ('pending','sent')"),
+        ),
+        Index("ix_companion_digest_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    consent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("companion_consents.id", ondelete="SET NULL"))
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform_approval_requests.id", ondelete="SET NULL")
+    )
+    digest_date: Mapped[date] = mapped_column(Date, nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'pending'"))
+    message_id: Mapped[str | None] = mapped_column(String(256))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("'0'"))
+    created_at: Mapped[datetime] = _now()
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ------------------------------------------------------------------ access control (ADR-004 WP1)
@@ -1722,6 +2038,25 @@ class FolderSyncPreference(Base):
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     change_alerts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class UserLanguagePreference(Base):
+    """Per-user reply language (Step Z slice 3). One row per user, or no row.
+
+    Values: 'en' | 'roman_urdu' | 'urdu'. No row means "not set" — replies
+    follow per-question detection and the effective default is English. A
+    preference never changes authorization, permissions, approvals, or what
+    a user may read; it only changes the language replies are written in.
+    """
+
+    __tablename__ = "user_language_preferences"
+    __table_args__ = (
+        CheckConstraint("language IN ('en', 'roman_urdu', 'urdu')", name="language_valid"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    language: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'en'"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
@@ -2184,6 +2519,56 @@ class KnowledgeConflictReview(Base):
     decided_at: Mapped[datetime] = _now()
 
 
+class DocumentConflictCandidate(Base):
+    """A source-backed potential contradiction between two document passages.
+
+    Detection is advisory: it stores chunk ids only (never passage text), never
+    changes publication or retrieval state, and a scoped human reviewer records
+    whether the passages actually conflict. The pair is stored in canonical
+    (smaller, larger) chunk order so one pair is stored once."
+    """
+
+    __tablename__ = "document_conflict_candidates"
+    __table_args__ = (
+        CheckConstraint("left_chunk_id < right_chunk_id", name="ck_document_conflict_candidate_ordered"),
+        CheckConstraint("status IN ('open', 'confirmed', 'dismissed')", name="ck_document_conflict_candidate_status_valid"),
+        UniqueConstraint("left_chunk_id", "right_chunk_id", name="uq_document_conflict_candidate_pair"),
+        Index("ix_document_conflict_candidates_status_detected", "status", "detected_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    left_chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    right_chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
+    detection_source: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'nightly_scan'"))
+    detected_at: Mapped[datetime] = _now()
+
+
+class DocumentConflictReview(Base):
+    """Append-only human decision on one detected document-passage conflict."""
+
+    __tablename__ = "document_conflict_reviews"
+    __table_args__ = (
+        CheckConstraint("decision IN ('confirmed', 'dismissed')", name="ck_document_conflict_reviews_decision_valid"),
+        CheckConstraint("length(btrim(rationale)) BETWEEN 3 AND 2000", name="ck_document_conflict_reviews_rationale_length"),
+        UniqueConstraint("candidate_id", name="uq_document_conflict_review_once"),
+        Index("ix_document_conflict_reviews_reviewer_time", "reviewer_user_id", "decided_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("document_conflict_candidates.id", ondelete="RESTRICT"), nullable=False
+    )
+    reviewer_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    rationale: Mapped[str] = mapped_column(String(2000), nullable=False)
+    decided_at: Mapped[datetime] = _now()
+
+
 class KnowledgeProcess(Base):
     """A customer-defined operational process affected by published policies."""
 
@@ -2471,9 +2856,21 @@ from app.db.agent_studio_models import (  # noqa: E402,F401
     AgentStudioRun,
     AgentStudioThread,
 )
+from app.db.agent_controls_models import (  # noqa: E402,F401
+    AgentControlEvent,
+    AgentControlRecord,
+    AgentSpendLedger,
+)
 from app.db.agent_studio_whatsapp_models import (  # noqa: E402,F401
     AgentStudioWhatsAppConnection,
     AgentStudioWhatsAppContact,
     AgentStudioWhatsAppInbound,
 )
+from app.db.whatsapp_lead_models import WhatsAppLead  # noqa: E402,F401
 from app.db.agent_studio_baileys_models import BaileysConnection, BaileysMessage  # noqa: E402,F401
+from app.db.founder_voice_models import FounderVoiceCommandRecord  # noqa: E402,F401
+from app.db.twin_snapshot_models import TwinSnapshotVersion  # noqa: E402,F401
+from app.db.twin_health_models import TwinHealthAlert  # noqa: E402,F401
+from app.db.twin_reconciliation_models import TwinReconciliationFinding  # noqa: E402,F401
+from app.db.twin_proposal_models import TwinProposal  # noqa: E402,F401
+from app.db.decision_models import DecisionEventRow, DecisionRecordRow  # noqa: E402,F401

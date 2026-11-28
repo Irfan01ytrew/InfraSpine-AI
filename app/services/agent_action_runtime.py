@@ -150,8 +150,17 @@ async def _key(db, proposal_id) -> str:
 
 async def execute_proposal(db, actor: User, ctx: AuditContext, proposal: AgentActionProposal,
                            run: WorkflowRun) -> AgentActionProposal:
+    from app.agent_controls.gate import gate_agent_liveness
     from app.services.agent_actions import apply_execution
     from app.workflows.action_runtime import platform_scope_for
+    # Step AK: a governance proposal from a controlled-stopped profile agent
+    # is refused before execution, even though it was approved earlier — the
+    # kill-switch outranks a stale approval.
+    if proposal.agent_profile_id is not None:
+        decision = await gate_agent_liveness(db, proposal.agent_profile_id)
+        if decision.outcome == "deny":
+            raise PermissionDeniedError(
+                "The agent that proposed this action is stopped by its controls.")
     platform_scope = await platform_scope_for(db, run.scope_id)
     if platform_scope is None:
         raise ConflictError('The department has no platform scope.')

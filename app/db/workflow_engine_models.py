@@ -28,7 +28,7 @@ class Workflow(Base):
         UniqueConstraint('scope_id', 'id'), Index('ix_wf_definitions_scope', 'scope_id', 'updated_at'),
         Index('uq_wf_definitions_origin_ref', 'scope_id', 'origin', 'origin_ref', unique=True,
               postgresql_where=text('origin_ref IS NOT NULL')),
-        CheckConstraint("origin IN ('workflow','automation','system','studio','governance')", name='origin_valid'),
+        CheckConstraint("origin IN ('workflow','automation','system','studio','governance','continuity','founder_voice')", name='origin_valid'),
     )
     id: Mapped[uuid.UUID] = uid()
     scope_id: Mapped[uuid.UUID] = scope()

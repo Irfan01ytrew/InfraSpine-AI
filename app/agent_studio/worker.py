@@ -8,10 +8,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agent_studio.service import AgentStudioService, decode_run_state, _encode_state, _AgentRunClaimLost
+from app.db.agent_controls_models import AgentControlRecord
 from app.db.agent_studio_models import AgentStudioAgent, AgentStudioRun
 from app.db.models import User
 from app.core.crypto import CredentialCipher
@@ -106,12 +107,34 @@ async def claim_agent_studio_run(
                 AgentStudioAgent.enabled.is_(True),
                 AgentStudioAgent.paused.is_(False),
                 User.is_active.is_(True),
+                # Step AK: never claim a run whose agent has a non-active
+                # control record (killed / disabled / paused). Agents without
+                # a record are unaffected.
+                ~exists().where(
+                    AgentControlRecord.agent_id == AgentStudioRun.agent_id,
+                    AgentControlRecord.status != "active"),
             )
         )
         if run_id is not None:
             query = query.where(AgentStudioRun.id == run_id)
+        # Step J slice 5: runs of registry-paused/retired agents are never
+        # claimed — the workforce lifecycle is a second pause switch
+        # beside the island's own paused flag. (Owner-revoked agents are
+        # already excluded by the User.is_active filter above, since a
+        # Studio agent's owner is its run owner.)
+        # NOTE (merge fix, Agent 186): do NOT re-import `exists` here —
+        # it is already imported at module level (line 11), and a local
+        # `from sqlalchemy import exists` in this function shadows it for
+        # the WHOLE function, breaking the Step AK `~exists()` clause
+        # above with UnboundLocalError (the branch had no earlier use).
+        from app.db.workforce_registry_models import WorkforceRegistryAgent
+
+        query = query.where(~exists().where(
+            WorkforceRegistryAgent.agent_kind == "studio",
+            WorkforceRegistryAgent.agent_id == AgentStudioRun.agent_id,
+            WorkforceRegistryAgent.lifecycle_state.in_(["paused", "retired"])))
         if exclude_unified:
-            from sqlalchemy import String, exists
+            from sqlalchemy import String
             from app.db.workflow_engine_models import WorkflowRun
             query = query.where(~exists().where(WorkflowRun.origin == "studio",
                                                 WorkflowRun.origin_ref == AgentStudioRun.id.cast(String)))

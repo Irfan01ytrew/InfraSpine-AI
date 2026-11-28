@@ -36,7 +36,13 @@ from app.db.models import (
 from app.db.session import test_engine_options as _test_engine_options
 from app.governance import models as gov
 from app.governance.service import context as governance_context
-from app.platform.channels import link_identity, resolve_whatsapp_sender, sync_allowed_senders
+from app.platform.channels import (
+    confirm_sender_verification,
+    link_identity,
+    request_sender_verification,
+    resolve_whatsapp_sender,
+    sync_allowed_senders,
+)
 from app.platform.models import PlatformChannelIdentity, PlatformMembership, PlatformOutbox, PlatformScope
 from app.platform.modules import clear_diffs, mode, module_gate
 from app.platform.sync import backfill_all
@@ -357,6 +363,18 @@ def test_whatsapp_sender_resolves_through_platform_identity_and_unmapped_is_refu
                 await sync_allowed_senders(db, owner_id=owner.id, channel="whatsapp_cloud",
                                            allowed=["923001111111"])
                 await db.commit()
+                # Step F slice 2: the legacy mirror no longer mints identities — an allow-listed
+                # but unverified number resolves to nothing until its owner verifies it.
+                with pytest.raises(PermissionDeniedError):
+                    await resolve_whatsapp_sender(
+                        db, channel="whatsapp_cloud", sender="923001111111",
+                        allowed=["923001111111"], owner_id=owner.id,
+                    )
+                await request_sender_verification(
+                    db, user_id=owner.id, channel="whatsapp_cloud", external_id="923001111111")
+                await confirm_sender_verification(
+                    db, user_id=owner.id, channel="whatsapp_cloud", external_id="923001111111")
+                await db.commit()
                 principal = await resolve_whatsapp_sender(
                     db, channel="whatsapp_cloud", sender="923001111111",
                     allowed=["923001111111"], owner_id=owner.id,
@@ -375,7 +393,7 @@ def test_whatsapp_sender_resolves_through_platform_identity_and_unmapped_is_refu
                         db, channel="whatsapp_cloud", sender="923003333333",
                         allowed=["923001111111"], owner_id=owner.id,
                     )
-                # After the owner is revoked, the legacy allow-list identity stops resolving.
+                # After the owner is revoked, the verified identity stops resolving.
                 admin = platform.principal_for(await user_by_email(db, ADMIN_EMAIL))
                 await platform.revoke_user_access(db, admin, owner.id, "left")
                 await db.commit()

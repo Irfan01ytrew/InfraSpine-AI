@@ -104,7 +104,7 @@ export function AgentStudioWhatsAppQrPanel({ agents, onCreateAgent, onConfigureA
             Cancel queued command
           </Button>}
       </div>}
-      <p className="text-xs leading-relaxed text-muted">Baileys is a free, unofficial open-source WhatsApp client. AI provider charges may still apply; Ollama can run locally. Only your own self-chat commands are processed; other contacts and groups cannot control your agents. Session keys are encrypted. To revoke access from your phone: WhatsApp → Linked devices → Log out.</p>
+      <p className="text-sm leading-relaxed text-muted">Baileys is a free, unofficial open-source WhatsApp client. AI provider charges may still apply; Ollama can run locally. Only your own self-chat commands are processed; other contacts and groups cannot control your agents. Session keys are encrypted. To revoke access from your phone: WhatsApp → Linked devices → Log out.</p>
     </CardBody>
   </Card>;
 }

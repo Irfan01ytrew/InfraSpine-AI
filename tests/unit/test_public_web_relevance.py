@@ -18,7 +18,12 @@ from app.services.public_web import (
     _source_excerpt,
     public_sources_relevant,
 )
-from app.rag.chat import _format_web_answer, _public_web_followup_history, _web_context
+from app.rag.chat import (
+    _format_web_answer,
+    _live_answer_to_web_answer,
+    _public_web_followup_history,
+    _web_context,
+)
 from app.rag.answer import Turn, is_contextual_followup, is_web_lookup_request, requested_web_urls
 
 
@@ -369,6 +374,77 @@ def test_chat_source_links_show_publication_or_retrieval_time():
 
     assert "[W1]" in published and "Published: 2026-11-21T05:15:00Z" in published
     assert "Retrieved:" in retrieved and "2026-" in retrieved
+
+
+def test_chat_web_answer_marks_when_it_was_checked_live():
+    answer = _format_web_answer({
+        "answer": "Current score [S1].",
+        "sources": [{
+            "title": "Official score page", "url": "https://scores.example.com/live",
+            "published_at": "2026-11-21T05:15:00Z", "retrieved_at": "2026-11-21T05:16:00Z",
+        }],
+    })
+    assert "Checked live at 2026-11-21T05:16:00Z." in answer
+
+
+def test_live_answer_findings_convert_to_web_citations_without_duplicating_sources():
+    from app.services.live_data import LiveAnswer, LiveSource
+
+    live = LiveAnswer(
+        text=(
+            "Live findings:\n- [S1] Pakistan play their next T20I on 5 December 2026.\n\n"
+            "### Live sources\n"
+            "- [S1] [Pakistan fixtures](<https://www.cricbuzz.com/cricket-schedule/series>) \xc2\xb7 Published: 2026-11-27T10:00:00Z\n\n"
+            "Checked live at 2026-11-28T00:00:00Z."
+        ),
+        sources=(
+            LiveSource(
+                title="Pakistan fixtures",
+                url="https://www.cricbuzz.com/cricket-schedule/series",
+                snippet="Pakistan play their next T20I on 5 December 2026.",
+                published_at="2026-11-27T10:00:00Z",
+                retrieved_at="2026-11-28T00:00:00Z",
+            ),
+        ),
+    )
+    findings = _live_answer_to_web_answer(live)
+    assert "[W1]" in findings
+    assert "[S1]" not in findings
+    assert "### Live sources" not in findings
+    assert "### Web sources" not in findings
+    # The full web answer rebuilds the sources block exactly once, from the records.
+    web_answer = _format_web_answer({
+        "answer": findings,
+        "sources": [
+            {
+                "title": source.title,
+                "url": source.url,
+                "published_at": source.published_at,
+                "retrieved_at": source.retrieved_at,
+            }
+            for source in live.sources
+        ],
+    })
+    assert web_answer.count("### Web sources") == 1
+    assert "Checked live at 2026-11-28T00:00:00Z." in web_answer
+
+
+def test_live_answer_followup_offer_is_plain_text_never_an_action():
+    from app.services.live_data import LiveAnswer, LiveFollowupAction
+
+    live = LiveAnswer(
+        text="Live findings:\n- [S1] Pakistan play their next T20I on 5 December 2026.",
+        followup_actions=(
+            LiveFollowupAction(
+                kind="reminder",
+                label="Remind me before this event",
+                detail="Ask me to remind you; I will confirm first.",
+            ),
+        ),
+    )
+    findings = _live_answer_to_web_answer(live)
+    assert "Follow-ups you can ask for:" in findings
+    assert "Remind me before this event (needs your approval first)" in findings
 
 
 def test_live_web_followup_reuses_public_topic_and_resolves_second_source():

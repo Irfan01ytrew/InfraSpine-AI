@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 MODELS_SHOWN = 12
 DETAIL_MAX_CHARS = 500
 MAX_IMAGE_RESPONSE_BYTES = 30 * 1024 * 1024
+TRANSCRIPTION_MODEL = "whisper-1"
 GEMINI_IMAGE_MODELS = ("gemini-3.1-flash-image", "gemini-3.1-flash-lite-image")
 
 SYSTEM_PROMPT = (
@@ -161,6 +162,62 @@ class OpenAICompatibleClient:
     def supports_image_generation(self) -> bool:
         """Gemini image generation uses the same origin-bound key and HTTP client as chat."""
         return self._gemini_api and self._http_client is not None
+
+    @property
+    def supports_audio_transcription(self) -> bool:
+        """OpenAI-compatible ``/audio/transcriptions`` (Whisper) on this endpoint.
+
+        The DeepSeek builtin has no audio endpoint, and Gemini's
+        OpenAI-compatible surface does not serve audio transcription either.
+        Any other custom OpenAI-compatible endpoint may serve it; a 404 or
+        model error at call time is still treated as unavailable.
+        """
+        return self.provider != "deepseek" and not self._gemini_api
+
+    async def transcribe_audio(self, audio_bytes: bytes, *, filename: str, mime_type: str) -> str:
+        """Transcribe short audio with the provider's Whisper-compatible endpoint.
+
+        The transcription model is ``whisper-1`` (the OpenAI-compatible
+        standard); the configured chat model is never used for transcription.
+        Returns the transcript text. Raises LLMUnavailableError when the
+        endpoint cannot transcribe (no audio support, unknown model, no
+        balance). Only the exception type is logged: provider error bodies
+        can echo fragments of the API key.
+        """
+        if not self.supports_audio_transcription:
+            raise LLMUnavailableError("Audio transcription is not supported by the configured provider.")
+        if not audio_bytes:
+            raise LLMUnavailableError("The audio file is empty.")
+        try:
+            result = await self._client.audio.transcriptions.create(
+                model=TRANSCRIPTION_MODEL,
+                file=(filename, audio_bytes, mime_type),
+            )
+        except openai.APITimeoutError as exc:
+            logger.warning("%s audio transcription timed out", self.provider)
+            raise LLMTimeoutError() from exc
+        except openai.RateLimitError as exc:
+            logger.warning("%s audio transcription rate limit hit", self.provider)
+            raise LLMRateLimitError() from exc
+        except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
+            logger.error("%s rejected the configured API key", self.provider)
+            raise LLMUnavailableError() from exc
+        except openai.APIStatusError as exc:
+            logger.error("%s audio transcription returned HTTP %s", self.provider, exc.status_code)
+            raise LLMUnavailableError() from exc
+        except openai.APIConnectionError as exc:
+            if blocked_reason(exc) is not None:
+                logger.error("Blocked an audio transcription request from %s to a disallowed destination", self.provider)
+            else:
+                logger.error("Could not connect to %s", self.provider)
+            raise LLMUnavailableError() from exc
+        except openai.OpenAIError as exc:
+            logger.error("%s audio transcription client error: %s", self.provider, type(exc).__name__)
+            raise LLMUnavailableError() from exc
+        text = str(getattr(result, "text", "") or "").strip()
+        if not text:
+            raise LLMUnavailableError("The AI provider returned an empty transcription.")
+        return text
 
     async def generate_image(self, prompt: str) -> tuple[bytes, str, str, str]:
         """Generate one image with Gemini's current image model; the caller stores it owner-bound."""

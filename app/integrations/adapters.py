@@ -7,7 +7,7 @@ from urllib.parse import urlsplit, parse_qsl
 from app.core.errors import InvalidInputError
 from app.integrations import transport
 from app.integrations.catalog import CATALOG, WRITE_SCOPES
-from app.integrations.schemas import CalendarEvent, ConnectorConfig, Email, SlackMessage
+from app.integrations.schemas import CalendarEvent, ConnectorConfig, Email, SlackMessage, TeamsMessage
 
 
 def value_at(data, path, default=None):
@@ -68,6 +68,7 @@ def validate_operation(connector, operation, payload):
     if operation == "email.send": return Email.model_validate(payload).model_dump(mode="json")
     if operation == "calendar.create": return CalendarEvent.model_validate(payload).model_dump(mode="json")
     if operation == "slack.send": return SlackMessage.model_validate(payload).model_dump(mode="json")
+    if operation == "teams.send": return TeamsMessage.model_validate(payload).model_dump(mode="json")
     if operation == "soap.call":
         from defusedxml.ElementTree import fromstring
         if set(payload) != {"xml"} or not isinstance(payload["xml"], str) or len(payload["xml"]) > 100000:
@@ -183,6 +184,10 @@ async def execute_write(connector, secret, job, payload):
                     "end": {"dateTime": event.end.isoformat()}, "attendees": [{"email": a} for a in event.attendees]}
     elif job.operation == "slack.send":
         path = "/chat.postMessage"; body = {**payload, "client_msg_id": str(job.id)}
+    elif job.operation == "teams.send":
+        message = TeamsMessage.model_validate(payload)
+        path = f"/teams/{message.team_id}/channels/{message.channel_id}/messages"
+        body = {"body": {"contentType": "text", "content": message.text}}
     response = await call(connector, secret, path, method="POST", payload=body, xml=xml, write=True)
     provider_id = response.body.get("id") or response.body.get("ts") if isinstance(response.body, dict) else None
     if job.operation == "calendar.create" and not provider_id:
@@ -191,5 +196,7 @@ async def execute_write(connector, secret, job, payload):
         raise TransportError("missing_message_identifier", ambiguous=True)
     if job.operation == "email.send" and connector.provider == "microsoft365" and response.status != 202:
         raise TransportError("unexpected_mail_response", ambiguous=True)
+    if job.operation == "teams.send" and not provider_id:
+        raise TransportError("missing_message_identifier", ambiguous=True)
     return {"provider_status": response.status, "provider_id": str(provider_id)[:240] if provider_id else None,
             "acceptance": "provider_accepted", "delivery_verified": False}

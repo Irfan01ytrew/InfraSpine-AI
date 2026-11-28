@@ -9,11 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession, audit_context
-from app.continuity import intelligence, journal, schemas, service
+from app.continuity import dashboard as dashboard_service
+from app.continuity import drills, graph_merge, handover, intelligence, journal, schemas, service
 from app.continuity.access import nodes_for, scope_for
 from app.continuity.models import GrantRequest, Member, Tenant
-from app.core.errors import ConflictError, PermissionDeniedError
+from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.db.models import AutomationWorkflow
+from app.recovery.access import scope_for as recovery_scope_for
 from app.services import audit
 
 router = APIRouter(prefix="/api/continuity", tags=["business-continuity"])
@@ -65,6 +67,28 @@ async def dashboard(scope: ScopeDep, db: DbSession, response: Response):
     return await service.dashboard(db, scope)
 
 
+@router.get("/scopes/{scope_id}/dashboard")
+async def continuity_dashboard(scope_id: uuid.UUID, db: DbSession, user: CurrentUser, response: Response):
+    """Step AJ business continuity dashboard (read-only).
+
+    Non-members and unknown scopes get 404 (the scope is not
+    revealed); members whose role may not open the dashboard get 403.
+    Recovery incidents come from the viewer's recovery workspace for
+    the same tenant id when one exists; otherwise that section is
+    empty — recovery workspaces are a separate tenant namespace.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    scope = await scope_for(db, scope_id, user, write=False)
+    if scope.role not in dashboard_service.DASHBOARD_ROLES:
+        raise PermissionDeniedError("The continuity dashboard is available to owner, approver and planner roles.")
+    recovery_scope = None
+    try:
+        recovery_scope = await recovery_scope_for(db, scope_id, user.id)
+    except NotFoundError:
+        recovery_scope = None
+    return await dashboard_service.continuity_dashboard_summary(db, scope, recovery_scope=recovery_scope)
+
+
 @router.get("/tenants/{tenant_id}/members")
 async def members(scope: ScopeDep, db: DbSession):
     scope.require("owner")
@@ -97,9 +121,55 @@ async def scenario(data: schemas.ScenarioInput, scope: ScopeDep, request: Reques
 
 
 @router.get("/tenants/{tenant_id}/scenarios/{scenario_id}/handover")
-async def handover(scenario_id: uuid.UUID, scope: ScopeDep, db: DbSession):
+async def handover_draft_endpoint(scenario_id: uuid.UUID, scope: ScopeDep, db: DbSession):
     scenario = await service.scenario_for(db, scope, scenario_id)
     return intelligence.handover_draft(scenario, await nodes_for(db, scope))
+
+
+@router.get("/tenants/{tenant_id}/scenarios/{scenario_id}/handover-check")
+async def handover_check(scenario_id: uuid.UUID, scope: ScopeDep, db: DbSession):
+    return await handover.check_handover(db, scope, scenario_id)
+
+
+@router.get("/tenants/{tenant_id}/handover-grants")
+async def handover_grants(scope: ScopeDep, db: DbSession):
+    return {"items": await handover.list_handover_grants(db, scope)}
+
+
+@router.post("/tenants/{tenant_id}/handover-grants", status_code=201)
+async def propose_handover_grant(data: schemas.HandoverGrantInput, scope: ScopeDep, request: Request, db: DbSession, user: CurrentUser):
+    return await save(db, handover.propose_handover_grant(db, scope, data, audit_context(request, user)))
+
+
+@router.post("/tenants/{tenant_id}/handover-grants/{grant_id}/decision")
+async def decide_handover_grant(grant_id: uuid.UUID, data: schemas.Decision, scope: ScopeDep, request: Request,
+                                db: DbSession, user: CurrentUser):
+    return await save(db, handover.decide_handover_grant(db, scope, grant_id, data, audit_context(request, user), user))
+
+
+@router.post("/tenants/{tenant_id}/handover-grants/{grant_id}/revoke")
+async def revoke_handover_grant(grant_id: uuid.UUID, data: schemas.Reason, scope: ScopeDep, request: Request, db: DbSession, user: CurrentUser):
+    return await save(db, handover.revoke_handover_grant(db, scope, grant_id, data, audit_context(request, user)))
+
+
+@router.post("/tenants/{tenant_id}/drills/seed")
+async def seed_drills(scope: ScopeDep, request: Request, db: DbSession, user: CurrentUser):
+    return await save(db, drills.seed_drills(db, scope, audit_context(request, user)))
+
+
+@router.get("/tenants/{tenant_id}/runs/{run_id}/drill-comparison")
+async def drill_comparison(run_id: uuid.UUID, scope: ScopeDep, db: DbSession):
+    return await drills.drill_comparison(db, scope, run_id)
+
+
+@router.post("/tenants/{tenant_id}/graph-merge/seed")
+async def seed_graph_merge(data: schemas.GraphMergeSeedInput, scope: ScopeDep, request: Request, db: DbSession, user: CurrentUser):
+    return await save(db, graph_merge.seed_graph_merge(db, scope, data.company_graph_tenant_id, user, audit_context(request, user)))
+
+
+@router.get("/tenants/{tenant_id}/graph-merge/status")
+async def graph_merge_status(company_graph_tenant_id: uuid.UUID, scope: ScopeDep, db: DbSession, user: CurrentUser):
+    return await graph_merge.merge_status(db, scope, company_graph_tenant_id, user)
 
 
 @router.get("/tenants/{tenant_id}/workflows")
@@ -131,7 +201,8 @@ async def activate(data: schemas.Activation, scope: ScopeDep, request: Request, 
 
 @router.post("/tenants/{tenant_id}/runs/{run_id}/decision")
 async def decide_run(run_id: uuid.UUID, data: schemas.Decision, scope: ScopeDep, request: Request, db: DbSession, user: CurrentUser):
-    return await save(db, service.decide_activation(db, scope, run_id, data, audit_context(request, user)))
+    return await save(db, service.decide_activation(db, scope, run_id, data, audit_context(request, user),
+                                                    cipher=request.app.state.cipher))
 
 
 @router.get("/tenants/{tenant_id}/runs/{run_id}")

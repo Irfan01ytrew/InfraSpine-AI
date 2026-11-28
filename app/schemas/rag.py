@@ -1,10 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from app.db.models import Document, User
+from app.schemas.chat import RoutingInfo
 from app.rag import access
 
 
@@ -29,11 +30,30 @@ class DocumentOut(BaseModel):
     can_modify: bool
     created_at: datetime
     updated_at: datetime
+    # Step AB derived metadata (app/rag/auto_enrich.py): tags, an extractive
+    # summary and the earliest expiry date pulled from the document text.
+    # Visible only to users who may already read the document — DocumentOut is
+    # only built for readable docs (see service.list()).
+    tags: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    expiry_date: date | None = None
+    # Step AI freshness metadata (owner-set; never derived from document text)
+    # and the advisory freshness score computed on read. Freshness is shown
+    # only for documents the caller may already read (`readable_by`).
+    review_date: datetime | None = None
+    expires_at: datetime | None = None
+    superseded_by: uuid.UUID | None = None
+    freshness_status: str | None = None
+    freshness_score: int | None = None
+    freshness_reasons: list[str] = Field(default_factory=list)
 
     @classmethod
     def build(
         cls, doc: Document, user: User, embedding_model: str, *, can_modify: bool | None = None
     ) -> "DocumentOut":
+        from app.services.document_freshness import freshness_for
+
+        result = freshness_for(doc)
         return cls(
             id=doc.id,
             filename=doc.filename,
@@ -55,6 +75,15 @@ class DocumentOut(BaseModel):
             can_modify=access.can_modify(user, doc) if can_modify is None else can_modify,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
+            tags=list(doc.tags or []),
+            summary=doc.summary,
+            expiry_date=doc.expiry_date,
+            review_date=doc.review_date,
+            expires_at=doc.expires_at,
+            superseded_by=doc.superseded_by,
+            freshness_status=result.status,
+            freshness_score=result.score,
+            freshness_reasons=list(result.reasons),
         )
 
 
@@ -120,6 +149,30 @@ class DocumentListResponse(BaseModel):
     max_upload_mb: int
     embedding_model: str
     ingestion: IngestionStatus | None = None
+
+
+class DocumentFreshnessRequest(BaseModel):
+    """Owner-set freshness metadata (Step AI slice 5). Only fields explicitly
+    sent are changed; an explicit ``null`` clears the field. The service
+    decides that from ``model_fields_set`` — defaults here are only so an
+    empty body is a valid no-op."""
+
+    review_date: datetime | None = None
+    expires_at: datetime | None = None
+    superseded_by: uuid.UUID | None = None
+
+
+class ReviewQueueEntryOut(BaseModel):
+    """One document needing a human freshness review. ``document`` already
+    carries the freshness status/score/reasons (slice 2)."""
+
+    document: DocumentOut
+    open_conflicts: int
+    severity: int = Field(description="0 = most urgent (expired, then superseded, then stale).")
+
+
+class ReviewQueueResponse(BaseModel):
+    entries: list[ReviewQueueEntryOut]
 
 
 class ModelChoice(BaseModel):
@@ -200,6 +253,11 @@ class Citation(BaseModel):
     # False when shown from a saved conversation and the user can no longer read the document
     # (deleted or access removed): the document's text is withheld.
     available: bool = True
+    # Step AI slice 4: advisory freshness of the cited document, computed from
+    # owner-set metadata at answer time. None when freshness was not computed.
+    freshness_status: str | None = None
+    freshness_score: int | None = None
+    freshness_note: str | None = None
 
 
 class ResearchFinding(BaseModel):
@@ -494,10 +552,14 @@ class RagChatResponse(BaseModel):
     page_images: list[PageImageOut] = Field(default_factory=list)
     model: str | None
     provider: str | None
+    routing: RoutingInfo | None = None
     # How many of the user's personal memories shaped this answer (they are never cited as sources).
     memories_applied: int = 0
     # True when (part of) the answer comes from the model's general knowledge, not from the user's documents.
     general_knowledge: bool = False
+    # Step AI slice 4: visible warning when the answer leans on expired/superseded
+    # sources, or on only-stale sources. The answer is still given from its sources.
+    freshness_warning: str | None = None
     # Internal: every document whose text reached the LLM for this answer (cited or not). Persisted with
     # saved answers so access can be re-checked on every read; never returned by the API.
     source_document_ids: list[uuid.UUID] = Field(default_factory=list, exclude=True)
@@ -510,6 +572,10 @@ class RagVoiceQuestionResponse(BaseModel):
     """A transient transcript and its answer; neither is saved as a conversation."""
 
     transcript: str = Field(..., min_length=1, max_length=4000)
+    # Language the transcript was spoken in (Step Z slice 6), from the same
+    # shared detector typed chat uses. Metadata only — it never changes
+    # authorization or what the asker may read. Defaults for older callers.
+    detected_language: str = "unknown"
     answer: RagChatResponse
 
 

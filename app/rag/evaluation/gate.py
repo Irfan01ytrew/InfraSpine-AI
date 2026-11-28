@@ -353,7 +353,7 @@ def _checks(values: dict, rules: dict) -> list[Check]:
 
 
 async def _llm(live: Settings, provider: str):
-    from app.core.crypto import CredentialCipher
+    from app.core.crypto import rotating_cipher_from_settings
     from app.core.errors import LLMNotConfiguredError, LLMUnavailableError
     from app.db.session import create_engine, create_sessionmaker
     from app.services.llm_runtime import LLMRuntime, build_client
@@ -375,7 +375,7 @@ async def _llm(live: Settings, provider: str):
             {},
             base_url,
         )
-    runtime = LLMRuntime(live, CredentialCipher(live.master_key_bytes, live.master_encryption_key_id))
+    runtime = LLMRuntime(live, rotating_cipher_from_settings(live))
     engine = create_engine(live.database_url.get_secret_value())
     try:
         async with create_sessionmaker(engine)() as db:

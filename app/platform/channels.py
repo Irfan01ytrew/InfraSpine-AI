@@ -3,9 +3,14 @@
 A sender acts only as the user their verified `platform_channel_identities` row points to — never as
 "whoever owns the connection" just because the number is on an allow-list. Unmapped numbers get no
 data. `allowed_senders` remains a connection-level allow-list (the number must also be welcome on
-that connection) and, until the step F verification flow, numbers already on the allow-list are
-mirrored to the connection owner as `verification_method=legacy:allowed_senders`. An explicit
-identity for a different user always wins. Revoking the owner (or the identity) cuts the channel.
+that connection).
+
+Step F slice 2 verification flow: a number is linked to an InfraSpine account only through
+`request_sender_verification` (creates a pending, unverified row that grants nothing) followed by
+`confirm_sender_verification` by the same account holder (marks the row verified). `sync_allowed_senders`
+no longer mints `legacy:allowed_senders` identities for new numbers; legacy rows minted before slice 2
+keep working until they are revoked. An explicit identity for a different user always wins.
+Revoking the owner (or the identity) cuts the channel.
 """
 from __future__ import annotations
 
@@ -22,6 +27,8 @@ from app.platform.access import Principal, resolve_principal
 from app.platform.models import PlatformChannelIdentity
 
 LEGACY_METHOD = "legacy:allowed_senders"
+PENDING_METHOD = "whatsapp:pending"
+CONFIRMED_METHOD = "whatsapp:confirmed"
 BAILEYS_SELF = "baileys_self_chat"
 _DIGITS = re.compile(r"\D+")
 
@@ -66,32 +73,84 @@ async def link_identity(
     return row
 
 
+async def request_sender_verification(
+    db: AsyncSession, *, user_id: uuid.UUID, channel: str, external_id: str,
+) -> PlatformChannelIdentity:
+    """Start the Step F verification flow: the account holder asks to link a number to their account.
+
+    Creates an UNVERIFIED identity row (`verified_at` is None, method `whatsapp:pending`). A pending
+    row grants nothing — `resolve_principal` requires `verified_at` — until the same user confirms it
+    with `confirm_sender_verification`. Idempotent: requesting again returns the existing row.
+    Never silently reassigns a number already linked to someone else.
+    """
+    return await link_identity(db, user_id, channel, external_id, method=PENDING_METHOD, verified=False)
+
+
+async def confirm_sender_verification(
+    db: AsyncSession, *, user_id: uuid.UUID, channel: str, external_id: str,
+) -> PlatformChannelIdentity:
+    """Confirm a pending link: only the user who requested it may confirm it, for their own account.
+
+    Sets `verified_at` and `verification_method="whatsapp:confirmed"`. Confirming an already-verified
+    row is a no-op. A number linked to someone else, or with no link at all, is refused with a
+    message safe to show (no account data).
+    """
+    external_id = normalize_sender(external_id)
+    if not external_id or channel not in {"whatsapp_cloud", "whatsapp_baileys", "api"}:
+        raise PermissionDeniedError("This number is not linked to an InfraSpine account.")
+    row = await db.scalar(select(PlatformChannelIdentity).where(
+        PlatformChannelIdentity.channel == channel, PlatformChannelIdentity.external_id == external_id,
+        PlatformChannelIdentity.revoked_at.is_(None),
+    ))
+    if row is None or row.user_id != user_id:
+        raise PermissionDeniedError("This number is not linked to an InfraSpine account.")
+    if row.verified_at is None:
+        row.verified_at = datetime.now(UTC)
+        row.verification_method = CONFIRMED_METHOD
+        await db.flush()
+    return row
+
+
+async def revoke_sender_identity(
+    db: AsyncSession, *, user_id: uuid.UUID, channel: str, external_id: str,
+) -> PlatformChannelIdentity:
+    """Revoke one of the caller's own sender links. A revoked number resolves to nothing, even if it
+    is still on a connection allow-list, until the number's owner requests verification again."""
+    external_id = normalize_sender(external_id)
+    if not external_id or channel not in {"whatsapp_cloud", "whatsapp_baileys", "api"}:
+        raise PermissionDeniedError("This number is not linked to an InfraSpine account.")
+    row = await db.scalar(select(PlatformChannelIdentity).where(
+        PlatformChannelIdentity.channel == channel, PlatformChannelIdentity.external_id == external_id,
+        PlatformChannelIdentity.revoked_at.is_(None),
+    ))
+    if row is None or row.user_id != user_id:
+        raise PermissionDeniedError("This number is not linked to an InfraSpine account.")
+    row.revoked_at = datetime.now(UTC)
+    await db.flush()
+    return row
+
+
 async def sync_allowed_senders(
     db: AsyncSession, *, owner_id: uuid.UUID, channel: str, allowed: list[str],
 ) -> None:
-    """Keep legacy allow-list identities in step with the connection. Explicit (non-legacy) links are left alone."""
+    """Revoke legacy allow-list identities whose numbers left the connection.
+
+    Step F slice 2: this no longer mints `legacy:allowed_senders` identities for new numbers — a
+    number acts only after its owner links it through the verification flow
+    (`request_sender_verification` + `confirm_sender_verification`). Legacy rows minted before
+    slice 2 keep working until they are revoked here (number left the allow-list) or by
+    `revoke_user_access` / `revoke_sender_identity`. Explicit (non-legacy) links are left alone.
+    """
     wanted = {normalize_sender(item) for item in allowed if normalize_sender(item)}
     rows = list(await db.scalars(select(PlatformChannelIdentity).where(
         PlatformChannelIdentity.channel == channel, PlatformChannelIdentity.user_id == owner_id,
         PlatformChannelIdentity.revoked_at.is_(None),
         PlatformChannelIdentity.verification_method == LEGACY_METHOD,
     )))
-    have = {row.external_id for row in rows}
     now = datetime.now(UTC)
     for row in rows:
         if row.external_id not in wanted:
             row.revoked_at = now
-    for number in wanted - have:
-        # A personal (non-legacy) identity for this number already belongs to someone — do not overwrite it.
-        taken = await db.scalar(select(PlatformChannelIdentity.id).where(
-            PlatformChannelIdentity.channel == channel, PlatformChannelIdentity.external_id == number,
-            PlatformChannelIdentity.revoked_at.is_(None),
-        ))
-        if taken is None:
-            db.add(PlatformChannelIdentity(
-                user_id=owner_id, channel=channel, external_id=number,
-                verified_at=now, verification_method=LEGACY_METHOD,
-            ))
     await db.flush()
 
 

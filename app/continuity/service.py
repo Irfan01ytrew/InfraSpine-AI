@@ -172,12 +172,18 @@ async def create_bia(db, scope, data, ctx):
     return public(row)
 
 
-async def create_scenario(db, scope, data, ctx):
+async def create_scenario(db, scope, data, ctx, source_key=None):
     scope.require("owner", "planner")
     require_evidence_time(data.evidence)
     for key in data.disrupted_ids:
         await node_for(db, scope, key)
-    source_key = "07:" + str(data.source_event_id) if data.source_module == "07" else None
+    if data.source_module == "07":
+        source_key = "07:" + str(data.source_event_id)
+    # Otherwise a server-side caller may pass its own source_key (e.g. drill
+    # seeds use "drill:<kind>"). The API never sets one: ScenarioInput has
+    # no source_key field, so clients cannot forge it. The key must be set
+    # here, at insert time — bc_scenarios is immutable, any later UPDATE is
+    # rejected by the database trigger.
     payload = data.model_dump(mode="json")
     fingerprint = journal.digest(payload)
     if source_key:
@@ -352,7 +358,7 @@ async def run_for(db, scope, run_id):
     return row, plan
 
 
-async def decide_activation(db, scope, run_id, data, ctx):
+async def decide_activation(db, scope, run_id, data, ctx, cipher=None):
     row, plan = await run_for(db, scope, run_id)
     validate_decision(scope, row, data)
     if plan.status != "approved" or plan.review_due_at <= datetime.now(UTC):
@@ -366,6 +372,12 @@ async def decide_activation(db, scope, run_id, data, ctx):
             await validate_owner(db, scope, uuid.UUID(step["owner_id"]), resource)
             db.add(Task(tenant_id=scope.tenant_id, run_id=row.id, step_key=step["key"]))
     await journal.record(db, scope, ctx, "activation_decided", row.id, {"decision": row.status, "reason": data.reason, "digest": row.digest})
+    if data.approved and cipher is not None:
+        # Mirror to the unified runtime in the same transaction; a mirror
+        # failure never breaks the activation (the engine sweep retries).
+        from app.continuity.unified import mirror_activation
+
+        await mirror_activation(db, cipher, row, plan)
     return public(row)
 
 
